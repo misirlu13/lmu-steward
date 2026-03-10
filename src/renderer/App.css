@@ -1,0 +1,91 @@
+/*
+ * @NOTE: Prepend a `~` to css file paths that are in your node_modules
+ *        See https://github.com/webpack-contrib/sass-loader#imports
+ */
+@import '~@fontsource/space-grotesk/400.css';
+@import '~@fontsource/space-grotesk/500.css';
+@import '~@fontsource/space-grotesk/600.css';
+@import '~@fontsource/space-grotesk/700.css';
+
+html,
+body,
+#root {
+  min-height: 100vh;
+  padding: 0;
+  margin: 0;
+  font-family: 'Space Grotesk', 'Roboto', 'Helvetica', 'Arial', sans-serif;
+}
+
+#root {
+  background-color: #0B1218;
+}
+
+* {
+  scrollbar-width: thin;
+  scrollbar-color: #2196F3 #161F28;
+}
+
+*::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+*::-webkit-scrollbar-track {
+  background: #161F28;
+}
+
+*::-webkit-scrollbar-thumb {
+  background-color: #2196F3;
+  border-radius: 999px;
+  border: 2px solid #161F28;
+}
+
+*::-webkit-scrollbar-thumb:hover {
+  background-color: #64B5F6;
+}
+
+*::-webkit-scrollbar-thumb:active {
+  background-color: #1976D2;
+}
+
+/* button {
+  background-color: white;
+  padding: 10px 20px;
+  border-radius: 10px;
+  border: none;
+  appearance: none;
+  font-size: 1.3rem;
+  box-shadow: 0px 8px 28px -6px rgba(24, 39, 75, 0.12),
+    0px 18px 88px -4px rgba(24, 39, 75, 0.14);
+  transition: all ease-in 0.1s;
+  cursor: pointer;
+  opacity: 0.9;
+}
+
+button:hover {
+  transform: scale(1.05);
+  opacity: 1;
+}
+
+li {
+  list-style: none;
+}
+
+a {
+  text-decoration: none;
+  height: fit-content;
+  width: fit-content;
+  margin: 10px;
+}
+
+a:hover {
+  opacity: 1;
+  text-decoration: none;
+}
+
+.Hello {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  margin: 20px 0;
+} */

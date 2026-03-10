@@ -1,0 +1,46 @@
+{
+  "ambientTemp": 20,
+  "averagePathWetness": 0,
+  "currentEventTime": 0,
+  "darkCloud": 0,
+  "endEventTime": 1200,
+  "gameMode": "UNKNOWN",
+  "gamePhase": 9,
+  "inRealtime": false,
+  "lapDistance": 5820.32568359375,
+  "maxPathWetness": 0,
+  "maxPlayers": 0,
+  "maxTime": 1200,
+  "maximumLaps": 4294967295,
+  "minPathWetness": 0,
+  "numRedLights": 4,
+  "numberOfPlayers": 0,
+  "numberOfVehicles": 22,
+  "passwordProtected": false,
+  "playerFileName": "Settings",
+  "playerName": "Bradley Drake",
+  "raceCompletion": {
+    "timeCompletion": -1
+  },
+  "raining": 0,
+  "sectorFlag": [
+    "UNKNOWN",
+    "UNKNOWN",
+    "UNKNOWN"
+  ],
+  "serverName": "-none-",
+  "serverPort": 0,
+  "session": "RACE1",
+  "startEventTime": 5,
+  "startLightFrame": 0,
+  "timeRemainingInGamePhase": 1200,
+  "trackName": "Sebring International Raceway",
+  "trackTemp": 20,
+  "windSpeed": {
+    "velocity": 0,
+    "x": 0,
+    "y": 0,
+    "z": 0
+  },
+  "yellowFlagState": "NONE"
+}

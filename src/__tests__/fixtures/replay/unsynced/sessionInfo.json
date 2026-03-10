@@ -1,0 +1,46 @@
+{
+  "ambientTemp": 20,
+  "averagePathWetness": 0,
+  "currentEventTime": 0,
+  "darkCloud": 0,
+  "endEventTime": 3600,
+  "gameMode": "UNKNOWN",
+  "gamePhase": 9,
+  "inRealtime": false,
+  "lapDistance": 4635.31640625,
+  "maxPathWetness": 0,
+  "maxPlayers": 0,
+  "maxTime": 21420,
+  "maximumLaps": 4294967295,
+  "minPathWetness": 0,
+  "numRedLights": 5,
+  "numberOfPlayers": 0,
+  "numberOfVehicles": 36,
+  "passwordProtected": false,
+  "playerFileName": "Settings",
+  "playerName": "Bradley Drake",
+  "raceCompletion": {
+    "timeCompletion": -1
+  },
+  "raining": 0,
+  "sectorFlag": [
+    "UNKNOWN",
+    "UNKNOWN",
+    "UNKNOWN"
+  ],
+  "serverName": "-none-",
+  "serverPort": 0,
+  "session": "PRACTICE1",
+  "startEventTime": 5,
+  "startLightFrame": 0,
+  "timeRemainingInGamePhase": 21420,
+  "trackName": "Algarve International Circuit",
+  "trackTemp": 31.542957634621473,
+  "windSpeed": {
+    "velocity": 0,
+    "x": 0,
+    "y": 0,
+    "z": 0
+  },
+  "yellowFlagState": "NONE"
+}

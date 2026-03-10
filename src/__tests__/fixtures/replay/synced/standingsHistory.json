@@ -1,0 +1,332 @@
+{
+  "0": [
+    {
+      "carClass": "GT3",
+      "driverName": "Adriano Manocchia",
+      "finishStatus": "FSTAT_NONE",
+      "lapTime": -1.0,
+      "pitting": true,
+      "position": 1,
+      "sectorTime1": -1.0,
+      "sectorTime2": -1.0,
+      "slotID": 0,
+      "totalLaps": 0,
+      "vehicleName": "Huracan Custom Team 2024 #397"
+    }
+  ],
+  "1": [
+    {
+      "carClass": "GT3",
+      "driverName": "Nuri Eren",
+      "finishStatus": "FSTAT_NONE",
+      "lapTime": -1.0,
+      "pitting": true,
+      "position": 2,
+      "sectorTime1": -1.0,
+      "sectorTime2": -1.0,
+      "slotID": 1,
+      "totalLaps": 0,
+      "vehicleName": "Iron Dames 2025 #85:LM"
+    }
+  ],
+  "10": [
+    {
+      "carClass": "GT3",
+      "driverName": "Karl Landy",
+      "finishStatus": "FSTAT_NONE",
+      "lapTime": -1.0,
+      "pitting": true,
+      "position": 11,
+      "sectorTime1": -1.0,
+      "sectorTime2": -1.0,
+      "slotID": 10,
+      "totalLaps": 0,
+      "vehicleName": "TF Sport 2025 #81:LM"
+    }
+  ],
+  "11": [
+    {
+      "carClass": "GT3",
+      "driverName": "Omar Ibrahim",
+      "finishStatus": "FSTAT_NONE",
+      "lapTime": -1.0,
+      "pitting": true,
+      "position": 12,
+      "sectorTime1": -1.0,
+      "sectorTime2": -1.0,
+      "slotID": 11,
+      "totalLaps": 0,
+      "vehicleName": "Z06GT3R Custom Team 2025 #397"
+    }
+  ],
+  "12": [
+    {
+      "carClass": "GT3",
+      "driverName": "Oliver LOL",
+      "finishStatus": "FSTAT_NONE",
+      "lapTime": -1.0,
+      "pitting": true,
+      "position": 13,
+      "sectorTime1": -1.0,
+      "sectorTime2": -1.0,
+      "slotID": 12,
+      "totalLaps": 0,
+      "vehicleName": "Akkodis ASP Team 2025 #87:LM"
+    }
+  ],
+  "13": [
+    {
+      "carClass": "GT3",
+      "driverName": "STEF YTHIER",
+      "finishStatus": "FSTAT_NONE",
+      "lapTime": -1.0,
+      "pitting": true,
+      "position": 14,
+      "sectorTime1": -1.0,
+      "sectorTime2": -1.0,
+      "slotID": 13,
+      "totalLaps": 0,
+      "vehicleName": "Huracan Custom Team 2024 #397"
+    }
+  ],
+  "14": [
+    {
+      "carClass": "GT3",
+      "driverName": "Vlad Cibulya",
+      "finishStatus": "FSTAT_NONE",
+      "lapTime": -1.0,
+      "pitting": true,
+      "position": 15,
+      "sectorTime1": -1.0,
+      "sectorTime2": -1.0,
+      "slotID": 14,
+      "totalLaps": 0,
+      "vehicleName": "The Bend Team WRT 2025 #31:BRZ"
+    }
+  ],
+  "15": [
+    {
+      "carClass": "GT3",
+      "driverName": "Jeffrey Franco",
+      "finishStatus": "FSTAT_NONE",
+      "lapTime": -1.0,
+      "pitting": true,
+      "position": 16,
+      "sectorTime1": -1.0,
+      "sectorTime2": -1.0,
+      "slotID": 15,
+      "totalLaps": 0,
+      "vehicleName": "Manthey Ema 2024 #91:LM"
+    }
+  ],
+  "16": [
+    {
+      "carClass": "GT3",
+      "driverName": "Yiye Lim",
+      "finishStatus": "FSTAT_NONE",
+      "lapTime": -1.0,
+      "pitting": true,
+      "position": 17,
+      "sectorTime1": -1.0,
+      "sectorTime2": -1.0,
+      "slotID": 16,
+      "totalLaps": 0,
+      "vehicleName": "JMW Motorsport 2024 2024 #66:LM"
+    }
+  ],
+  "17": [
+    {
+      "carClass": "GT3",
+      "driverName": "Caleb Smith",
+      "finishStatus": "FSTAT_NONE",
+      "lapTime": -1.0,
+      "pitting": true,
+      "position": 18,
+      "sectorTime1": -1.0,
+      "sectorTime2": -1.0,
+      "slotID": 17,
+      "totalLaps": 0,
+      "vehicleName": "Vista AF Corse 2025 #54:WEC"
+    }
+  ],
+  "18": [
+    {
+      "carClass": "GT3",
+      "driverName": "Bradley Drake",
+      "finishStatus": "FSTAT_NONE",
+      "lapTime": -1.0,
+      "pitting": true,
+      "position": 19,
+      "sectorTime1": -1.0,
+      "sectorTime2": -1.0,
+      "slotID": 18,
+      "totalLaps": 0,
+      "vehicleName": "BMW GT3 Custom Team #397"
+    }
+  ],
+  "19": [
+    {
+      "carClass": "GT3",
+      "driverName": "Dan Dan",
+      "finishStatus": "FSTAT_NONE",
+      "lapTime": -1.0,
+      "pitting": true,
+      "position": 20,
+      "sectorTime1": -1.0,
+      "sectorTime2": -1.0,
+      "slotID": 19,
+      "totalLaps": 0,
+      "vehicleName": "Proton Racing 2024 #44:LM"
+    }
+  ],
+  "2": [
+    {
+      "carClass": "GT3",
+      "driverName": "Devon Cutrone",
+      "finishStatus": "FSTAT_NONE",
+      "lapTime": -1.0,
+      "pitting": true,
+      "position": 3,
+      "sectorTime1": -1.0,
+      "sectorTime2": -1.0,
+      "slotID": 2,
+      "totalLaps": 0,
+      "vehicleName": "Huracan Custom Team 2024 #397"
+    }
+  ],
+  "20": [
+    {
+      "carClass": "GT3",
+      "driverName": "Blake Thomas",
+      "finishStatus": "FSTAT_NONE",
+      "lapTime": -1.0,
+      "pitting": true,
+      "position": 21,
+      "sectorTime1": -1.0,
+      "sectorTime2": -1.0,
+      "slotID": 20,
+      "totalLaps": 0,
+      "vehicleName": "Proton Racing 2024 #77:LM"
+    }
+  ],
+  "21": [
+    {
+      "carClass": "GT3",
+      "driverName": "Mondo Mando",
+      "finishStatus": "FSTAT_NONE",
+      "lapTime": -1.0,
+      "pitting": true,
+      "position": 22,
+      "sectorTime1": -1.0,
+      "sectorTime2": -1.0,
+      "slotID": 21,
+      "totalLaps": 0,
+      "vehicleName": "Team WRT 2024 #31:WEC"
+    }
+  ],
+  "3": [
+    {
+      "carClass": "GT3",
+      "driverName": "Ashton McLean",
+      "finishStatus": "FSTAT_NONE",
+      "lapTime": -1.0,
+      "pitting": true,
+      "position": 4,
+      "sectorTime1": -1.0,
+      "sectorTime2": -1.0,
+      "slotID": 3,
+      "totalLaps": 0,
+      "vehicleName": "Racing Spirit of Léman 2025 #59:ELMS"
+    }
+  ],
+  "4": [
+    {
+      "carClass": "GT3",
+      "driverName": "Tyler Hall",
+      "finishStatus": "FSTAT_NONE",
+      "lapTime": -1.0,
+      "pitting": true,
+      "position": 5,
+      "sectorTime1": -1.0,
+      "sectorTime2": -1.0,
+      "slotID": 4,
+      "totalLaps": 0,
+      "vehicleName": "Proton Racing 2024 #88:LM"
+    }
+  ],
+  "5": [
+    {
+      "carClass": "GT3",
+      "driverName": "Lebron James#7263",
+      "finishStatus": "FSTAT_NONE",
+      "lapTime": -1.0,
+      "pitting": true,
+      "position": 6,
+      "sectorTime1": -1.0,
+      "sectorTime2": -1.0,
+      "slotID": 5,
+      "totalLaps": 0,
+      "vehicleName": "Vista AF Corse 2025 #21:LM"
+    }
+  ],
+  "6": [
+    {
+      "carClass": "GT3",
+      "driverName": "Werner Meyer",
+      "finishStatus": "FSTAT_NONE",
+      "lapTime": -1.0,
+      "pitting": true,
+      "position": 7,
+      "sectorTime1": -1.0,
+      "sectorTime2": -1.0,
+      "slotID": 6,
+      "totalLaps": 0,
+      "vehicleName": "Team WRT 2025 #46:LM"
+    }
+  ],
+  "7": [
+    {
+      "carClass": "GT3",
+      "driverName": "Phil Robichaud",
+      "finishStatus": "FSTAT_NONE",
+      "lapTime": -1.0,
+      "pitting": true,
+      "position": 8,
+      "sectorTime1": -1.0,
+      "sectorTime2": -1.0,
+      "slotID": 7,
+      "totalLaps": 0,
+      "vehicleName": "Racing Spirit of Léman 2025 #10:LM"
+    }
+  ],
+  "8": [
+    {
+      "carClass": "GT3",
+      "driverName": "Cameron Page",
+      "finishStatus": "FSTAT_NONE",
+      "lapTime": -1.0,
+      "pitting": true,
+      "position": 9,
+      "sectorTime1": -1.0,
+      "sectorTime2": -1.0,
+      "slotID": 8,
+      "totalLaps": 0,
+      "vehicleName": "Inception Racing 2024 #70:LM"
+    }
+  ],
+  "9": [
+    {
+      "carClass": "GT3",
+      "driverName": "Leonaldo Ferdinand",
+      "finishStatus": "FSTAT_NONE",
+      "lapTime": -1.0,
+      "pitting": true,
+      "position": 10,
+      "sectorTime1": -1.0,
+      "sectorTime2": -1.0,
+      "slotID": 9,
+      "totalLaps": 0,
+      "vehicleName": "The Bend Team WRT 2025 #31:LM"
+    }
+  ]
+}
