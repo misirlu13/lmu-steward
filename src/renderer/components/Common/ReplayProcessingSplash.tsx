@@ -1,12 +1,29 @@
-import { Backdrop, Box, CircularProgress, Paper, Stack, Typography } from '@mui/material';
+import {
+  Backdrop,
+  Box,
+  CircularProgress,
+  LinearProgress,
+  Paper,
+  Stack,
+  Typography,
+} from '@mui/material';
 
 interface ReplayProcessingSplashProps {
   open: boolean;
+  progressPercentage: number;
+  processedCount: number;
+  totalCount: number;
 }
 
 export const ReplayProcessingSplash: React.FC<ReplayProcessingSplashProps> = ({
   open,
+  progressPercentage,
+  processedCount,
+  totalCount,
 }) => {
+  const normalizedPercentage = Math.max(0, Math.min(1, progressPercentage || 0));
+  const progressPercentLabel = Math.round(normalizedPercentage * 100);
+
   return (
     <Backdrop
       open={open}
@@ -37,6 +54,32 @@ export const ReplayProcessingSplash: React.FC<ReplayProcessingSplashProps> = ({
           <Typography variant="body2" color="text.secondary">
             LMU Steward is syncing and analyzing replay data. Please keep this window open.
           </Typography>
+          <Stack spacing={0.75}>
+            <Box
+              sx={{
+                display: 'flex',
+                justifyContent: 'space-between',
+                alignItems: 'center',
+              }}
+            >
+              <Typography variant="caption" color="text.secondary">
+                {totalCount > 0
+                  ? `${Math.min(processedCount, totalCount)} / ${totalCount} replays`
+                  : 'Preparing replay sync'}
+              </Typography>
+              <Typography variant="caption" color="text.secondary" fontWeight={700}>
+                {`${progressPercentLabel}%`}
+              </Typography>
+            </Box>
+            <LinearProgress
+              variant="determinate"
+              value={progressPercentLabel}
+              sx={{
+                height: 8,
+                borderRadius: 999,
+              }}
+            />
+          </Stack>
         </Stack>
       </Paper>
     </Backdrop>

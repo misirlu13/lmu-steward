@@ -17,7 +17,12 @@ import { AppExitConfirmDialog } from './components/Common/AppExitConfirmDialog';
 import { ReplayProcessingSplash } from './components/Common/ReplayProcessingSplash';
 
 const AppRoutesShell = () => {
-  const { isConnected, hasApiStatusResponse, isReplaySyncInProgress } = useApi();
+  const {
+    isConnected,
+    hasApiStatusResponse,
+    isReplaySyncInProgress,
+    replaySyncStatus,
+  } = useApi();
   const location = useLocation();
   const showDisconnectedDialog =
     hasApiStatusResponse && !isConnected && location.pathname !== '/user-settings';
@@ -50,7 +55,12 @@ const AppRoutesShell = () => {
         </Routes>
       </Container>
       <LmuDisconnectedDialog open={showDisconnectedDialog} />
-      <ReplayProcessingSplash open={isReplaySyncInProgress} />
+      <ReplayProcessingSplash
+        open={isReplaySyncInProgress}
+        progressPercentage={replaySyncStatus.percentage}
+        processedCount={replaySyncStatus.processed}
+        totalCount={replaySyncStatus.total}
+      />
       <AppExitConfirmDialog />
     </>
   );

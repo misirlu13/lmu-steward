@@ -11,6 +11,7 @@ export const CONSTANTS = {
     GET_TRACK_THUMBNAIL: 'get.track-thumbnail',
     GET_USER_SETTINGS: 'get.user-settings',
     PUSH_USER_SETTINGS: 'push.user-settings',
+    PUSH_REPLAY_SYNC_STATUS: 'push.replay-sync-status',
     GET_PROFILE_INFO: 'get.profile-info',
     GET_STANDINGS_HISTORY: 'get.standings-history',
     GET_STANDINGS: 'get.standings',

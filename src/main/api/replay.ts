@@ -39,6 +39,12 @@ interface ReplayStore {
   set: (key: string, value: unknown) => void;
 }
 
+interface ReplaySyncProgress {
+  processed: number;
+  total: number;
+  percentage: number;
+}
+
 interface ParsedRaceResults {
   DateTime?: number;
   TrackVenue?: string;
@@ -225,10 +231,30 @@ export const getReplayData = async (): Promise<LMUReplay[]> => {
   });
 };
 
-export const syncReplayData = async (): Promise<void> => {
+export const syncReplayData = async (
+  onProgress?: (progress: ReplaySyncProgress) => void,
+): Promise<void> => {
   return new Promise(async (resolve, reject) => {
     try {
       const data = await getReplayData();
+      const totalReplayCount = data.length;
+      let processedReplayCount = 0;
+
+      const reportProgress = () => {
+        const percentage =
+          totalReplayCount <= 0
+            ? 1
+            : Math.min(1, processedReplayCount / totalReplayCount);
+
+        onProgress?.({
+          processed: processedReplayCount,
+          total: totalReplayCount,
+          percentage,
+        });
+      };
+
+      reportProgress();
+
       const replayStore = getReplayStore();
       const storedReplay =
         (replayStore.get('replays') as Record<string, ReplayCacheEntry>) || {};
@@ -246,11 +272,18 @@ export const syncReplayData = async (): Promise<void> => {
       for (const replay of data) {
         const hash = generateReplayHash(replay);
         const identityKey = buildReplayCacheIdentityKey(replay);
+
+        const markReplayProcessed = () => {
+          processedReplayCount += 1;
+          reportProgress();
+        };
+
         (replay as LMUReplay).hash = hash;
         delete replay.id; // Remove the original ID as it's no longer needed
 
         const existingReplayByHash = storedReplay[hash];
         if (existingReplayByHash) {
+          markReplayProcessed();
           await yieldToEventLoop();
           continue;
         }
@@ -262,6 +295,7 @@ export const syncReplayData = async (): Promise<void> => {
             ...replay,
             hash,
           };
+          markReplayProcessed();
           await yieldToEventLoop();
           continue;
         }
@@ -277,6 +311,8 @@ export const syncReplayData = async (): Promise<void> => {
             storedReplayByIdentity.set(identityKey, replay);
           }
         }
+
+        markReplayProcessed();
 
         await yieldToEventLoop();
       }
@@ -298,7 +334,23 @@ export const syncReplayData = async (): Promise<void> => {
  * [{"id":0,"metadata":{"sceneDesc":"SEBRINGWEC","session":"RACE"},"replayDirectory":"C:\\Program Files (x86)\\Steam\\steamapps\\common\\Le Mans Ultimate\\UserData\\Replays\\","replayName":"Sebring International Raceway R1 9","size":130114953,"timestamp":1771050720},{"id":1,"metadata":{"sceneDesc":"SEBRINGWEC","session":"QUALIFY"},"replayDirectory":"C:\\Program Files (x86)\\Steam\\steamapps\\common\\Le Mans Ultimate\\UserData\\Replays\\","replayName":"Sebring International Raceway Q1 9","size":40256309,"timestamp":1771050720},{"id":2,"metadata":{"sceneDesc":"SEBRINGWEC","session":"PRACTICE"},"replayDirectory":"C:\\Program Files (x86)\\Steam\\steamapps\\common\\Le Mans Ultimate\\UserData\\Replays\\","replayName":"Sebring International Raceway P1 24","size":8675228,"timestamp":1771050720}]
  */
 export const getReplays = async (event: Electron.IpcMainEvent) => {
+  let latestProgress: ReplaySyncProgress = {
+    processed: 0,
+    total: 0,
+    percentage: 0,
+  };
+
   try {
+    const publishReplaySyncStatus = (payload: {
+      status: 'idle' | 'in-progress' | 'success' | 'error';
+      percentage: number;
+      processed: number;
+      total: number;
+      message?: string;
+    }) => {
+      event.reply(CONSTANTS.API.PUSH_REPLAY_SYNC_STATUS, payload);
+    };
+
     try {
       const settings = await readUserSettings();
       const isFirstRun = Boolean(settings?.firstRun ?? true);
@@ -313,7 +365,29 @@ export const getReplays = async (event: Electron.IpcMainEvent) => {
       console.warn('Unable to evaluate first-run replay delay:', firstRunError);
     }
 
-    await syncReplayData();
+    publishReplaySyncStatus({
+      status: 'in-progress',
+      percentage: 0,
+      processed: 0,
+      total: 0,
+    });
+
+    await syncReplayData((progress) => {
+      latestProgress = progress;
+      publishReplaySyncStatus({
+        status: 'in-progress',
+        percentage: progress.percentage,
+        processed: progress.processed,
+        total: progress.total,
+      });
+    });
+
+    publishReplaySyncStatus({
+      status: 'success',
+      percentage: 1,
+      processed: latestProgress.total,
+      total: latestProgress.total,
+    });
 
     try {
       await writeUserSettings({
@@ -334,6 +408,14 @@ export const getReplays = async (event: Electron.IpcMainEvent) => {
       ),
     });
   } catch (error: unknown) {
+    event.reply(CONSTANTS.API.PUSH_REPLAY_SYNC_STATUS, {
+      status: 'error',
+      percentage: latestProgress.percentage,
+      processed: latestProgress.processed,
+      total: latestProgress.total,
+      message: toErrorMessage(error),
+    });
+
     event.reply(CONSTANTS.API.GET_REPLAYS, {
       status: 'error',
       message: toErrorMessage(error),

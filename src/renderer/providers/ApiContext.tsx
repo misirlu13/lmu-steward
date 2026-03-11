@@ -8,7 +8,7 @@ import React, {
 } from 'react';
 import { initializeMessageBus, sendMessage } from '../utils/postMessage';
 import { CONSTANTS } from '@constants';
-import { LMUReplay, LoadingState } from '@types';
+import { LMUReplay, LoadingState, ReplaySyncStatus } from '@types';
 
 interface ReplayResponse {
   status: string;
@@ -24,6 +24,7 @@ interface ApiContextType {
   quickViewEnabled: boolean;
   lastReplaySyncAt: number | null;
   isReplaySyncInProgress: boolean;
+  replaySyncStatus: ReplaySyncStatus;
   isReplayActive: boolean | null;
   currentTrackMap: { data?: unknown } | null;
   replays: ReplayResponse | null;
@@ -42,6 +43,12 @@ const ApiContext = createContext<ApiContextType>({
   quickViewEnabled: false,
   lastReplaySyncAt: null,
   isReplaySyncInProgress: false,
+  replaySyncStatus: {
+    status: 'idle',
+    percentage: 0,
+    processed: 0,
+    total: 0,
+  },
   isReplayActive: null,
   currentTrackMap: null,
   replays: null,
@@ -60,6 +67,12 @@ export const ApiProvider: React.FC<{ children: React.ReactNode }> = ({
   const [lastReplaySyncAt, setLastReplaySyncAt] = useState<number | null>(null);
   const [activeReplaySyncRequestCount, setActiveReplaySyncRequestCount] =
     useState(0);
+  const [replaySyncStatus, setReplaySyncStatus] = useState<ReplaySyncStatus>({
+    status: 'idle',
+    percentage: 0,
+    processed: 0,
+    total: 0,
+  });
   const [isReplayActive, setIsReplayActive] = useState<boolean | null>(null);
   const [currentTrackMap, setCurrentTrackMap] = useState<
     { data?: unknown } | null
@@ -101,6 +114,12 @@ export const ApiProvider: React.FC<{ children: React.ReactNode }> = ({
 
   const requestReplays = useCallback(() => {
     setActiveReplaySyncRequestCount((previousCount) => previousCount + 1);
+    setReplaySyncStatus({
+      status: 'in-progress',
+      percentage: 0,
+      processed: 0,
+      total: 0,
+    });
     sendMessage(CONSTANTS.API.GET_REPLAYS);
   }, []);
 
@@ -163,7 +182,7 @@ export const ApiProvider: React.FC<{ children: React.ReactNode }> = ({
       [CONSTANTS.API.GET_REPLAYS]: createHandler(
         CONSTANTS.API.GET_REPLAYS,
         (data: unknown) => {
-          const payload = data as ReplayResponse;
+          const payload = data as ReplayResponse & { message?: string };
           setActiveReplaySyncRequestCount((previousCount) =>
             Math.max(0, previousCount - 1),
           );
@@ -171,7 +190,42 @@ export const ApiProvider: React.FC<{ children: React.ReactNode }> = ({
 
           if (payload?.status === 'success') {
             setLastReplaySyncAt(Date.now());
+            setReplaySyncStatus((previous) => ({
+              ...previous,
+              status: 'success',
+              percentage: 1,
+            }));
+            return;
           }
+
+          setReplaySyncStatus((previous) => ({
+            ...previous,
+            status: 'error',
+            message: payload?.message,
+          }));
+        },
+      ),
+      [CONSTANTS.API.PUSH_REPLAY_SYNC_STATUS]: createHandler(
+        CONSTANTS.API.PUSH_REPLAY_SYNC_STATUS,
+        (data: unknown) => {
+          const payload = data as ReplaySyncStatus;
+          const normalizedPercentage = Math.max(
+            0,
+            Math.min(1, Number(payload?.percentage ?? 0)),
+          );
+          const normalizedProcessed = Math.max(
+            0,
+            Number(payload?.processed ?? 0),
+          );
+          const normalizedTotal = Math.max(0, Number(payload?.total ?? 0));
+
+          setReplaySyncStatus({
+            status: payload?.status ?? 'idle',
+            percentage: normalizedPercentage,
+            processed: normalizedProcessed,
+            total: normalizedTotal,
+            message: payload?.message,
+          });
         },
       ),
       [CONSTANTS.API.GET_IS_REPLAY_ACTIVE]: createHandler(
@@ -301,6 +355,7 @@ export const ApiProvider: React.FC<{ children: React.ReactNode }> = ({
     quickViewEnabled,
     lastReplaySyncAt,
     isReplaySyncInProgress: activeReplaySyncRequestCount > 0,
+    replaySyncStatus,
     isReplayActive,
     currentTrackMap,
     replays,

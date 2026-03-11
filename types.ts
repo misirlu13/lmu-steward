@@ -52,3 +52,11 @@ export interface LoadingState {
   loading: boolean;
   percentage: number;
 }
+
+export interface ReplaySyncStatus {
+  status: 'idle' | 'in-progress' | 'success' | 'error';
+  percentage: number;
+  processed: number;
+  total: number;
+  message?: string;
+}

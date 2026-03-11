@@ -30,6 +30,7 @@ describe('ApiContext integration', () => {
       isConnected,
       quickViewEnabled,
       isReplaySyncInProgress,
+      replaySyncStatus,
       hasApiStatusResponse,
       requestReplays,
       subscribeToApiChannel,
@@ -48,6 +49,10 @@ describe('ApiContext integration', () => {
         <div data-testid="connected">{String(isConnected)}</div>
         <div data-testid="quick-view">{String(quickViewEnabled)}</div>
         <div data-testid="syncing">{String(isReplaySyncInProgress)}</div>
+        <div data-testid="sync-progress">{String(replaySyncStatus.percentage)}</div>
+        <div data-testid="sync-counts">
+          {`${replaySyncStatus.processed}/${replaySyncStatus.total}`}
+        </div>
         <div data-testid="api-status-response">{String(hasApiStatusResponse)}</div>
         <div data-testid="session-info-status">{sessionInfoStatus}</div>
         <button onClick={requestReplays}>request replays</button>
@@ -118,6 +123,13 @@ describe('ApiContext integration', () => {
     });
 
     act(() => {
+      handlers[CONSTANTS.API.PUSH_REPLAY_SYNC_STATUS]?.({
+        status: 'in-progress',
+        percentage: 0.5,
+        processed: 5,
+        total: 10,
+      });
+
       handlers[CONSTANTS.API.GET_REPLAYS]?.({
         status: 'success',
         data: [],
@@ -133,6 +145,8 @@ describe('ApiContext integration', () => {
 
     await waitFor(() => {
       expect(screen.getByTestId('syncing').textContent).toBe('false');
+      expect(screen.getByTestId('sync-progress').textContent).toBe('1');
+      expect(screen.getByTestId('sync-counts').textContent).toBe('5/10');
       expect(screen.getByTestId('session-info-status').textContent).toBe('success');
     });
   });
