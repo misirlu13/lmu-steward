@@ -14,12 +14,13 @@ jobs:
       - name: Check out Git repository
         shell: pwsh
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GIT_TERMINAL_PROMPT: "0"
         run: |
           git init .
-          git remote add origin "https://github.com/$env:GITHUB_REPOSITORY.git"
-          git -c http.extraheader="AUTHORIZATION: bearer $env:GITHUB_TOKEN" fetch --no-tags --prune --depth=1 origin $env:GITHUB_SHA
-          git checkout --force --detach FETCH_HEAD
+          git config --local credential.helper ""
+          git remote add origin "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}.git"
+          git fetch --no-tags --prune --depth=1 origin "${{ github.ref }}"
+          git checkout --force FETCH_HEAD
 
       - name: Use Node.js 22 from runner tool cache
         shell: pwsh
