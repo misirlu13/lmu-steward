@@ -1,16 +1,13 @@
 import React from 'react';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
-import { render, screen } from '@testing-library/react';
+import { fireEvent, render, screen } from '@testing-library/react';
+import { CONSTANTS } from '@constants';
 import { ReplayView } from './Replay';
 import { useApi } from '../providers/ApiContext';
-import { useNavbar } from '../providers/NavbarContext';
+import { sendMessage } from '../utils/postMessage';
 
 jest.mock('../providers/ApiContext', () => ({
   useApi: jest.fn(),
-}));
-
-jest.mock('../providers/NavbarContext', () => ({
-  useNavbar: jest.fn(),
 }));
 
 jest.mock('../utils/postMessage', () => ({
@@ -23,15 +20,18 @@ jest.mock('../components/Replay/ReplayJumpBar', () => ({
 
 jest.mock('../components/Common/ViewHeader', () => ({
   ViewHeader: ({
+    breadcrumb,
     title,
     subtitle,
     actions,
   }: {
+    breadcrumb: React.ReactNode;
     title: React.ReactNode;
     subtitle: React.ReactNode;
     actions: React.ReactNode;
   }) => (
     <div data-testid="view-header">
+      <div>{breadcrumb}</div>
       <div>{title}</div>
       <div>{subtitle}</div>
       <div>{actions}</div>
@@ -75,7 +75,7 @@ jest.mock('../components/Replay/ReplayIncidentHeatmap', () => ({
 
 describe('ReplayView quick view integration', () => {
   const useApiMock = useApi as jest.MockedFunction<typeof useApi>;
-  const useNavbarMock = useNavbar as jest.MockedFunction<typeof useNavbar>;
+  const sendMessageMock = sendMessage as jest.MockedFunction<typeof sendMessage>;
 
   const replayRecord = {
     hash: 'hash-1',
@@ -98,15 +98,13 @@ describe('ReplayView quick view integration', () => {
 
   beforeEach(() => {
     jest.clearAllMocks();
-    useNavbarMock.mockReturnValue({
-      setContent: jest.fn(),
-    } as unknown as ReturnType<typeof useNavbar>);
   });
 
   const renderReplay = () => {
     render(
       <MemoryRouter initialEntries={['/replay/hash-1']}>
         <Routes>
+          <Route path="/" element={<div data-testid="dashboard-route" />} />
           <Route path="/replay/:replayHash" element={<ReplayView />} />
         </Routes>
       </MemoryRouter>,
@@ -153,5 +151,23 @@ describe('ReplayView quick view integration', () => {
     expect(screen.getByTestId('replay-summary').textContent).toContain(
       'quick-view:false',
     );
+  });
+
+  it('returns to dashboard when dashboard breadcrumb is clicked', () => {
+    useApiMock.mockReturnValue({
+      currentReplay: replayRecord,
+      currentTrackMap: null,
+      loadingState: { loading: false, percentage: -1 },
+      isReplayActive: true,
+      quickViewEnabled: true,
+      replays: { status: 'success', data: [replayRecord] },
+      subscribeToApiChannel: jest.fn(() => () => {}),
+    } as unknown as ReturnType<typeof useApi>);
+
+    renderReplay();
+
+    fireEvent.click(screen.getByText('Dashboard'));
+
+    expect(sendMessageMock).toHaveBeenCalledWith(CONSTANTS.API.POST_CLOSE_REPLAY);
   });
 });

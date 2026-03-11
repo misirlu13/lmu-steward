@@ -250,12 +250,12 @@
     ],
     "publish": {
       "provider": "github",
-      "owner": "lmu-steward",
+      "owner": "misirlu13",
       "repo": "lmu-steward"
     }
   },
   "collective": {
-    "url": "https://github.com/lmu-steward/lmu-steward"
+    "url": "https://github.com/misirlu13/lmu-steward"
   },
   "devEngines": {
     "runtime": {

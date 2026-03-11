@@ -16,7 +16,6 @@ import {
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { CONSTANTS } from '@constants';
 import { useNavigate } from 'react-router-dom';
-import { useNavbar } from '../providers/NavbarContext';
 import { ViewHeader } from '../components/Common/ViewHeader';
 import { sendMessage } from '../utils/postMessage';
 import { useApi } from '../providers/ApiContext';
@@ -67,7 +66,6 @@ type AutosaveStatus = 'idle' | 'saving' | 'saved' | 'failed';
 
 export const UserSettingsView: React.FC = () => {
   const navigate = useNavigate();
-  const { setContent } = useNavbar();
   const { isConnected, hasApiStatusResponse, lastReplaySyncAt, requestReplays } = useApi();
   const [lmuExecutablePath, setLmuExecutablePath] = useState<string>(
     CONSTANTS.LMU_DEFAULT_EXECUTABLE_PATH,
@@ -173,16 +171,6 @@ export const UserSettingsView: React.FC = () => {
     saveModeRef.current = mode;
     sendMessage(CONSTANTS.API.POST_USER_SETTINGS, payload);
   };
-
-  useEffect(() => {
-    setContent(
-      <Box sx={{ display: 'flex', pl: 2 }}>
-        <Typography variant="h6" noWrap>
-          User Settings
-        </Typography>
-      </Box>,
-    );
-  }, [setContent]);
 
   useEffect(() => {
     const applyUserSettingsResponse = (response: ApiResponse) => {

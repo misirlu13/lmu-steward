@@ -6,7 +6,6 @@ import Drawer from '@mui/material/Drawer';
 import { Box, Button, Paper, Stack, Tooltip, Typography } from '@mui/material';
 import { sendMessage } from '../utils/postMessage';
 import { useApi } from '../providers/ApiContext';
-import { useNavbar } from '../providers/NavbarContext';
 import { ReplayJumpBar } from '../components/Replay/ReplayJumpBar';
 import { ViewHeader } from '../components/Common/ViewHeader';
 import { ReplaySubtitle } from '../components/Common/ReplaySubtitle';
@@ -22,9 +21,7 @@ import {
   ReplayDriverStanding,
   ReplayDriverStandings,
 } from '../components/Replay/ReplayDriverStandings';
-import {
-  ReplayIncidentHeatmap,
-} from '../components/Replay/ReplayIncidentHeatmap';
+import { ReplayIncidentHeatmap } from '../components/Replay/ReplayIncidentHeatmap';
 import { getSessionIncidents } from '../utils/sessionUtils';
 import { SESSION_COLOR_MAPPING } from '../utils/sessionColorMapping';
 import { jumpToIncidentInReplay } from '../utils/replayCommands';
@@ -37,9 +34,7 @@ import {
   buildReplayWeather,
   computeReplayIncidentScorePerDriver,
 } from '../utils/replaySummaryViewModel';
-import {
-  resolveReplayHeaderMetadata,
-} from '../utils/replayMetadata';
+import { resolveReplayHeaderMetadata } from '../utils/replayMetadata';
 import { useReplayDerivedData } from '../hooks/useReplayDerivedData';
 import { useReplayViewOrchestration } from '../hooks/useReplayViewOrchestration';
 
@@ -47,7 +42,6 @@ const PARTIAL_REPLAY_DATA_NOTICE =
   'Partial replay data detected. This replay appears to have started after the live session was already in progress, so incident timing may be approximate.';
 
 export const ReplayView: React.FC = () => {
-  const { setContent } = useNavbar();
   const { replayHash } = useParams<{ replayHash: string }>();
   const {
     currentReplay,
@@ -104,16 +98,6 @@ export const ReplayView: React.FC = () => {
     [replayForView],
   );
 
-  useEffect(() => {
-    setContent(
-      <Box sx={{ display: 'flex', pl: 2 }}>
-        <Typography variant="h6" noWrap>
-          Session Analysis
-        </Typography>
-      </Box>,
-    );
-  }, [setContent]);
-
   const onBackToDashboard = () => {
     sendMessage(CONSTANTS.API.POST_CLOSE_REPLAY);
     navigate(`/`);
@@ -147,12 +131,10 @@ export const ReplayView: React.FC = () => {
     cachedTrackMapData: cachedReplayData?.trackMapData ?? null,
   });
 
-  const replaySessionInfo = sessionInfoData as
-    | {
-        maximumLaps?: number | string;
-        endEventTime?: number | string;
-      }
-    | null;
+  const replaySessionInfo = sessionInfoData as {
+    maximumLaps?: number | string;
+    endEventTime?: number | string;
+  } | null;
 
   useEffect(() => {
     if (!timelineEvents.length) {
@@ -188,7 +170,8 @@ export const ReplayView: React.FC = () => {
   );
 
   const durationLabel = useMemo(
-    () => buildReplayDurationLabel(Number(replaySessionInfo?.endEventTime ?? 0)),
+    () =>
+      buildReplayDurationLabel(Number(replaySessionInfo?.endEventTime ?? 0)),
     [replaySessionInfo?.endEventTime],
   );
   const totalIncidents = useMemo(() => {
@@ -249,7 +232,12 @@ export const ReplayView: React.FC = () => {
       <ViewHeader
         breadcrumb={
           <Stack direction="row" alignItems="center" spacing={1}>
-            <Typography variant="caption" color="text.secondary">
+            <Typography
+              variant="caption"
+              color="text.secondary"
+              sx={{ cursor: 'pointer' }}
+              onClick={onBackToDashboard}
+            >
               Dashboard
             </Typography>
             <Typography variant="caption" color="text.secondary">
@@ -291,10 +279,18 @@ export const ReplayView: React.FC = () => {
             />
             {isPartialReplayDataDetected ? (
               <Stack direction="row" spacing={0.5} alignItems="center">
-                <Typography variant="caption" color="warning.main" fontWeight={700}>
+                <Typography
+                  variant="caption"
+                  color="warning.main"
+                  fontWeight={700}
+                >
                   Partial replay data detected
                 </Typography>
-                <Tooltip title={PARTIAL_REPLAY_DATA_NOTICE} arrow placement="right">
+                <Tooltip
+                  title={PARTIAL_REPLAY_DATA_NOTICE}
+                  arrow
+                  placement="right"
+                >
                   <InfoOutlinedIcon
                     sx={{ color: 'warning.main', fontSize: '0.9rem' }}
                   />

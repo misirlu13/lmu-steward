@@ -4,15 +4,10 @@ import { MemoryRouter } from 'react-router-dom';
 import { CONSTANTS } from '@constants';
 import { UserSettingsView } from './UserSettings';
 import { useApi } from '../providers/ApiContext';
-import { useNavbar } from '../providers/NavbarContext';
 import { sendMessage } from '../utils/postMessage';
 
 jest.mock('../providers/ApiContext', () => ({
   useApi: jest.fn(),
-}));
-
-jest.mock('../providers/NavbarContext', () => ({
-  useNavbar: jest.fn(),
 }));
 
 jest.mock('../utils/postMessage', () => ({
@@ -30,7 +25,6 @@ jest.mock('../components/Common/ViewHeader', () => ({
 
 describe('UserSettingsView integration', () => {
   const useApiMock = useApi as jest.MockedFunction<typeof useApi>;
-  const useNavbarMock = useNavbar as jest.MockedFunction<typeof useNavbar>;
   const sendMessageMock = sendMessage as jest.MockedFunction<typeof sendMessage>;
 
   const ipcHandlers: Record<string, (...args: unknown[]) => void> = {};
@@ -48,7 +42,6 @@ describe('UserSettingsView integration', () => {
       },
     };
 
-    useNavbarMock.mockReturnValue({ setContent: jest.fn() } as unknown as ReturnType<typeof useNavbar>);
     useApiMock.mockReturnValue({
       isConnected: true,
       hasApiStatusResponse: true,

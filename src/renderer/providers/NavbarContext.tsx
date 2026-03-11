@@ -1,20 +1,25 @@
-import React, {createContext, useContext, useState} from 'react';
+import React, { createContext, useContext, useState } from 'react';
 
 interface NavbarContextType {
-  content: React.ReactNode;
-  setContent: (content: React.ReactNode) => void;
+  isViewHeaderAttached: boolean;
+  setIsViewHeaderAttached: (isViewHeaderAttached: boolean) => void;
 }
 
 const NavbarContext = createContext<NavbarContextType>({
-  content: null,
-  setContent: () => {},
+  isViewHeaderAttached: false,
+  setIsViewHeaderAttached: () => {},
 });
 
-export const NavbarProvider: React.FC<{children: React.ReactNode}> = ({children}) => {
-  const [content, setContent] = useState<React.ReactNode>(null);
+export const NavbarProvider: React.FC<{ children: React.ReactNode }> = ({
+  children,
+}) => {
+  const [isViewHeaderAttached, setIsViewHeaderAttached] =
+    useState<boolean>(false);
 
   return (
-    <NavbarContext.Provider value={{content, setContent}}>
+    <NavbarContext.Provider
+      value={{ isViewHeaderAttached, setIsViewHeaderAttached }}
+    >
       {children}
     </NavbarContext.Provider>
   );

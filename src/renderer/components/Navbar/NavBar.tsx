@@ -9,17 +9,17 @@ import Avatar from '@mui/material/Avatar';
 import Tooltip from '@mui/material/Tooltip';
 import SettingsRoundedIcon from '@mui/icons-material/SettingsRounded';
 import { useNavigate } from 'react-router-dom';
-import { useNavbar } from '../../providers/NavbarContext';
 import { useEffect, useState } from 'react';
 import { CONSTANTS } from '@constants';
 import { sendMessage } from '../../utils/postMessage';
 import { getProfileInitials } from '../../utils/profileInitials';
 import navLogoIcon from '../../../../assets/icons/48x48.png';
+import { useNavbar } from '@/renderer/providers/NavbarContext';
 
 export const NavBar = () => {
   const navigate = useNavigate();
-  const { content } = useNavbar();
   const [profileName, setProfileName] = useState('');
+  const { isViewHeaderAttached } = useNavbar();
 
   useEffect(() => {
     const unsubscribeProfileInfo = window.electron?.ipcRenderer.on(
@@ -55,10 +55,10 @@ export const NavBar = () => {
   return (
     <AppBar
       position="fixed"
-      sx={{ borderBottom: 1, borderColor: 'divider', maxHeight: '64px' }}
+      sx={{ borderBottom: 1, borderColor: isViewHeaderAttached ? 'transparent' : 'divider', height: '64px' }}
     >
       <Container maxWidth={false}>
-        <Toolbar disableGutters>
+        <Toolbar disableGutters sx={{ minHeight: '64px !important', height: '64px' }}>
           <Box
             component="img"
             src={navLogoIcon}
@@ -92,7 +92,7 @@ export const NavBar = () => {
           >
             LMU STEWARD
           </Typography>
-          <Box sx={{ flexGrow: 1, display: 'flex' }}>{content}</Box>
+          <Box sx={{ flexGrow: 1 }} />
           <Box
             sx={{ display: 'flex', flexGrow: 0, alignItems: 'center', gap: 1 }}
           >

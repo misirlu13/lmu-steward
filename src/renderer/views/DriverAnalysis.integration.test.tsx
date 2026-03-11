@@ -2,18 +2,15 @@ import React from 'react';
 import { fireEvent, render, screen } from '@testing-library/react';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { DriverAnalysisView } from './DriverAnalysis';
+import { CONSTANTS } from '@constants';
 import { useApi } from '../providers/ApiContext';
-import { useNavbar } from '../providers/NavbarContext';
 import { useDriverAnalysisData } from '../hooks/useDriverAnalysisData';
 import { jumpToIncidentInReplay } from '../utils/replayCommands';
 import { ReplayDriverStanding } from '../components/Replay/ReplayDriverStandings';
+import { sendMessage } from '../utils/postMessage';
 
 jest.mock('../providers/ApiContext', () => ({
   useApi: jest.fn(),
-}));
-
-jest.mock('../providers/NavbarContext', () => ({
-  useNavbar: jest.fn(),
 }));
 
 jest.mock('../hooks/useDriverAnalysisData', () => ({
@@ -24,9 +21,22 @@ jest.mock('../utils/replayCommands', () => ({
   jumpToIncidentInReplay: jest.fn(),
 }));
 
+jest.mock('../utils/postMessage', () => ({
+  sendMessage: jest.fn(),
+}));
+
 jest.mock('../components/Common/ViewHeader', () => ({
-  ViewHeader: ({ title, subtitle }: { title: React.ReactNode; subtitle: React.ReactNode }) => (
+  ViewHeader: ({
+    breadcrumb,
+    title,
+    subtitle,
+  }: {
+    breadcrumb: React.ReactNode;
+    title: React.ReactNode;
+    subtitle: React.ReactNode;
+  }) => (
     <div data-testid="driver-analysis-header">
+      <div>{breadcrumb}</div>
       <div>{title}</div>
       <div>{subtitle}</div>
     </div>
@@ -55,11 +65,11 @@ jest.mock('../components/Replay/ReplayJumpBar', () => ({
 
 describe('DriverAnalysisView integration', () => {
   const useApiMock = useApi as jest.MockedFunction<typeof useApi>;
-  const useNavbarMock = useNavbar as jest.MockedFunction<typeof useNavbar>;
   const useDriverAnalysisDataMock =
     useDriverAnalysisData as jest.MockedFunction<typeof useDriverAnalysisData>;
   const jumpToIncidentInReplayMock =
     jumpToIncidentInReplay as jest.MockedFunction<typeof jumpToIncidentInReplay>;
+  const sendMessageMock = sendMessage as jest.MockedFunction<typeof sendMessage>;
 
   const incident = {
     id: 'incident-1',
@@ -96,6 +106,11 @@ describe('DriverAnalysisView integration', () => {
         ]}
       >
         <Routes>
+          <Route path="/" element={<div data-testid="dashboard-route" />} />
+          <Route
+            path="/replay/:replayHash"
+            element={<div data-testid="replay-route" />}
+          />
           <Route path="/driver/:replayHash/:driverId" element={<DriverAnalysisView />} />
         </Routes>
       </MemoryRouter>,
@@ -104,8 +119,6 @@ describe('DriverAnalysisView integration', () => {
 
   beforeEach(() => {
     jest.clearAllMocks();
-
-    useNavbarMock.mockReturnValue({ setContent: jest.fn() } as unknown as ReturnType<typeof useNavbar>);
 
     useDriverAnalysisDataMock.mockReturnValue({
       incidents: [incident],
@@ -162,5 +175,33 @@ describe('DriverAnalysisView integration', () => {
       screen.getByText(/Quick View is enabled\. Replay playback actions are unavailable/i),
     ).toBeTruthy();
     expect(screen.queryByTestId('replay-jump-controls')).toBeNull();
+  });
+
+  it('returns to dashboard when dashboard breadcrumb is clicked', () => {
+    useApiMock.mockReturnValue({
+      currentReplay: { hash: 'hash-1' },
+      isReplayActive: true,
+      quickViewEnabled: false,
+    } as unknown as ReturnType<typeof useApi>);
+
+    renderView(false, true);
+
+    fireEvent.click(screen.getByText('Dashboard'));
+
+    expect(sendMessageMock).toHaveBeenCalledWith(CONSTANTS.API.POST_CLOSE_REPLAY);
+  });
+
+  it('navigates back to replay when session analysis breadcrumb is clicked', () => {
+    useApiMock.mockReturnValue({
+      currentReplay: { hash: 'hash-1' },
+      isReplayActive: true,
+      quickViewEnabled: false,
+    } as unknown as ReturnType<typeof useApi>);
+
+    renderView(false, true);
+
+    fireEvent.click(screen.getByText('Session Analysis'));
+
+    expect(screen.getByTestId('replay-route')).toBeTruthy();
   });
 });

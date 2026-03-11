@@ -84,6 +84,7 @@ export const AppExitConfirmDialog: React.FC = () => {
       onClose={onCancel}
       maxWidth="xs"
       fullWidth
+      sx={{ zIndex: (theme) => theme.zIndex.modal + 3 }}
     >
       <DialogTitle>Exit LMU Steward</DialogTitle>
       <DialogContent>

@@ -51,6 +51,8 @@ LMU Steward is a companion desktop application for **Le Mans Ultimate (LMU)** th
 4. Click **Sync Now** in User Settings to load your existing replays, or enable **Automatic Sync** to have the app keep itself up to date in the background.
 5. Your replays will appear on the **Dashboard** — click any session to start reviewing it.
 
+> **Windows trust warning (SmartScreen):** LMU Steward is currently distributed without a code-signing certificate. Windows may show a "Windows protected your PC" or "Unknown publisher" warning when you run the installer or app for the first time. If you downloaded LMU Steward from the official release page, click **More info** and then **Run anyway**.
+
 ---
 
 ## Application Overview

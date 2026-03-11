@@ -1,7 +1,4 @@
-import { useEffect } from 'react';
-import { useNavbar } from '../providers/NavbarContext';
 import { Box, Typography } from '@mui/material';
-import { DashboardNavContent } from '../components/Dashboard/DashboardNavContent';
 import { DashboardReplay } from '../components/Dashboard/DashboardReplay';
 import { ViewHeader } from '../components/Common/ViewHeader';
 import { DashboardControls } from '../components/Dashboard/DashboardControls';
@@ -10,7 +7,6 @@ import { useDashboardReplays } from '../hooks/useDashboardReplays';
 import FolderOffIcon from '@mui/icons-material/FolderOff';
 
 export const DashboardView: React.FC = () => {
-  const { setContent } = useNavbar();
   const {
     isConnected,
     hasReplaysResponded,
@@ -31,10 +27,6 @@ export const DashboardView: React.FC = () => {
     handleApplyFilters,
     handleRefreshReplays,
   } = useDashboardReplays();
-
-  useEffect(() => {
-    setContent(<DashboardNavContent />);
-  }, []);
 
   if (!hasReplaysResponded) {
     return null;
