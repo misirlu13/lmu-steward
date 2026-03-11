@@ -1,11 +1,11 @@
 {
   "name": "lmu-steward",
-  "version": "4.6.0",
+  "version": "1.0.0-beta.1",
   "description": "LMU Steward desktop application",
   "license": "MIT",
   "author": {
     "name": "LMU Steward Maintainers",
-    "url": "https://github.com/lmu-steward"
+    "url": "https://github.com/misirlu13/lmu-steward"
   },
   "main": "./dist/main/main.js",
   "scripts": {
