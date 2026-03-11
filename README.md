@@ -55,20 +55,9 @@ LMU Steward is a companion desktop application for **Le Mans Ultimate (LMU)** th
 
 ---
 
-## Release Workflow
+## Contributing
 
-This repository uses Conventional Commits + semantic-release.
-
-- Use `npm run commit` to open the Commitizen CLI and compose a conventional commit message.
-- Push commits to `main`.
-- `.github/workflows/release.yml` runs semantic-release, calculates the next version, updates `CHANGELOG.md`, and bumps `release/app/package.json` + `release/app/package-lock.json`.
-- semantic-release creates a Git tag in the form `vX.Y.Z`.
-- `.github/workflows/publish.yml` runs on version tags (`v*`) and publishes the Windows build artifacts.
-
-Useful commands:
-
-- `npm run release:dry` to preview the next release locally.
-- `npm run commitlint:last` to validate the latest commit message format.
+Development setup, contributor commands, and release process notes are documented in [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ---
 
