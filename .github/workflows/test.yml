@@ -12,13 +12,32 @@ jobs:
 
     steps:
       - name: Check out Git repository
-        uses: actions/checkout@v3
+        shell: pwsh
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          git init .
+          git remote add origin "https://github.com/$env:GITHUB_REPOSITORY.git"
+          git -c http.extraheader="AUTHORIZATION: bearer $env:GITHUB_TOKEN" fetch --no-tags --prune --depth=1 origin $env:GITHUB_SHA
+          git checkout --force --detach FETCH_HEAD
 
-      - name: Install Node.js and NPM
-        uses: actions/setup-node@v3
-        with:
-          node-version: 22
-          cache: npm
+      - name: Use Node.js 22 from runner tool cache
+        shell: pwsh
+        run: |
+          $nodeRoot = Join-Path $env:RUNNER_TOOL_CACHE "node"
+          $versionDir = Get-ChildItem -Path $nodeRoot -Directory | Where-Object { $_.Name -like "22.*" } | Sort-Object Name -Descending | Select-Object -First 1
+          if (-not $versionDir) {
+            throw "Node 22 was not found in RUNNER_TOOL_CACHE."
+          }
+
+          $archDir = Join-Path $versionDir.FullName "x64"
+          $binDir = if ($IsWindows) { $archDir } else { Join-Path $archDir "bin" }
+
+          $env:PATH = "$binDir$([IO.Path]::PathSeparator)$env:PATH"
+          $binDir | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+
+          node --version
+          npm --version
 
       - name: npm install
         run: |
