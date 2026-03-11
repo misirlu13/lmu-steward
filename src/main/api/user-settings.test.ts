@@ -1,6 +1,7 @@
 import {
   getLmuExecutablePathValidationError,
   getLmuReplayDirectoryPathValidationError,
+  getReplayLogMatchThresholdValidationError,
 } from './user-settings';
 
 describe('main/user-settings path validation', () => {
@@ -67,6 +68,30 @@ describe('main/user-settings path validation', () => {
           'C:\\Program Files (x86)\\Steam\\steamapps\\common\\Le Mans Ultimate\\UserData\\Replays',
         ),
       ).toBeNull();
+    });
+  });
+
+  describe('getReplayLogMatchThresholdValidationError', () => {
+    it('rejects non-numeric values', () => {
+      expect(getReplayLogMatchThresholdValidationError('abc')).toBe(
+        'Replay log match threshold must be a valid number.',
+      );
+    });
+
+    it('rejects values below lower bound', () => {
+      expect(getReplayLogMatchThresholdValidationError(10_000)).toBe(
+        'Replay log match threshold must be between 0.25 and 15 minutes.',
+      );
+    });
+
+    it('rejects values above upper bound', () => {
+      expect(getReplayLogMatchThresholdValidationError(16 * 60 * 1000)).toBe(
+        'Replay log match threshold must be between 0.25 and 15 minutes.',
+      );
+    });
+
+    it('accepts values within bounds', () => {
+      expect(getReplayLogMatchThresholdValidationError(120_000)).toBeNull();
     });
   });
 });

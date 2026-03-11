@@ -8,6 +8,7 @@ import { SessionType } from '@types';
 import { readUserSettings, writeUserSettings } from './user-settings';
 
 const FIRST_RUN_GET_REPLAYS_DELAY_MS = 3000;
+const DEFAULT_REPLAY_LOG_MATCH_THRESHOLD_MS = 120_000;
 
 const delay = (ms: number) =>
   new Promise<void>((resolve) => {
@@ -43,6 +44,14 @@ interface ReplaySyncProgress {
   processed: number;
   total: number;
   percentage: number;
+}
+
+interface ReplaySyncOptions {
+  forceReplayCacheReset?: boolean;
+}
+
+interface GetReplaysRequest {
+  forceReplayCacheReset?: boolean;
 }
 
 interface ParsedRaceResults {
@@ -132,8 +141,8 @@ interface LogFileData {
 export const findBestLogFile = async (
   logDir: string,
   replay: LMUReplay,
+  logTimeThresholdMs: number,
 ): Promise<LogFileData | null> => {
-  const LOG_TIME_THRESHOLD_MS = 120; // 2 minute threshold
   const files = (await readdir(logDir)).filter((file) => file.endsWith('.xml'));
   const replayTimestamp = replay.timestamp;
   const replaySessionType = replay.metadata.session;
@@ -154,15 +163,15 @@ export const findBestLogFile = async (
 
     if (!logTimeStamp) continue;
 
-    const diff = Math.abs(replayTimestamp - logTimeStamp);
+    const diffMs = Math.abs(replayTimestamp - logTimeStamp) * 1000;
 
     if (
-      diff < smallestDiff &&
-      diff <= LOG_TIME_THRESHOLD_MS &&
+      diffMs < smallestDiff &&
+      diffMs <= logTimeThresholdMs &&
       logSessionType === replaySessionType &&
       replayTrackVenue.toLowerCase().includes(logTrackVenue.toLowerCase())
     ) {
-      smallestDiff = diff;
+      smallestDiff = diffMs;
       logDataFileName = file;
       logData = fileData;
       break;
@@ -183,12 +192,17 @@ interface LogMetaData {
 
 export const getReplayLogData = async (
   replay: LMUReplay,
+  logTimeThresholdMs: number,
 ): Promise<LogMetaData | null> => {
   return new Promise(async (res, reject) => {
     try {
       const replayDirectory = replay.replayDirectory;
       const logDataDirectory = resolve(replayDirectory, '../Log/Results');
-      const logData = await findBestLogFile(logDataDirectory, replay);
+      const logData = await findBestLogFile(
+        logDataDirectory,
+        replay,
+        logTimeThresholdMs,
+      );
 
       if (!logData || !logData.logDataFileName || !logData.logData) {
         res(null);
@@ -232,10 +246,18 @@ export const getReplayData = async (): Promise<LMUReplay[]> => {
 };
 
 export const syncReplayData = async (
-  onProgress?: (progress: ReplaySyncProgress) => void,
+  options?: ReplaySyncOptions & {
+    onProgress?: (progress: ReplaySyncProgress) => void;
+  },
 ): Promise<void> => {
   return new Promise(async (resolve, reject) => {
     try {
+      const settings = await readUserSettings();
+      const configuredThresholdMs = Number(settings?.replayLogMatchThresholdMs);
+      const replayLogMatchThresholdMs = Number.isFinite(configuredThresholdMs)
+        ? Math.max(1_000, configuredThresholdMs)
+        : DEFAULT_REPLAY_LOG_MATCH_THRESHOLD_MS;
+
       const data = await getReplayData();
       const totalReplayCount = data.length;
       let processedReplayCount = 0;
@@ -246,7 +268,7 @@ export const syncReplayData = async (
             ? 1
             : Math.min(1, processedReplayCount / totalReplayCount);
 
-        onProgress?.({
+        options?.onProgress?.({
           processed: processedReplayCount,
           total: totalReplayCount,
           percentage,
@@ -256,8 +278,9 @@ export const syncReplayData = async (
       reportProgress();
 
       const replayStore = getReplayStore();
-      const storedReplay =
-        (replayStore.get('replays') as Record<string, ReplayCacheEntry>) || {};
+      const storedReplay = options?.forceReplayCacheReset
+        ? {}
+        : ((replayStore.get('replays') as Record<string, ReplayCacheEntry>) || {});
       const storedReplayEntries = Object.values(storedReplay);
       const storedReplayByIdentity = new Map<string, ReplayCacheEntry>();
 
@@ -301,7 +324,10 @@ export const syncReplayData = async (
         }
 
         if (!storedReplay[hash]) {
-          const logMetaData = await getReplayLogData(replay);
+          const logMetaData = await getReplayLogData(
+            replay,
+            replayLogMatchThresholdMs,
+          );
 
           if (logMetaData) {
             replay.logData = logMetaData.logData;
@@ -333,7 +359,10 @@ export const syncReplayData = async (
  * RESPONSE
  * [{"id":0,"metadata":{"sceneDesc":"SEBRINGWEC","session":"RACE"},"replayDirectory":"C:\\Program Files (x86)\\Steam\\steamapps\\common\\Le Mans Ultimate\\UserData\\Replays\\","replayName":"Sebring International Raceway R1 9","size":130114953,"timestamp":1771050720},{"id":1,"metadata":{"sceneDesc":"SEBRINGWEC","session":"QUALIFY"},"replayDirectory":"C:\\Program Files (x86)\\Steam\\steamapps\\common\\Le Mans Ultimate\\UserData\\Replays\\","replayName":"Sebring International Raceway Q1 9","size":40256309,"timestamp":1771050720},{"id":2,"metadata":{"sceneDesc":"SEBRINGWEC","session":"PRACTICE"},"replayDirectory":"C:\\Program Files (x86)\\Steam\\steamapps\\common\\Le Mans Ultimate\\UserData\\Replays\\","replayName":"Sebring International Raceway P1 24","size":8675228,"timestamp":1771050720}]
  */
-export const getReplays = async (event: Electron.IpcMainEvent) => {
+export const getReplays = async (
+  event: Electron.IpcMainEvent,
+  request?: GetReplaysRequest,
+) => {
   let latestProgress: ReplaySyncProgress = {
     processed: 0,
     total: 0,
@@ -372,7 +401,9 @@ export const getReplays = async (event: Electron.IpcMainEvent) => {
       total: 0,
     });
 
-    await syncReplayData((progress) => {
+    await syncReplayData({
+      forceReplayCacheReset: Boolean(request?.forceReplayCacheReset),
+      onProgress: (progress) => {
       latestProgress = progress;
       publishReplaySyncStatus({
         status: 'in-progress',
@@ -380,6 +411,7 @@ export const getReplays = async (event: Electron.IpcMainEvent) => {
         processed: progress.processed,
         total: progress.total,
       });
+      },
     });
 
     publishReplaySyncStatus({
@@ -453,7 +485,12 @@ export const postWatchReplay = async (
     }
 
     if (!storedReplay[hash]) {
-      const logMetaData = await getReplayLogData(replay);
+      const settings = await readUserSettings();
+      const configuredThresholdMs = Number(settings?.replayLogMatchThresholdMs);
+      const replayLogMatchThresholdMs = Number.isFinite(configuredThresholdMs)
+        ? Math.max(1_000, configuredThresholdMs)
+        : DEFAULT_REPLAY_LOG_MATCH_THRESHOLD_MS;
+      const logMetaData = await getReplayLogData(replay, replayLogMatchThresholdMs);
 
       if (!logMetaData) {
         return;

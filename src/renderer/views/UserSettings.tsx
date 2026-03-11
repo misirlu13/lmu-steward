@@ -13,6 +13,7 @@ import {
   Tooltip,
   Typography,
 } from '@mui/material';
+import InfoOutlinedIcon from '@mui/icons-material/InfoOutlined';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { CONSTANTS } from '@constants';
 import { useNavigate } from 'react-router-dom';
@@ -28,6 +29,18 @@ import {
 import { UserSettingsClearStorageDialog } from '../components/UserSettings/UserSettingsClearStorageDialog';
 import { UserSettingsAutosaveStatus } from '../components/UserSettings/UserSettingsAutosaveStatus';
 import { useUserSettingsDerivedState } from '../hooks/useUserSettingsDerivedState';
+import { UserSettingsReplayThresholdDialog } from '../components/UserSettings/UserSettingsReplayThresholdDialog';
+import { UserSettingsReplaySyncDefaultsDialog } from '../components/UserSettings/UserSettingsReplaySyncDefaultsDialog';
+
+const DEFAULT_REPLAY_LOG_MATCH_THRESHOLD_MS = 120_000;
+const REPLAY_LOG_MATCH_THRESHOLD_MINUTES_OPTIONS = [1, 2, 3, 5, 10, 15];
+const DEFAULT_REPLAY_SYNC_SETTINGS = {
+  automaticSyncEnabled: true,
+  syncOnAppLaunch: true,
+  quickViewEnabled: false,
+  syncOnIntervalMinutes: 5,
+  replayLogMatchThresholdMinutes: 2,
+};
 
 interface ApiResponse {
   status?: 'success' | 'error';
@@ -48,6 +61,7 @@ interface ApiResponse {
     quickViewEnabled?: boolean;
     syncOnAppLaunch?: boolean;
     syncOnIntervalMinutes?: number;
+    replayLogMatchThresholdMs?: number;
     anonymizeDriverData?: boolean;
     telemetryCacheEnabled?: boolean;
     clearCacheOnExit?: boolean;
@@ -66,7 +80,13 @@ type AutosaveStatus = 'idle' | 'saving' | 'saved' | 'failed';
 
 export const UserSettingsView: React.FC = () => {
   const navigate = useNavigate();
-  const { isConnected, hasApiStatusResponse, lastReplaySyncAt, requestReplays } = useApi();
+  const {
+    isConnected,
+    hasApiStatusResponse,
+    lastReplaySyncAt,
+    requestReplays,
+    markReplayCacheResetRequired,
+  } = useApi();
   const [lmuExecutablePath, setLmuExecutablePath] = useState<string>(
     CONSTANTS.LMU_DEFAULT_EXECUTABLE_PATH,
   );
@@ -86,6 +106,10 @@ export const UserSettingsView: React.FC = () => {
   const [quickViewEnabled, setQuickViewEnabled] = useState(false);
   const [syncOnAppLaunch, setSyncOnAppLaunch] = useState(true);
   const [syncOnIntervalMinutes, setSyncOnIntervalMinutes] = useState(5);
+  const [replayLogMatchThresholdMinutes, setReplayLogMatchThresholdMinutes] =
+    useState(2);
+  const [pendingReplayLogMatchThresholdMinutes, setPendingReplayLogMatchThresholdMinutes] =
+    useState(2);
   const [anonymizeDriverData, setAnonymizeDriverData] = useState(false);
   const [telemetryCacheEnabled, setTelemetryCacheEnabled] = useState(true);
   const [clearCacheOnExit, setClearCacheOnExit] = useState(false);
@@ -98,6 +122,10 @@ export const UserSettingsView: React.FC = () => {
   const [isAutosaving, setIsAutosaving] = useState(false);
   const [isClearingLocalStorage, setIsClearingLocalStorage] = useState(false);
   const [isClearLocalStorageDialogOpen, setIsClearLocalStorageDialogOpen] =
+    useState(false);
+  const [isReplayThresholdDialogOpen, setIsReplayThresholdDialogOpen] =
+    useState(false);
+  const [isReplaySyncDefaultsDialogOpen, setIsReplaySyncDefaultsDialogOpen] =
     useState(false);
   const [autosaveStatus, setAutosaveStatus] = useState<AutosaveStatus>('idle');
   const [autosaveError, setAutosaveError] = useState('');
@@ -113,6 +141,7 @@ export const UserSettingsView: React.FC = () => {
   const launchCooldownTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const lastAutosavedPayloadRef = useRef('');
   const lastManualSavedPayloadRef = useRef('');
+  const shouldForceReplayResyncAfterSaveRef = useRef(false);
   const {
     isLmuRunning,
     launchLmuDisabled,
@@ -144,6 +173,7 @@ export const UserSettingsView: React.FC = () => {
     quickViewEnabled,
     syncOnAppLaunch,
     syncOnIntervalMinutes,
+    replayLogMatchThresholdMinutes,
     anonymizeDriverData,
     telemetryCacheEnabled,
     clearCacheOnExit,
@@ -155,7 +185,45 @@ export const UserSettingsView: React.FC = () => {
     isAutosaving,
   });
 
+  const isReplaySyncDefaultsApplied = useMemo(() => {
+    return (
+      automaticSyncEnabled === DEFAULT_REPLAY_SYNC_SETTINGS.automaticSyncEnabled &&
+      syncOnAppLaunch === DEFAULT_REPLAY_SYNC_SETTINGS.syncOnAppLaunch &&
+      quickViewEnabled === DEFAULT_REPLAY_SYNC_SETTINGS.quickViewEnabled &&
+      syncOnIntervalMinutes === DEFAULT_REPLAY_SYNC_SETTINGS.syncOnIntervalMinutes &&
+      replayLogMatchThresholdMinutes ===
+        DEFAULT_REPLAY_SYNC_SETTINGS.replayLogMatchThresholdMinutes
+    );
+  }, [
+    automaticSyncEnabled,
+    quickViewEnabled,
+    replayLogMatchThresholdMinutes,
+    syncOnAppLaunch,
+    syncOnIntervalMinutes,
+  ]);
+
   const persistUserSettings = (mode: SaveMode, payload: Record<string, unknown>) => {
+    const payloadForPersistence = { ...payload };
+    if (
+      Object.prototype.hasOwnProperty.call(
+        payloadForPersistence,
+        'replayLogMatchThresholdMinutes',
+      )
+    ) {
+      const thresholdMinutes = Number(
+        payloadForPersistence.replayLogMatchThresholdMinutes,
+      );
+
+      if (Number.isFinite(thresholdMinutes)) {
+        payloadForPersistence.replayLogMatchThresholdMs = Math.max(
+          1,
+          thresholdMinutes,
+        ) * 60_000;
+      }
+
+      delete payloadForPersistence.replayLogMatchThresholdMinutes;
+    }
+
     if (mode === 'manual') {
       setIsSaving(true);
       setManualSaveMessage('');
@@ -169,7 +237,7 @@ export const UserSettingsView: React.FC = () => {
     }
 
     saveModeRef.current = mode;
-    sendMessage(CONSTANTS.API.POST_USER_SETTINGS, payload);
+    sendMessage(CONSTANTS.API.POST_USER_SETTINGS, payloadForPersistence);
   };
 
   useEffect(() => {
@@ -199,8 +267,21 @@ export const UserSettingsView: React.FC = () => {
         Number.isFinite(Number(response?.data?.syncOnIntervalMinutes))
           ? Math.max(1, Number(response?.data?.syncOnIntervalMinutes))
           : 5;
+      const resolvedReplayLogMatchThresholdMs = Number.isFinite(
+        Number(response?.data?.replayLogMatchThresholdMs),
+      )
+        ? Math.max(60_000, Number(response?.data?.replayLogMatchThresholdMs))
+        : DEFAULT_REPLAY_LOG_MATCH_THRESHOLD_MS;
+      const resolvedReplayLogMatchThresholdMinutes = Math.max(
+        1,
+        Math.round(resolvedReplayLogMatchThresholdMs / 60_000),
+      );
       setSyncOnIntervalMinutes(
         resolvedSyncIntervalMinutes,
+      );
+      setReplayLogMatchThresholdMinutes(resolvedReplayLogMatchThresholdMinutes);
+      setPendingReplayLogMatchThresholdMinutes(
+        resolvedReplayLogMatchThresholdMinutes,
       );
       const resolvedAnonymizeDriverData = Boolean(
         response?.data?.anonymizeDriverData ?? false,
@@ -229,6 +310,7 @@ export const UserSettingsView: React.FC = () => {
         quickViewEnabled: Boolean(response?.data?.quickViewEnabled ?? false),
         syncOnAppLaunch: Boolean(response?.data?.syncOnAppLaunch ?? true),
         syncOnIntervalMinutes: resolvedSyncIntervalMinutes,
+        replayLogMatchThresholdMinutes: resolvedReplayLogMatchThresholdMinutes,
         anonymizeDriverData: resolvedAnonymizeDriverData,
         telemetryCacheEnabled: resolvedTelemetryCacheEnabled,
         clearCacheOnExit: resolvedClearCacheOnExit,
@@ -330,6 +412,17 @@ export const UserSettingsView: React.FC = () => {
           );
         }
 
+        if (Number.isFinite(Number(response?.data?.replayLogMatchThresholdMs))) {
+          const nextReplayLogMatchThresholdMinutes = Math.max(
+            1,
+            Math.round(Number(response?.data?.replayLogMatchThresholdMs) / 60_000),
+          );
+          setReplayLogMatchThresholdMinutes(nextReplayLogMatchThresholdMinutes);
+          setPendingReplayLogMatchThresholdMinutes(
+            nextReplayLogMatchThresholdMinutes,
+          );
+        }
+
         if (typeof response?.data?.anonymizeDriverData === 'boolean') {
           setAnonymizeDriverData(response.data.anonymizeDriverData);
         }
@@ -349,6 +442,15 @@ export const UserSettingsView: React.FC = () => {
         if (currentSaveMode === 'auto') {
           setAutosaveStatus('saved');
           setAutosaveError('');
+
+          if (shouldForceReplayResyncAfterSaveRef.current) {
+            shouldForceReplayResyncAfterSaveRef.current = false;
+            markReplayCacheResetRequired();
+            setStatusTone('info');
+            setStatusMessage(
+              'Replay threshold updated. Replay cache will reset on the next replay sync.',
+            );
+          }
         } else {
           const persistedExecutablePath =
             typeof response?.data?.lmuExecutablePath === 'string' &&
@@ -601,6 +703,64 @@ export const UserSettingsView: React.FC = () => {
 
   const onOpenClearLocalStorageDialog = () => {
     setIsClearLocalStorageDialogOpen(true);
+  };
+
+  const onReplayLogThresholdMinutesChangeRequest = (nextValue: number) => {
+    if (!Number.isFinite(nextValue)) {
+      return;
+    }
+
+    const normalizedNextValue = Math.max(1, nextValue);
+    if (normalizedNextValue === replayLogMatchThresholdMinutes) {
+      return;
+    }
+
+    setPendingReplayLogMatchThresholdMinutes(normalizedNextValue);
+    setIsReplayThresholdDialogOpen(true);
+  };
+
+  const onCancelReplayThresholdChange = () => {
+    setPendingReplayLogMatchThresholdMinutes(replayLogMatchThresholdMinutes);
+    setIsReplayThresholdDialogOpen(false);
+  };
+
+  const onConfirmReplayThresholdChange = () => {
+    setReplayLogMatchThresholdMinutes(pendingReplayLogMatchThresholdMinutes);
+    shouldForceReplayResyncAfterSaveRef.current = true;
+    setIsReplayThresholdDialogOpen(false);
+  };
+
+  const onOpenReplaySyncDefaultsDialog = () => {
+    setIsReplaySyncDefaultsDialogOpen(true);
+  };
+
+  const onCloseReplaySyncDefaultsDialog = () => {
+    setIsReplaySyncDefaultsDialogOpen(false);
+  };
+
+  const onConfirmReplaySyncDefaults = () => {
+    const willChangeThreshold =
+      replayLogMatchThresholdMinutes !==
+      DEFAULT_REPLAY_SYNC_SETTINGS.replayLogMatchThresholdMinutes;
+
+    setAutomaticSyncEnabled(DEFAULT_REPLAY_SYNC_SETTINGS.automaticSyncEnabled);
+    setSyncOnAppLaunch(DEFAULT_REPLAY_SYNC_SETTINGS.syncOnAppLaunch);
+    setQuickViewEnabled(DEFAULT_REPLAY_SYNC_SETTINGS.quickViewEnabled);
+    setSyncOnIntervalMinutes(DEFAULT_REPLAY_SYNC_SETTINGS.syncOnIntervalMinutes);
+    setReplayLogMatchThresholdMinutes(
+      DEFAULT_REPLAY_SYNC_SETTINGS.replayLogMatchThresholdMinutes,
+    );
+    setPendingReplayLogMatchThresholdMinutes(
+      DEFAULT_REPLAY_SYNC_SETTINGS.replayLogMatchThresholdMinutes,
+    );
+
+    if (willChangeThreshold) {
+      shouldForceReplayResyncAfterSaveRef.current = true;
+    }
+
+    setStatusTone('info');
+    setStatusMessage('Replay sync defaults restored.');
+    setIsReplaySyncDefaultsDialogOpen(false);
   };
 
   const onCloseClearLocalStorageDialog = () => {
@@ -876,6 +1036,22 @@ export const UserSettingsView: React.FC = () => {
               <Typography variant="h6" fontWeight={700}>
                 Replay Sync
               </Typography>
+              <Box>
+                <Button
+                  variant="outlined"
+                  size="small"
+                  onClick={onOpenReplaySyncDefaultsDialog}
+                  disabled={
+                    isLoading ||
+                    isSaving ||
+                    isLaunching ||
+                    isAutosaving ||
+                    isReplaySyncDefaultsApplied
+                  }
+                >
+                  Return Replay Sync to Defaults
+                </Button>
+              </Box>
               <Typography color="text.secondary" variant="body2">
                 Configure automatic sync behavior and run manual sync when needed.
               </Typography>
@@ -995,6 +1171,67 @@ export const UserSettingsView: React.FC = () => {
 
                   <Divider sx={{ borderColor: 'divider' }} />
 
+                  <Stack
+                    direction={{ xs: 'column', md: 'row' }}
+                    justifyContent="space-between"
+                    alignItems={{ xs: 'flex-start', md: 'center' }}
+                    spacing={1.5}
+                  >
+                    <Box>
+                      <Typography variant="subtitle2" fontWeight={600}>
+                        Log Match Window
+                      </Typography>
+                      <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
+                        <Typography variant="caption" color="text.secondary">
+                          Controls how far apart replay and log timestamps can be when
+                          matching data.
+                        </Typography>
+                        <Tooltip
+                          title="This setting helps resolve cases where replay details do not match the associated log details. LMU can write replay and log files at slightly different times depending on machine performance and disk behavior, so the ideal window may vary between systems. Change this only if replay information does not match log information."
+                        >
+                          <InfoOutlinedIcon
+                            data-testid="log-match-window-info-icon"
+                            fontSize="inherit"
+                            sx={{
+                              color: 'text.secondary',
+                              cursor: 'help',
+                              fontSize: '0.95rem',
+                            }}
+                          />
+                        </Tooltip>
+                      </Box>
+                    </Box>
+                    <TextField
+                      select
+                      size="small"
+                      label="Minutes"
+                      value={String(replayLogMatchThresholdMinutes)}
+                      onChange={(event) => {
+                        const nextValue = Number(event.target.value);
+                        onReplayLogThresholdMinutesChangeRequest(nextValue);
+                      }}
+                      disabled={
+                        isLoading ||
+                        isSaving ||
+                        isLaunching ||
+                        isAutosaving
+                      }
+                      sx={{ minWidth: 140 }}
+                    >
+                      {REPLAY_LOG_MATCH_THRESHOLD_MINUTES_OPTIONS.map((minutes) => (
+                        <MenuItem key={minutes} value={String(minutes)}>
+                          {minutes}
+                        </MenuItem>
+                      ))}
+                    </TextField>
+                  </Stack>
+                  <Typography variant="caption" color="warning.main">
+                    Changing this value clears cached replay mappings and reprocesses replay
+                    log associations.
+                  </Typography>
+
+                  <Divider sx={{ borderColor: 'divider' }} />
+
                   <Stack direction="row" justifyContent="space-between" alignItems="center">
                     <Typography variant="caption" color="text.secondary">
                       {`Last sync: ${lastSyncLabel}`}
@@ -1061,6 +1298,23 @@ export const UserSettingsView: React.FC = () => {
             isClearingLocalStorage={isClearingLocalStorage}
             onClose={onCloseClearLocalStorageDialog}
             onConfirm={onConfirmClearLocalStorage}
+          />
+
+          <UserSettingsReplayThresholdDialog
+            open={isReplayThresholdDialogOpen}
+            nextThresholdMinutes={pendingReplayLogMatchThresholdMinutes}
+            onClose={onCancelReplayThresholdChange}
+            onConfirm={onConfirmReplayThresholdChange}
+          />
+
+          <UserSettingsReplaySyncDefaultsDialog
+            open={isReplaySyncDefaultsDialogOpen}
+            willResetReplayCache={
+              replayLogMatchThresholdMinutes !==
+              DEFAULT_REPLAY_SYNC_SETTINGS.replayLogMatchThresholdMinutes
+            }
+            onClose={onCloseReplaySyncDefaultsDialog}
+            onConfirm={onConfirmReplaySyncDefaults}
           />
 
           {statusMessage ? (

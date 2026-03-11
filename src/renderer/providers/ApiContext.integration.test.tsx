@@ -32,6 +32,7 @@ describe('ApiContext integration', () => {
       isReplaySyncInProgress,
       replaySyncStatus,
       hasApiStatusResponse,
+      markReplayCacheResetRequired,
       requestReplays,
       subscribeToApiChannel,
     } = useApi();
@@ -55,7 +56,8 @@ describe('ApiContext integration', () => {
         </div>
         <div data-testid="api-status-response">{String(hasApiStatusResponse)}</div>
         <div data-testid="session-info-status">{sessionInfoStatus}</div>
-        <button onClick={requestReplays}>request replays</button>
+        <button onClick={markReplayCacheResetRequired}>mark replay cache reset</button>
+        <button onClick={() => requestReplays()}>request replays</button>
       </>
     );
   };
@@ -118,7 +120,10 @@ describe('ApiContext integration', () => {
     fireEvent.click(screen.getByRole('button', { name: /request replays/i }));
 
     await waitFor(() => {
-      expect(sendMessageMock).toHaveBeenCalledWith(CONSTANTS.API.GET_REPLAYS);
+      expect(sendMessageMock).toHaveBeenCalledWith(
+        CONSTANTS.API.GET_REPLAYS,
+        undefined,
+      );
       expect(screen.getByTestId('syncing').textContent).toBe('true');
     });
 
@@ -148,6 +153,39 @@ describe('ApiContext integration', () => {
       expect(screen.getByTestId('sync-progress').textContent).toBe('1');
       expect(screen.getByTestId('sync-counts').textContent).toBe('5/10');
       expect(screen.getByTestId('session-info-status').textContent).toBe('success');
+    });
+  });
+
+  it('applies forceReplayCacheReset once when marked in provider state', async () => {
+    render(
+      <ApiProvider>
+        <TestConsumer />
+      </ApiProvider>,
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: /mark replay cache reset/i }));
+    fireEvent.click(screen.getByRole('button', { name: /request replays/i }));
+
+    await waitFor(() => {
+      expect(sendMessageMock).toHaveBeenCalledWith(CONSTANTS.API.GET_REPLAYS, {
+        forceReplayCacheReset: true,
+      });
+    });
+
+    act(() => {
+      handlers[CONSTANTS.API.GET_REPLAYS]?.({
+        status: 'success',
+        data: [],
+      });
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: /request replays/i }));
+
+    await waitFor(() => {
+      expect(sendMessageMock).toHaveBeenCalledWith(
+        CONSTANTS.API.GET_REPLAYS,
+        undefined,
+      );
     });
   });
 });

@@ -69,6 +69,10 @@ class AppUpdater {
 let mainWindow: BrowserWindow | null = null;
 
 type ApiChannel = (typeof CONSTANTS.API)[keyof typeof CONSTANTS.API];
+interface GetReplaysRequest {
+  forceReplayCacheReset?: boolean;
+}
+
 type ChannelCallbackHandler = (
   event: Electron.IpcMainEvent,
   data: unknown,
@@ -94,7 +98,9 @@ const CHANNEL_CALLBACK_HANDLERS: Partial<
   // GET REQUESTS
   [CONSTANTS.API.GET_API_STATUS]: withEventOnly(getApiStatus),
   [CONSTANTS.API.GET_TRACK_MAP]: withEventOnly(getTrackMap),
-  [CONSTANTS.API.GET_REPLAYS]: withEventOnly(getReplays),
+  [CONSTANTS.API.GET_REPLAYS]: withEventAndData<GetReplaysRequest | undefined>(
+    getReplays,
+  ),
   [CONSTANTS.API.GET_TRACK_THUMBNAIL]:
     withEventAndData<number>(getTrackThumbnail),
   [CONSTANTS.API.GET_USER_SETTINGS]: withEventOnly(getUserSettings),

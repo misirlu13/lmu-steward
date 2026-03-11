@@ -15,6 +15,10 @@ interface ReplayResponse {
   data: LMUReplay[];
 }
 
+interface RequestReplaysOptions {
+  forceReplayCacheReset?: boolean;
+}
+
 type ApiChannel = (typeof CONSTANTS.API)[keyof typeof CONSTANTS.API];
 type ApiChannelCallback = (data: unknown) => void;
 
@@ -30,7 +34,8 @@ interface ApiContextType {
   replays: ReplayResponse | null;
   currentReplay: LMUReplay | null;
   loadingState: LoadingState;
-  requestReplays: () => void;
+  markReplayCacheResetRequired: () => void;
+  requestReplays: (options?: RequestReplaysOptions) => void;
   subscribeToApiChannel: (
     channel: ApiChannel,
     callback: ApiChannelCallback,
@@ -54,6 +59,7 @@ const ApiContext = createContext<ApiContextType>({
   replays: null,
   currentReplay: null,
   loadingState: { loading: false, percentage: -1 },
+  markReplayCacheResetRequired: () => {},
   requestReplays: () => {},
   subscribeToApiChannel: () => () => {},
 });
@@ -74,6 +80,8 @@ export const ApiProvider: React.FC<{ children: React.ReactNode }> = ({
     total: 0,
   });
   const [isReplayActive, setIsReplayActive] = useState<boolean | null>(null);
+  const [isReplayCacheResetRequired, setIsReplayCacheResetRequired] =
+    useState(false);
   const [currentTrackMap, setCurrentTrackMap] = useState<
     { data?: unknown } | null
   >(null);
@@ -112,7 +120,11 @@ export const ApiProvider: React.FC<{ children: React.ReactNode }> = ({
     [],
   );
 
-  const requestReplays = useCallback(() => {
+  const markReplayCacheResetRequired = useCallback(() => {
+    setIsReplayCacheResetRequired(true);
+  }, []);
+
+  const requestReplays = useCallback((options?: RequestReplaysOptions) => {
     setActiveReplaySyncRequestCount((previousCount) => previousCount + 1);
     setReplaySyncStatus({
       status: 'in-progress',
@@ -120,8 +132,19 @@ export const ApiProvider: React.FC<{ children: React.ReactNode }> = ({
       processed: 0,
       total: 0,
     });
-    sendMessage(CONSTANTS.API.GET_REPLAYS);
-  }, []);
+
+    const shouldForceReplayCacheReset =
+      Boolean(options?.forceReplayCacheReset) || isReplayCacheResetRequired;
+    const payload = shouldForceReplayCacheReset
+      ? { forceReplayCacheReset: true }
+      : options;
+
+    if (shouldForceReplayCacheReset && isReplayCacheResetRequired) {
+      setIsReplayCacheResetRequired(false);
+    }
+
+    sendMessage(CONSTANTS.API.GET_REPLAYS, payload);
+  }, [isReplayCacheResetRequired]);
 
   useEffect(() => {
     const createHandler = (
@@ -361,6 +384,7 @@ export const ApiProvider: React.FC<{ children: React.ReactNode }> = ({
     replays,
     currentReplay,
     loadingState,
+    markReplayCacheResetRequired,
     requestReplays,
     subscribeToApiChannel,
   };

@@ -21,6 +21,7 @@ interface UseUserSettingsDerivedStateArgs {
   quickViewEnabled: boolean;
   syncOnAppLaunch: boolean;
   syncOnIntervalMinutes: number;
+  replayLogMatchThresholdMinutes: number;
   anonymizeDriverData: boolean;
   telemetryCacheEnabled: boolean;
   clearCacheOnExit: boolean;
@@ -47,6 +48,7 @@ export const useUserSettingsDerivedState = ({
   quickViewEnabled,
   syncOnAppLaunch,
   syncOnIntervalMinutes,
+  replayLogMatchThresholdMinutes,
   anonymizeDriverData,
   telemetryCacheEnabled,
   clearCacheOnExit,
@@ -107,6 +109,7 @@ export const useUserSettingsDerivedState = ({
       quickViewEnabled,
       syncOnAppLaunch,
       syncOnIntervalMinutes,
+      replayLogMatchThresholdMinutes,
       anonymizeDriverData,
       telemetryCacheEnabled,
       clearCacheOnExit,
@@ -116,6 +119,7 @@ export const useUserSettingsDerivedState = ({
       quickViewEnabled,
       syncOnAppLaunch,
       syncOnIntervalMinutes,
+      replayLogMatchThresholdMinutes,
       anonymizeDriverData,
       telemetryCacheEnabled,
       clearCacheOnExit,

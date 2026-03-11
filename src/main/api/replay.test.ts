@@ -114,7 +114,7 @@ describe('main/replay helpers', () => {
       },
     } as unknown as LMUReplay;
 
-    const result = await findBestLogFile('C:/logs', replay);
+    const result = await findBestLogFile('C:/logs', replay, 120_000);
 
     expect(result).toEqual(
       expect.objectContaining({
@@ -145,7 +145,59 @@ describe('main/replay helpers', () => {
       },
     } as unknown as LMUReplay;
 
-    const result = await findBestLogFile('C:/logs', replay);
+    const result = await findBestLogFile('C:/logs', replay, 120_000);
+
+    expect(result).toEqual({ logDataFileName: null, logData: null });
+  });
+
+  it('matches when timestamp diff is within configured millisecond threshold', async () => {
+    readdirMock.mockResolvedValue(['candidate.xml'] as unknown as Awaited<ReturnType<typeof readdir>>);
+    readFileMock.mockResolvedValue('candidate-xml' as unknown as Awaited<ReturnType<typeof readFile>>);
+    parseStringPromiseMock.mockResolvedValue({
+      rFactorXML: {
+        RaceResults: {
+          DateTime: 1100,
+          TrackVenue: 'Sebring',
+          Race: {},
+        },
+      },
+    } as unknown as Awaited<ReturnType<typeof parseStringPromise>>);
+
+    const replay = {
+      timestamp: 1000,
+      metadata: {
+        session: 'RACE',
+        sceneDesc: 'SEBRINGWEC',
+      },
+    } as unknown as LMUReplay;
+
+    const result = await findBestLogFile('C:/logs', replay, 100_000);
+
+    expect(result?.logDataFileName).toBe('candidate.xml');
+  });
+
+  it('does not match when timestamp diff exceeds configured millisecond threshold', async () => {
+    readdirMock.mockResolvedValue(['candidate.xml'] as unknown as Awaited<ReturnType<typeof readdir>>);
+    readFileMock.mockResolvedValue('candidate-xml' as unknown as Awaited<ReturnType<typeof readFile>>);
+    parseStringPromiseMock.mockResolvedValue({
+      rFactorXML: {
+        RaceResults: {
+          DateTime: 1100,
+          TrackVenue: 'Sebring',
+          Race: {},
+        },
+      },
+    } as unknown as Awaited<ReturnType<typeof parseStringPromise>>);
+
+    const replay = {
+      timestamp: 1000,
+      metadata: {
+        session: 'RACE',
+        sceneDesc: 'SEBRINGWEC',
+      },
+    } as unknown as LMUReplay;
+
+    const result = await findBestLogFile('C:/logs', replay, 99_000);
 
     expect(result).toEqual({ logDataFileName: null, logData: null });
   });
