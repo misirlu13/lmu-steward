@@ -231,7 +231,7 @@ A table showing performance data for each individual lap the driver completed, h
 
 Access settings by clicking the **gear icon** in the top-right corner of the navigation bar.
 
-### Profile
+### Profile Information
 
 Displays your LMU player profile pulled directly from LMU, including:
 - **Name** and **Nickname**
@@ -241,11 +241,14 @@ Displays your LMU player profile pulled directly from LMU, including:
 
 Profile data is read-only — changes to your name or nationality must be made within LMU itself. Use **Sync Profile** to refresh this information from your current LMU account.
 
-### File Paths
+### System Configuration
 
 These paths tell LMU Steward where to find LMU on your system:
-- **LMU Executable Path** — the full path to your `LMU.exe` file. Used to launch LMU directly from the app.
-- **LMU Replay Directory Path** — the folder where LMU stores your recorded replays.
+| Setting | Description |
+|---------|-------------|
+| **LMU Executable Path** | The full path to your `LMU.exe` file. Used to launch LMU directly from the app.
+| **LMU Replay Directory Path** | The folder where LMU stores your recorded replays.
+| **Close LMU When Steward Exits** | If LMU is running when you close LMU Steward, this option will also close LMU |
 
 If your LMU is installed in a non-standard location, update these paths and click **Save** to apply the changes.
 
@@ -257,29 +260,20 @@ Controls how LMU Steward keeps your replay library up to date:
 |---------|-------------|
 | **Automatic Sync** | Automatically reads new replays in the background while the app is open |
 | **Sync on App Launch** | Performs a sync every time you start LMU Steward |
+| **Quick View Mode** | When enabled, session data is available to browse before loading a replay in LMU. Jump controls are locked until the replay is loaded. |
 | **Sync Interval** | How often (in minutes) automatic sync checks for new replays |
+| **Log Match Window** | Controls how far apart replay and log timestamps can be when matching data. |
 | **Sync Now** | Manually trigger an immediate sync |
 
 The last sync timestamp is displayed so you always know how current your data is.
 
-### Privacy & Cache
+### Local Storage
 
 | Setting | Description |
 |---------|-------------|
-| **Anonymize Driver Data** | Replaces real driver names with anonymized placeholders throughout the app |
-| **Telemetry Cache** | Caches replay telemetry data locally so previously-viewed sessions load faster |
-| **Clear Cache on Exit** | Automatically deletes cached telemetry data each time the app closes |
-| **Clear Stored Data** | Manually wipe all locally stored app data (requires confirmation) |
+| **Clear Local Storage** | Manually wipe all locally stored app data (requires confirmation) |
 
-### Application Behavior
-
-| Setting | Description |
-|---------|-------------|
-| **Quick View Mode** | When enabled, session data is available to browse before loading a replay in LMU. Jump controls are locked until the replay is loaded. |
-| **Close LMU When Steward Exits** | If LMU is running when you close LMU Steward, this option will also close LMU |
-| **Launch LMU** | Start LMU directly from within LMU Steward without switching to your desktop |
-
-Settings with toggles (on/off switches) save automatically. Settings that require text input (file paths) require you to click **Save** to apply.
+> Settings with toggles (on/off switches) save automatically. Settings that require text input (file paths) require you to click **Save** to apply.
 
 ---
 
