@@ -114,7 +114,7 @@ export default class MenuBuilder {
             label: 'Community Discussions',
             click() {
               shell.openExternal(
-                'https://github.com/misirlu13/lmu-steward/community',
+                'https://github.com/misirlu13/lmu-steward/discussions',
               );
             },
           },
