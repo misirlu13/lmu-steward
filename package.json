@@ -1,6 +1,6 @@
 {
   "name": "lmu-steward",
-  "description": "A foundation for scalable desktop apps",
+  "description": "A desktop replay analysis and stewarding tool for Le Mans Ultimate that parses session logs to surface incidents, penalties, and race context.",
   "keywords": [
     "le-mans-ultimate",
     "lmu",
