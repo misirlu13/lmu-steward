@@ -69,6 +69,8 @@ LMU Steward connects directly to LMU in the background. While you race or review
 
 ## Dashboard
 
+![dashboard](docs/screenshots/dashboard.jpg)
+
 The Dashboard is your home screen and the starting point for all replay activity. It displays your recorded sessions grouped by track event — if a track weekend included Practice, Qualifying, and a Race, those sessions appear together under a single track card.
 
 Each track card shows:
@@ -111,6 +113,8 @@ When filters are active, a badge appears on the filter button and the footer sho
 
 ## Session Analysis
 
+![session analysis](docs/screenshots/session-analysis.jpg)
+
 Click **Analyze** on any session from the Dashboard to open the Session Analysis view. This is the core of LMU Steward — a comprehensive breakdown of everything that happened during that session.
 
 The header shows the track name, session type (color-coded: Red for Race, Yellow for Qualifying, Green for Practice), date, location, and a breadcrumb trail so you always know where you are.
@@ -141,6 +145,8 @@ A chronological, scrollable list of every incident that occurred during the sess
 You can filter the timeline by incident type using the toggle buttons above the list. Clicking a row highlights it and pre-selects it for replay jumping.
 
 ### Incident Heatmap
+
+![incident heatmap](docs/screenshots/heatmap.jpg)
 
 A visual overlay of the track map showing where incidents were concentrated during the session. Spots are color-coded by severity:
 - **Minor** — lighter color
@@ -174,6 +180,8 @@ If you haven't yet loaded a replay into LMU's replay player, LMU Steward enters 
 ---
 
 ## Driver Analysis
+
+![driver analysis](docs/screenshots/driver-analysis.jpg)
 
 From the Driver Standings in Session Analysis, click **Analyze Driver** on any driver to open their individual Driver Analysis page. This view gives you a complete picture of one driver's session from every angle.
 
