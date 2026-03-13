@@ -29,7 +29,7 @@ import {
 import { UserSettingsClearStorageDialog } from '../components/UserSettings/UserSettingsClearStorageDialog';
 import { UserSettingsAutosaveStatus } from '../components/UserSettings/UserSettingsAutosaveStatus';
 import { useUserSettingsDerivedState } from '../hooks/useUserSettingsDerivedState';
-import { UserSettingsReplayThresholdDialog } from '../components/UserSettings/UserSettingsReplayThresholdDialog';
+// import { UserSettingsReplayThresholdDialog } from '../components/UserSettings/UserSettingsReplayThresholdDialog';
 import { UserSettingsReplaySyncDefaultsDialog } from '../components/UserSettings/UserSettingsReplaySyncDefaultsDialog';
 
 const DEFAULT_REPLAY_LOG_MATCH_THRESHOLD_MS = 120_000;
@@ -173,7 +173,7 @@ export const UserSettingsView: React.FC = () => {
     quickViewEnabled,
     syncOnAppLaunch,
     syncOnIntervalMinutes,
-    replayLogMatchThresholdMinutes,
+    // replayLogMatchThresholdMinutes,
     anonymizeDriverData,
     telemetryCacheEnabled,
     clearCacheOnExit,
@@ -267,22 +267,22 @@ export const UserSettingsView: React.FC = () => {
         Number.isFinite(Number(response?.data?.syncOnIntervalMinutes))
           ? Math.max(1, Number(response?.data?.syncOnIntervalMinutes))
           : 5;
-      const resolvedReplayLogMatchThresholdMs = Number.isFinite(
-        Number(response?.data?.replayLogMatchThresholdMs),
-      )
-        ? Math.max(60_000, Number(response?.data?.replayLogMatchThresholdMs))
-        : DEFAULT_REPLAY_LOG_MATCH_THRESHOLD_MS;
-      const resolvedReplayLogMatchThresholdMinutes = Math.max(
-        1,
-        Math.round(resolvedReplayLogMatchThresholdMs / 60_000),
-      );
+      // const resolvedReplayLogMatchThresholdMs = Number.isFinite(
+      //   Number(response?.data?.replayLogMatchThresholdMs),
+      // )
+      //   ? Math.max(60_000, Number(response?.data?.replayLogMatchThresholdMs))
+      //   : DEFAULT_REPLAY_LOG_MATCH_THRESHOLD_MS;
+      // const resolvedReplayLogMatchThresholdMinutes = Math.max(
+      //   1,
+      //   Math.round(resolvedReplayLogMatchThresholdMs / 60_000),
+      // );
       setSyncOnIntervalMinutes(
         resolvedSyncIntervalMinutes,
       );
-      setReplayLogMatchThresholdMinutes(resolvedReplayLogMatchThresholdMinutes);
-      setPendingReplayLogMatchThresholdMinutes(
-        resolvedReplayLogMatchThresholdMinutes,
-      );
+      // setReplayLogMatchThresholdMinutes(resolvedReplayLogMatchThresholdMinutes);
+      // setPendingReplayLogMatchThresholdMinutes(
+      //   resolvedReplayLogMatchThresholdMinutes,
+      // );
       const resolvedAnonymizeDriverData = Boolean(
         response?.data?.anonymizeDriverData ?? false,
       );
@@ -310,7 +310,7 @@ export const UserSettingsView: React.FC = () => {
         quickViewEnabled: Boolean(response?.data?.quickViewEnabled ?? false),
         syncOnAppLaunch: Boolean(response?.data?.syncOnAppLaunch ?? true),
         syncOnIntervalMinutes: resolvedSyncIntervalMinutes,
-        replayLogMatchThresholdMinutes: resolvedReplayLogMatchThresholdMinutes,
+        // replayLogMatchThresholdMinutes: resolvedReplayLogMatchThresholdMinutes,
         anonymizeDriverData: resolvedAnonymizeDriverData,
         telemetryCacheEnabled: resolvedTelemetryCacheEnabled,
         clearCacheOnExit: resolvedClearCacheOnExit,
@@ -1171,7 +1171,7 @@ export const UserSettingsView: React.FC = () => {
 
                   <Divider sx={{ borderColor: 'divider' }} />
 
-                  <Stack
+                  {/* <Stack
                     direction={{ xs: 'column', md: 'row' }}
                     justifyContent="space-between"
                     alignItems={{ xs: 'flex-start', md: 'center' }}
@@ -1224,13 +1224,13 @@ export const UserSettingsView: React.FC = () => {
                         </MenuItem>
                       ))}
                     </TextField>
-                  </Stack>
-                  <Typography variant="caption" color="warning.main">
+                  </Stack> */}
+                  {/* <Typography variant="caption" color="warning.main">
                     Changing this value clears cached replay mappings and reprocesses replay
                     log associations.
-                  </Typography>
+                  </Typography> */}
 
-                  <Divider sx={{ borderColor: 'divider' }} />
+                  {/* <Divider sx={{ borderColor: 'divider' }} /> */}
 
                   <Stack direction="row" justifyContent="space-between" alignItems="center">
                     <Typography variant="caption" color="text.secondary">
@@ -1300,12 +1300,12 @@ export const UserSettingsView: React.FC = () => {
             onConfirm={onConfirmClearLocalStorage}
           />
 
-          <UserSettingsReplayThresholdDialog
+          {/* <UserSettingsReplayThresholdDialog
             open={isReplayThresholdDialogOpen}
             nextThresholdMinutes={pendingReplayLogMatchThresholdMinutes}
             onClose={onCancelReplayThresholdChange}
             onConfirm={onConfirmReplayThresholdChange}
-          />
+          /> */}
 
           <UserSettingsReplaySyncDefaultsDialog
             open={isReplaySyncDefaultsDialogOpen}

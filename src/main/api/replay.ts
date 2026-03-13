@@ -57,6 +57,8 @@ interface GetReplaysRequest {
 interface ParsedRaceResults {
   DateTime?: number;
   TrackVenue?: string;
+  TrackCourse?: string;
+  TrackEvent?: string;
   Race?: unknown;
   Qualify?: unknown;
   Practice1?: unknown;
@@ -86,11 +88,19 @@ const getReplayStore = (): ReplayStore => {
 
 const buildReplayCacheIdentityKey = (replay: ReplayCacheEntry) => {
   return [
-    String(replay?.metadata?.sceneDesc ?? '').trim().toLowerCase(),
-    String(replay?.metadata?.session ?? '').trim().toLowerCase(),
-    String(replay?.replayName ?? '').trim().toLowerCase(),
+    String(replay?.metadata?.sceneDesc ?? '')
+      .trim()
+      .toLowerCase(),
+    String(replay?.metadata?.session ?? '')
+      .trim()
+      .toLowerCase(),
+    String(replay?.replayName ?? '')
+      .trim()
+      .toLowerCase(),
     String(replay?.timestamp ?? '').trim(),
-    String(replay?.replayDirectory ?? '').trim().toLowerCase(),
+    String(replay?.replayDirectory ?? '')
+      .trim()
+      .toLowerCase(),
   ].join('|');
 };
 
@@ -118,7 +128,9 @@ export const parseLogXml = async (filePath: string) => {
   })) as ParsedLogXml;
 };
 
-export const getLogDataSessionType = (logData: ParsedLogXml): SessionType | null => {
+export const getLogDataSessionType = (
+  logData: ParsedLogXml,
+): SessionType | null => {
   const raceResultsKeys = Object.keys(logData?.rFactorXML?.RaceResults || {});
 
   if (raceResultsKeys.includes('Race')) {
@@ -138,49 +150,186 @@ interface LogFileData {
   logData: ParsedLogXml | null;
 }
 
+const TRACK_ALIAS_REPLACEMENTS: Array<[RegExp, string]> = [
+  [/\bout(er)?\s+circuit\b/g, 'international circuit'],
+  [/\bcurva\s+grande\s+circuit\b/g, 'nazionale monza'],
+  [/\s*-\s*elms\b/g, ''],
+];
+
+const normalizeTrackText = (value: string): string => {
+  let normalized = String(value ?? '')
+    .normalize('NFKD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+
+  TRACK_ALIAS_REPLACEMENTS.forEach(([pattern, replacement]) => {
+    normalized = normalized.replace(pattern, replacement).trim();
+  });
+
+  return normalized.replace(/\s+/g, ' ').trim();
+};
+
+const getSessionCodeFromFileName = (fileName: string): SessionType | null => {
+  const match = String(fileName ?? '').match(/([RQP])\d+\.xml$/i);
+  if (!match) {
+    return null;
+  }
+
+  const code = match[1].toUpperCase();
+  if (code === 'R') {
+    return 'RACE';
+  }
+  if (code === 'Q') {
+    return 'QUALIFY';
+  }
+
+  return 'PRACTICE';
+};
+
+const getReplayTrackAliases = (replay: LMUReplay): string[] => {
+  // Build alias list exactly as in the evaluator script
+  const meta =
+    CONSTANTS.TRACK_META_DATA[
+      replay.metadata.sceneDesc as keyof typeof CONSTANTS.TRACK_META_DATA
+    ];
+  let aliases: string[] = [];
+  if (meta) {
+    if (typeof meta.displayName === 'string') aliases.push(meta.displayName);
+    if (Array.isArray((meta as any).aliases))
+      aliases = aliases.concat((meta as any).aliases);
+  }
+  // Always include the normalized replayName as a fallback
+  const replayTrack = String(replay.replayName ?? '').replace(
+    /\s+[RQP]\d+\s+\d+$/i,
+    '',
+  );
+  if (replayTrack && !aliases.includes(replayTrack)) aliases.push(replayTrack);
+  return aliases
+    .filter((v): v is string => typeof v === 'string' && !!v)
+    .map((v) => normalizeTrackText(v))
+    .filter(Boolean);
+};
+
+const tracksLikelyMatch = (
+  replayTrackAliases: string[],
+  logTrackVenue: string,
+  logTrackCourse?: string,
+  logTrackEvent?: string,
+): boolean => {
+  // Match logic: any alias matches any log field (exact or substring, both ways)
+  const logFields = [logTrackVenue, logTrackCourse, logTrackEvent]
+    .map((v) => normalizeTrackText(String(v ?? '')))
+    .filter(Boolean);
+  for (const alias of replayTrackAliases) {
+    for (const field of logFields) {
+      if (alias === field || alias.includes(field) || field.includes(alias)) {
+        return true;
+      }
+    }
+  }
+  return false;
+};
+
 export const findBestLogFile = async (
   logDir: string,
   replay: LMUReplay,
-  logTimeThresholdMs: number,
 ): Promise<LogFileData | null> => {
   const files = (await readdir(logDir)).filter((file) => file.endsWith('.xml'));
   const replayTimestamp = replay.timestamp;
   const replaySessionType = replay.metadata.session;
-  const replayTrackVenue =
-    CONSTANTS.TRACK_META_DATA[
-      replay.metadata.sceneDesc as keyof typeof CONSTANTS.TRACK_META_DATA
-    ]?.displayName || '';
+  const replayTrackAliases = getReplayTrackAliases(replay);
 
-  let logDataFileName: string | null = null;
-  let smallestDiff = Infinity;
-  let logData: ParsedLogXml | null = null;
+  // Parse all log summaries
+  const logSummaries = await Promise.all(
+    files.map(async (file) => {
+      const fileData = await parseLogXml(join(logDir, file));
+      const raceResults = fileData?.rFactorXML?.RaceResults || {};
+      return {
+        fileName: file,
+        dateTime: raceResults?.DateTime ?? null,
+        sessionCode:
+          getLogDataSessionType(fileData) || getSessionCodeFromFileName(file),
+        trackVenue: raceResults?.TrackVenue || '',
+        trackCourse: raceResults?.TrackCourse || '',
+        trackEvent: raceResults?.TrackEvent || '',
+        fileData,
+      };
+    }),
+  );
 
-  for (const file of files) {
-    const fileData = await parseLogXml(join(logDir, file));
-    const logTimeStamp = fileData?.rFactorXML?.RaceResults?.DateTime;
-    const logSessionType = getLogDataSessionType(fileData);
-    const logTrackVenue = fileData?.rFactorXML?.RaceResults?.TrackVenue || '';
-
-    if (!logTimeStamp) continue;
-
-    const diffMs = Math.abs(replayTimestamp - logTimeStamp) * 1000;
-
-    if (
-      diffMs < smallestDiff &&
-      diffMs <= logTimeThresholdMs &&
-      logSessionType === replaySessionType &&
-      replayTrackVenue.toLowerCase().includes(logTrackVenue.toLowerCase())
-    ) {
-      smallestDiff = diffMs;
-      logDataFileName = file;
-      logData = fileData;
-      break;
-    }
+  // Only consider logs with a valid session and dateTime
+  const candidates = logSummaries.filter(
+    (log) =>
+      log.sessionCode === replaySessionType &&
+      log.dateTime !== null &&
+      log.dateTime !== undefined,
+  );
+  if (candidates.length === 0) {
+    return { logDataFileName: null, logData: null };
   }
 
+  // Rank candidates: prefer trackMatch, then smallest time diff, then filename timestamp, then filename
+  const ranked = candidates
+    .map((log) => {
+      const diff = Math.abs(replayTimestamp - Number(log.dateTime));
+      const trackMatch = tracksLikelyMatch(
+        replayTrackAliases,
+        log.trackVenue,
+        log.trackCourse,
+        log.trackEvent,
+      );
+      // Parse timestamp from filename if present (YYYY_MM_DD_HH_MM_SS-...)
+      const fileNameTsMatch = log.fileName.match(
+        /^(\d{4})_(\d{2})_(\d{2})_(\d{2})_(\d{2})_(\d{2})-/,
+      );
+      let fileNameTs = null;
+      if (fileNameTsMatch) {
+        const dt = new Date(
+          Date.UTC(
+            Number(fileNameTsMatch[1]),
+            Number(fileNameTsMatch[2]) - 1,
+            Number(fileNameTsMatch[3]),
+            Number(fileNameTsMatch[4]),
+            Number(fileNameTsMatch[5]),
+            Number(fileNameTsMatch[6]),
+          ),
+        );
+        fileNameTs = Math.floor(dt.getTime() / 1000);
+      }
+      return {
+        ...log,
+        diffSec: diff,
+        trackMatch,
+        fileNameTs,
+      };
+    })
+    .sort((a, b) => {
+      // Prefer trackMatch true
+      if (a.trackMatch !== b.trackMatch) return b.trackMatch ? 1 : -1;
+      // Then smallest diffSec
+      if (a.diffSec !== b.diffSec) return a.diffSec - b.diffSec;
+      // Then closest fileNameTs
+      if (
+        a.fileNameTs !== null &&
+        b.fileNameTs !== null &&
+        a.fileNameTs !== b.fileNameTs
+      ) {
+        return (
+          Math.abs(replayTimestamp - a.fileNameTs) -
+          Math.abs(replayTimestamp - b.fileNameTs)
+        );
+      }
+      // Then lexicographical filename
+      return a.fileName.localeCompare(b.fileName);
+    });
+
+  const best = ranked[0];
   return {
-    logDataFileName,
-    logData,
+    logDataFileName: best?.fileName ?? null,
+    logData: best?.fileData ?? null,
   };
 };
 
@@ -192,17 +341,12 @@ interface LogMetaData {
 
 export const getReplayLogData = async (
   replay: LMUReplay,
-  logTimeThresholdMs: number,
 ): Promise<LogMetaData | null> => {
   return new Promise(async (res, reject) => {
     try {
       const replayDirectory = replay.replayDirectory;
       const logDataDirectory = resolve(replayDirectory, '../Log/Results');
-      const logData = await findBestLogFile(
-        logDataDirectory,
-        replay,
-        logTimeThresholdMs,
-      );
+      const logData = await findBestLogFile(logDataDirectory, replay);
 
       if (!logData || !logData.logDataFileName || !logData.logData) {
         res(null);
@@ -280,7 +424,8 @@ export const syncReplayData = async (
       const replayStore = getReplayStore();
       const storedReplay = options?.forceReplayCacheReset
         ? {}
-        : ((replayStore.get('replays') as Record<string, ReplayCacheEntry>) || {});
+        : (replayStore.get('replays') as Record<string, ReplayCacheEntry>) ||
+          {};
       const storedReplayEntries = Object.values(storedReplay);
       const storedReplayByIdentity = new Map<string, ReplayCacheEntry>();
 
@@ -311,7 +456,8 @@ export const syncReplayData = async (
           continue;
         }
 
-        const existingReplayByIdentity = storedReplayByIdentity.get(identityKey);
+        const existingReplayByIdentity =
+          storedReplayByIdentity.get(identityKey);
         if (existingReplayByIdentity) {
           storedReplay[hash] = {
             ...existingReplayByIdentity,
@@ -324,10 +470,7 @@ export const syncReplayData = async (
         }
 
         if (!storedReplay[hash]) {
-          const logMetaData = await getReplayLogData(
-            replay,
-            replayLogMatchThresholdMs,
-          );
+          const logMetaData = await getReplayLogData(replay);
 
           if (logMetaData) {
             replay.logData = logMetaData.logData;
@@ -404,13 +547,13 @@ export const getReplays = async (
     await syncReplayData({
       forceReplayCacheReset: Boolean(request?.forceReplayCacheReset),
       onProgress: (progress) => {
-      latestProgress = progress;
-      publishReplaySyncStatus({
-        status: 'in-progress',
-        percentage: progress.percentage,
-        processed: progress.processed,
-        total: progress.total,
-      });
+        latestProgress = progress;
+        publishReplaySyncStatus({
+          status: 'in-progress',
+          percentage: progress.percentage,
+          processed: progress.processed,
+          total: progress.total,
+        });
       },
     });
 
@@ -485,12 +628,7 @@ export const postWatchReplay = async (
     }
 
     if (!storedReplay[hash]) {
-      const settings = await readUserSettings();
-      const configuredThresholdMs = Number(settings?.replayLogMatchThresholdMs);
-      const replayLogMatchThresholdMs = Number.isFinite(configuredThresholdMs)
-        ? Math.max(1_000, configuredThresholdMs)
-        : DEFAULT_REPLAY_LOG_MATCH_THRESHOLD_MS;
-      const logMetaData = await getReplayLogData(replay, replayLogMatchThresholdMs);
+      const logMetaData = await getReplayLogData(replay);
 
       if (!logMetaData) {
         return;
@@ -535,7 +673,9 @@ export const getIsReplayActive = async (event: Electron.IpcMainEvent) => {
 
     const isKnownInactiveResponse =
       response.status === 400 &&
-      normalizedBody.includes('cannot check replay status when not in a session');
+      normalizedBody.includes(
+        'cannot check replay status when not in a session',
+      );
 
     if (response.ok || isKnownInactiveResponse) {
       const isReplayActive = response.ok && normalizedBody === 'true';

@@ -43,6 +43,11 @@ export const CONSTANTS = {
       logo: '/start/images/tracks/logos/portimaowec.svg',
       abbr: 'AIA',
       location: 'Portimão, Portugal',
+      aliases: [
+        'Algarve International Circuit',
+        '6 Hours of Portimao',
+        'Algarve International Circuit 1.21'
+      ]
     },
     IMOLAWEC: {
       displayName: 'Autodromo Enzo e Dino Ferrari',
@@ -50,6 +55,11 @@ export const CONSTANTS = {
       logo: '/start/images/tracks/logos/imolawec.svg',
       abbr: 'IML',
       location: 'Imola, Italy',
+      aliases: [
+        'Autodromo Enzo e Dino Ferrari',
+        '6 Hours of Imola',
+        'Autodromo Enzo e Dino Ferrari 1.21'
+      ]
     },
     MONZAWEC: {
       displayName: 'Autodromo Nazionale Monza',
@@ -57,6 +67,11 @@ export const CONSTANTS = {
       logo: '/start/images/tracks/logos/monzawec.svg',
       abbr: 'MNZ',
       location: 'Monza, Italy',
+      aliases: [
+        'Autodromo Nazionale Monza',
+        '6 Hours of Monza',
+        'Autodromo Nazionale Monza 1.21'
+      ]
     },
     MONZAWEC_GRANDE: {
       displayName: 'Autodromo Nazionale Monza (Grande)',
@@ -64,6 +79,11 @@ export const CONSTANTS = {
       logo: '/start/images/tracks/logos/monzawec.svg',
       abbr: 'MNZ',
       location: 'Monza, Italy',
+      aliases: [
+        'Autodromo Nazionale Monza',
+        'Monza Curva Grande Circuit',
+        'Autodromo Nazionale Monza 1.21'
+      ]
     },
     INTERLAGOSWEC: {
       displayName: 'Autódromo José Carlos Pace',
@@ -71,6 +91,11 @@ export const CONSTANTS = {
       logo: '/start/images/tracks/logos/interlagoswec.svg',
       abbr: 'IGL',
       location: 'São Paulo, Brazil',
+      aliases: [
+        'Autódromo José Carlos Pace',
+        'Rolex 6 Hours Of Sao Paulo',
+        'Autódromo José Carlos Pace 1.21'
+      ]
     },
     BAHRAINWEC: {
       displayName: 'Bahrain International Circuit',
@@ -78,6 +103,11 @@ export const CONSTANTS = {
       logo: '/start/images/tracks/logos/bahrainwec.svg',
       abbr: 'BIC',
       location: 'Sakhir, Bahrain',
+      aliases: [
+        'Bahrain International Circuit',
+        '8 Hours of Bahrain',
+        'Bahrain International Circuit 1.23'
+      ]
     },
     BAHRAINWEC_ENDCE: {
       displayName: 'Bahrain International Circuit (Endurance)',

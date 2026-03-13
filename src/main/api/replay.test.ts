@@ -124,6 +124,87 @@ describe('main/replay helpers', () => {
     expect(result?.logData?.rFactorXML?.RaceResults?.Race).toEqual({});
   });
 
+  it('does not stop at first eligible file and picks the closest diff', async () => {
+    readdirMock.mockResolvedValue(
+      ['first.xml', 'second.xml'] as unknown as Awaited<ReturnType<typeof readdir>>,
+    );
+
+    readFileMock.mockImplementation(async (filePath) => {
+      if (String(filePath).includes('first.xml')) {
+        return 'first-xml' as unknown as Awaited<ReturnType<typeof readFile>>;
+      }
+
+      return 'second-xml' as unknown as Awaited<ReturnType<typeof readFile>>;
+    });
+
+    parseStringPromiseMock.mockImplementation(async (xml) => {
+      if (xml === 'first-xml') {
+        return {
+          rFactorXML: {
+            RaceResults: {
+              DateTime: 930,
+              TrackVenue: 'Sebring International Raceway',
+              Race: {},
+            },
+          },
+        } as unknown as Awaited<ReturnType<typeof parseStringPromise>>;
+      }
+
+      return {
+        rFactorXML: {
+          RaceResults: {
+            DateTime: 995,
+            TrackVenue: 'Sebring International Raceway',
+            Race: {},
+          },
+        },
+      } as unknown as Awaited<ReturnType<typeof parseStringPromise>>;
+    });
+
+    const replay = {
+      timestamp: 1000,
+      metadata: {
+        session: 'RACE',
+        sceneDesc: 'SEBRINGWEC',
+      },
+    } as unknown as LMUReplay;
+
+    const result = await findBestLogFile('C:/logs', replay, 120_000);
+
+    expect(result?.logDataFileName).toBe('second.xml');
+  });
+
+  it('matches known track aliases from replay name and scene metadata', async () => {
+    readdirMock.mockResolvedValue(
+      ['candidate.xml'] as unknown as Awaited<ReturnType<typeof readdir>>,
+    );
+    readFileMock.mockResolvedValue(
+      'candidate-xml' as unknown as Awaited<ReturnType<typeof readFile>>,
+    );
+    parseStringPromiseMock.mockResolvedValue({
+      rFactorXML: {
+        RaceResults: {
+          DateTime: 1000,
+          TrackVenue: 'Bahrain International Circuit',
+          Race: {},
+        },
+      },
+    } as unknown as Awaited<ReturnType<typeof parseStringPromise>>);
+
+    const replay = {
+      replayName: 'Bahrain Outer Circuit R1 2',
+      timestamp: 1000,
+      metadata: {
+        session: 'RACE',
+        sceneDesc: 'BAHRAINWEC_OUTER',
+      },
+    } as unknown as LMUReplay;
+
+    const result = await findBestLogFile('C:/logs', replay, 120_000);
+
+    expect(result?.logDataFileName).toBe('candidate.xml');
+  });
+
   it('returns null file metadata when no logs match', async () => {
     readdirMock.mockResolvedValue(['x.xml'] as unknown as Awaited<ReturnType<typeof readdir>>);
     readFileMock.mockResolvedValue('mismatch-xml' as unknown as Awaited<ReturnType<typeof readFile>>);

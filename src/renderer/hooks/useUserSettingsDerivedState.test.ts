@@ -18,7 +18,7 @@ describe('useUserSettingsDerivedState', () => {
     quickViewEnabled: false,
     syncOnAppLaunch: true,
     syncOnIntervalMinutes: 5,
-    replayLogMatchThresholdMinutes: 2,
+    // removed replayLogMatchThresholdMinutes
     anonymizeDriverData: false,
     telemetryCacheEnabled: true,
     clearCacheOnExit: false,
@@ -58,7 +58,6 @@ describe('useUserSettingsDerivedState', () => {
       quickViewEnabled: false,
       syncOnAppLaunch: true,
       syncOnIntervalMinutes: 5,
-      replayLogMatchThresholdMinutes: 2,
       anonymizeDriverData: false,
       telemetryCacheEnabled: true,
       clearCacheOnExit: false,
