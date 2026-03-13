@@ -115,6 +115,11 @@ export const CONSTANTS = {
       logo: '/start/images/tracks/logos/bahrainwec.svg',
       abbr: 'BIC',
       location: 'Sakhir, Bahrain',
+      aliases: [
+        'Bahrain Endurance Circuit',
+        'Bahrain International Circuit',
+        'Bahrain International Circuit 1.23'
+      ]
     },
     BAHRAINWEC_OUTER: {
       displayName: 'Bahrain International Circuit (Outer)',
@@ -122,6 +127,11 @@ export const CONSTANTS = {
       logo: '/start/images/tracks/logos/bahrainwec.svg',
       abbr: 'BIC',
       location: 'Sakhir, Bahrain',
+      aliases: [
+        'Bahrain Outer Circuit',
+        'Bahrain International Circuit',
+        'Bahrain International Circuit 1.23'
+      ]
     },
     BAHRAINWEC_PADDOCK: {
       displayName: 'Bahrain International Circuit (Paddock)',
@@ -129,6 +139,11 @@ export const CONSTANTS = {
       logo: '/start/images/tracks/logos/bahrainwec.svg',
       abbr: 'BIC',
       location: 'Sakhir, Bahrain',
+      aliases: [
+        'Bahrain Paddock Circuit',
+        'Bahrain International Circuit',
+        'Bahrain International Circuit 1.23'
+      ]
     },
     SPAWEC: {
       displayName: 'Circuit de Spa-Francorchamps',
@@ -136,6 +151,11 @@ export const CONSTANTS = {
       logo: '/start/images/tracks/logos/spawec.svg',
       abbr: 'SPA',
       location: 'Stavelot, Belgium',
+      aliases: [
+        '6 Hours of Spa-Francorchamps',
+        'Circuit de Spa-Francorchamps',
+        'Circuit de Spa-Francorchamps 1.21'
+      ]
     },
     SPAWEC_ENDCE: {
       displayName: 'Circuit de Spa-Francorchamps (Endurance)',
@@ -143,6 +163,11 @@ export const CONSTANTS = {
       logo: '/start/images/tracks/logos/spawec.svg',
       abbr: 'SPA',
       location: 'Stavelot, Belgium',
+      aliases: [
+        'Circuit de Spa-Francorchamps Endurance',
+        'Circuit de Spa-Francorchamps',
+        'Circuit de Spa-Francorchamps 1.21'
+      ]
     },
     LEMANSWEC: {
       displayName: 'Circuit de la Sarthe',
@@ -150,6 +175,11 @@ export const CONSTANTS = {
       logo: '/start/images/tracks/logos/lemanswec.svg',
       abbr: 'LM',
       location: 'Le Mans, France',
+      aliases: [
+        '24 Heures du Mans',
+        'Circuit de la Sarthe',
+        'Circuit de la Sarthe 1.21'
+      ]
     },
     LEMANSWEC_MULSANNE: {
       displayName: 'Circuit de la Sarthe (Mulsanne)',
@@ -157,6 +187,11 @@ export const CONSTANTS = {
       logo: '/start/images/tracks/logos/lemanswec.svg',
       abbr: 'LM',
       location: 'Le Mans, France',
+      aliases: [
+        'Circuit de la Sarthe Mulsanne',
+        'Circuit de la Sarthe',
+        'Circuit de la Sarthe 1.21'
+      ]
     },
     COTAWEC: {
       displayName: 'Circuit of the Americas',
@@ -164,6 +199,11 @@ export const CONSTANTS = {
       logo: '/start/images/tracks/logos/cotawec.svg',
       abbr: 'COTA',
       location: 'Austin, Texas, USA',
+      aliases: [
+        'Lone Star Le Mans',
+        'Circuit of the Americas',
+        'Circuit of the Americas 1.21'
+      ]
     },
     COTAWEC_NATIONAL: {
       displayName: 'Circuit of the Americas (National)',
@@ -171,6 +211,11 @@ export const CONSTANTS = {
       logo: '/start/images/tracks/logos/cotawec.svg',
       abbr: 'COTA',
       location: 'Austin, Texas, USA',
+      aliases: [
+        'COTA National Circuit',
+        'Circuit of the Americas',
+        'Circuit of the Americas 1.21'
+      ]
     },
     FUJIWEC: {
       displayName: 'Fuji Speedway',
@@ -178,6 +223,11 @@ export const CONSTANTS = {
       logo: '/start/images/tracks/logos/fujiwec.svg',
       abbr: 'FSW',
       location: 'Oyama, Japan',
+      aliases: [
+        '6 Hours of Fuji',
+        'Fuji Speedway',
+        'Fuji Speedway 1.21'
+      ]
     },
     FUJIWEC_CL: {
       displayName: 'Fuji Speedway (Classic)',
@@ -185,6 +235,11 @@ export const CONSTANTS = {
       logo: '/start/images/tracks/logos/fujiwec.svg',
       abbr: 'FSW',
       location: 'Oyama, Japan',
+      aliases: [
+        'Fuji Speedway Classic',
+        'Fuji Speedway',
+        'Fuji Speedway 1.21'
+      ]
     },
     QATARWEC: {
       displayName: 'Lusail International Circuit',
@@ -192,6 +247,11 @@ export const CONSTANTS = {
       logo: '/start/images/tracks/logos/qatarwec.svg',
       abbr: 'LIC',
       location: 'Lusail, Qatar',
+      aliases: [
+        'Qatar 1812KM',
+        'Lusail International Circuit',
+        'Lusail International Circuit 1.21'
+      ]
     },
     QATARWEC_SHORT: {
       displayName: 'Lusail International Circuit (Short)',
@@ -199,6 +259,11 @@ export const CONSTANTS = {
       logo: '/start/images/tracks/logos/qatarwec.svg',
       abbr: 'LIC',
       location: 'Lusail, Qatar',
+      aliases: [
+        'Lusail Short Circuit',
+        'Lusail International Circuit',
+        'Lusail International Circuit 1.21'
+      ]
     },
     PAULRICARDELMS: {
       displayName: 'Paul Ricard Circuit',
@@ -206,6 +271,11 @@ export const CONSTANTS = {
       logo: '/start/images/tracks/logos/paulricardelms.svg',
       abbr: 'PR',
       location: 'Le Castellet, France',
+      aliases: [
+        '4 Hours of Castellet',
+        'Paul Ricard Circuit',
+        'Paul Ricard Circuit 1.05'
+      ]
     },
     SEBRINGWEC: {
       displayName: 'Sebring International Raceway',
@@ -213,6 +283,11 @@ export const CONSTANTS = {
       logo: '/start/images/tracks/logos/sebringwec.svg',
       abbr: 'SEB',
       location: 'Sebring, Florida, USA',
+      aliases: [
+        '1000 Miles of Sebring',
+        'Sebring International Raceway',
+        'Sebring International Raceway 1.23'
+      ]
     },
     SEBRINGWEC_SCHOOL: {
       displayName: 'Sebring International Raceway (School)',
@@ -220,6 +295,11 @@ export const CONSTANTS = {
       logo: '/start/images/tracks/logos/sebringwec.svg',
       abbr: 'SEB',
       location: 'Sebring, Florida, USA',
+      aliases: [
+        'Sebring School Circuit',
+        'Sebring International Raceway',
+        'Sebring International Raceway 1.23'
+      ]
     },
     SILVERSTONEELMS: {
       displayName: 'Silverstone Circuit',
@@ -227,6 +307,11 @@ export const CONSTANTS = {
       logo: '/start/images/tracks/logos/silverstoneelms.svg',
       abbr: 'SIL',
       location: 'Silverstone, United Kingdom',
+      aliases: [
+        '4 Hours of Silverstone',
+        'Silverstone Circuit',
+        'Silverstone Circuit 1.07'
+      ]
     },
   },
   REPLAY_COMMANDS: {
