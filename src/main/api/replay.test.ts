@@ -114,7 +114,7 @@ describe('main/replay helpers', () => {
       },
     } as unknown as LMUReplay;
 
-    const result = await findBestLogFile('C:/logs', replay, 120_000);
+    const result = await findBestLogFile('C:/logs', replay);
 
     expect(result).toEqual(
       expect.objectContaining({
@@ -169,7 +169,7 @@ describe('main/replay helpers', () => {
       },
     } as unknown as LMUReplay;
 
-    const result = await findBestLogFile('C:/logs', replay, 120_000);
+    const result = await findBestLogFile('C:/logs', replay);
 
     expect(result?.logDataFileName).toBe('second.xml');
   });
@@ -200,7 +200,7 @@ describe('main/replay helpers', () => {
       },
     } as unknown as LMUReplay;
 
-    const result = await findBestLogFile('C:/logs', replay, 120_000);
+    const result = await findBestLogFile('C:/logs', replay);
 
     expect(result?.logDataFileName).toBe('candidate.xml');
   });
@@ -226,9 +226,20 @@ describe('main/replay helpers', () => {
       },
     } as unknown as LMUReplay;
 
-    const result = await findBestLogFile('C:/logs', replay, 120_000);
+    const result = await findBestLogFile('C:/logs', replay);
 
-    expect(result).toEqual({ logDataFileName: null, logData: null });
+    expect(result).toEqual({
+      logDataFileName: 'x.xml',
+      logData: expect.objectContaining({
+        rFactorXML: expect.objectContaining({
+          RaceResults: expect.objectContaining({
+            DateTime: 5000,
+            TrackVenue: 'Different Track',
+            Race: {},
+          }),
+        }),
+      }),
+    });
   });
 
   it('matches when timestamp diff is within configured millisecond threshold', async () => {
@@ -252,7 +263,7 @@ describe('main/replay helpers', () => {
       },
     } as unknown as LMUReplay;
 
-    const result = await findBestLogFile('C:/logs', replay, 100_000);
+    const result = await findBestLogFile('C:/logs', replay);
 
     expect(result?.logDataFileName).toBe('candidate.xml');
   });
@@ -278,8 +289,19 @@ describe('main/replay helpers', () => {
       },
     } as unknown as LMUReplay;
 
-    const result = await findBestLogFile('C:/logs', replay, 99_000);
+    const result = await findBestLogFile('C:/logs', replay);
 
-    expect(result).toEqual({ logDataFileName: null, logData: null });
+    expect(result).toEqual({
+      logDataFileName: 'candidate.xml',
+      logData: expect.objectContaining({
+        rFactorXML: expect.objectContaining({
+          RaceResults: expect.objectContaining({
+            DateTime: 1100,
+            TrackVenue: 'Sebring',
+            Race: {},
+          }),
+        }),
+      }),
+    });
   });
 });

@@ -94,7 +94,6 @@ describe('UserSettingsView integration', () => {
         quickViewEnabled: false,
         syncOnAppLaunch: true,
         syncOnIntervalMinutes: 5,
-        replayLogMatchThresholdMs: 120000,
         closeLmuWhenStewardExits: false,
       },
     });
@@ -131,7 +130,6 @@ describe('UserSettingsView integration', () => {
         quickViewEnabled: false,
         syncOnAppLaunch: true,
         syncOnIntervalMinutes: 5,
-        replayLogMatchThresholdMs: 120000,
       },
     });
 
@@ -152,7 +150,6 @@ describe('UserSettingsView integration', () => {
       quickViewEnabled: true,
       syncOnAppLaunch: true,
       syncOnIntervalMinutes: 5,
-      replayLogMatchThresholdMs: 120000,
       anonymizeDriverData: false,
       telemetryCacheEnabled: true,
       clearCacheOnExit: false,
@@ -195,7 +192,6 @@ describe('UserSettingsView integration', () => {
         quickViewEnabled: true,
         syncOnAppLaunch: false,
         syncOnIntervalMinutes: 10,
-        replayLogMatchThresholdMs: 300000,
       },
     });
 
@@ -217,7 +213,6 @@ describe('UserSettingsView integration', () => {
       quickViewEnabled: false,
       syncOnAppLaunch: true,
       syncOnIntervalMinutes: 5,
-      replayLogMatchThresholdMs: 120000,
       anonymizeDriverData: false,
       telemetryCacheEnabled: true,
       clearCacheOnExit: false,
