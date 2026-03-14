@@ -262,7 +262,6 @@ Controls how LMU Steward keeps your replay library up to date:
 | **Sync on App Launch** | Performs a sync every time you start LMU Steward |
 | **Quick View Mode** | When enabled, session data is available to browse before loading a replay in LMU. Jump controls are locked until the replay is loaded. |
 | **Sync Interval** | How often (in minutes) automatic sync checks for new replays |
-| **Log Match Window** | Controls how far apart replay and log timestamps can be when matching data. |
 | **Sync Now** | Manually trigger an immediate sync |
 
 The last sync timestamp is displayed so you always know how current your data is.

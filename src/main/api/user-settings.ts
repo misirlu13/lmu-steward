@@ -3,9 +3,7 @@ import path from 'path';
 
 export type UserSettings = Record<string, unknown>;
 
-const MIN_REPLAY_LOG_MATCH_THRESHOLD_MS = 15_000;
-const MAX_REPLAY_LOG_MATCH_THRESHOLD_MS = 15 * 60 * 1000;
-const DEFAULT_REPLAY_LOG_MATCH_THRESHOLD_MS = 120_000;
+// Removed threshold constants
 
 const toErrorMessage = (error: unknown, fallback: string): string => {
 	if (error instanceof Error && error.message) {
@@ -61,24 +59,7 @@ export const getLmuReplayDirectoryPathValidationError = (
 	return null;
 };
 
-export const getReplayLogMatchThresholdValidationError = (
-	thresholdMs: unknown,
-): string | null => {
-	const normalizedThresholdMs = Number(thresholdMs);
-
-	if (!Number.isFinite(normalizedThresholdMs)) {
-		return 'Replay log match threshold must be a valid number.';
-	}
-
-	if (
-		normalizedThresholdMs < MIN_REPLAY_LOG_MATCH_THRESHOLD_MS ||
-		normalizedThresholdMs > MAX_REPLAY_LOG_MATCH_THRESHOLD_MS
-	) {
-		return 'Replay log match threshold must be between 0.25 and 15 minutes.';
-	}
-
-	return null;
-};
+// Removed getReplayLogMatchThresholdValidationError
 
 const validateUserSettingsUpdates = (updates: UserSettings): string | null => {
 	if (typeof updates?.lmuExecutablePath === 'string') {
@@ -102,15 +83,7 @@ const validateUserSettingsUpdates = (updates: UserSettings): string | null => {
 		}
 	}
 
-	if (Object.prototype.hasOwnProperty.call(updates ?? {}, 'replayLogMatchThresholdMs')) {
-		const thresholdValidationError = getReplayLogMatchThresholdValidationError(
-			updates?.replayLogMatchThresholdMs,
-		);
-
-		if (thresholdValidationError) {
-			return thresholdValidationError;
-		}
-	}
+	// Removed replayLogMatchThresholdMs validation
 
 	return null;
 };
@@ -141,7 +114,6 @@ const ensureStore = async (): Promise<void> => {
 						quickViewEnabled: false,
 						syncOnAppLaunch: true,
 						syncOnIntervalMinutes: 5,
-						replayLogMatchThresholdMs: DEFAULT_REPLAY_LOG_MATCH_THRESHOLD_MS,
 						lastReplaySyncAt: null,
 						closeLmuWhenStewardExits: false,
 						closeLmuOnExitAlwaysPerformAction: false,

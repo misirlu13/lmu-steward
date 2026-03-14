@@ -94,7 +94,6 @@ describe('UserSettingsView integration', () => {
         quickViewEnabled: false,
         syncOnAppLaunch: true,
         syncOnIntervalMinutes: 5,
-        replayLogMatchThresholdMs: 120000,
         closeLmuWhenStewardExits: false,
       },
     });
@@ -131,7 +130,6 @@ describe('UserSettingsView integration', () => {
         quickViewEnabled: false,
         syncOnAppLaunch: true,
         syncOnIntervalMinutes: 5,
-        replayLogMatchThresholdMs: 120000,
       },
     });
 
@@ -152,7 +150,6 @@ describe('UserSettingsView integration', () => {
       quickViewEnabled: true,
       syncOnAppLaunch: true,
       syncOnIntervalMinutes: 5,
-      replayLogMatchThresholdMs: 120000,
       anonymizeDriverData: false,
       telemetryCacheEnabled: true,
       clearCacheOnExit: false,
@@ -179,80 +176,7 @@ describe('UserSettingsView integration', () => {
     expect(sendMessageMock).toHaveBeenCalledWith(CONSTANTS.API.POST_CLEAR_LOCAL_STORAGE);
   });
 
-  it('marks replay cache reset requirement when replay threshold changes', () => {
-    renderView();
-
-    emitIpc(CONSTANTS.API.GET_USER_SETTINGS, {
-      status: 'success',
-      data: {
-        lmuExecutablePath:
-          'C:/Program Files (x86)/Steam/steamapps/common/Le Mans Ultimate/Le Mans Ultimate.exe',
-        lmuReplayDirectoryPath:
-          'C:/Program Files (x86)/Steam/steamapps/common/Le Mans Ultimate/UserData/Replays',
-        automaticSyncEnabled: true,
-        quickViewEnabled: false,
-        syncOnAppLaunch: true,
-        syncOnIntervalMinutes: 5,
-        replayLogMatchThresholdMs: 120000,
-      },
-    });
-
-    const minutesSelects = screen.getAllByLabelText('Minutes');
-    fireEvent.mouseDown(minutesSelects[1]);
-    fireEvent.click(screen.getByRole('option', { name: '3' }));
-
-    expect(screen.getByText('Reprocess Replay Data?')).toBeTruthy();
-    fireEvent.click(screen.getByRole('button', { name: 'Reprocess Replays' }));
-
-    act(() => {
-      jest.advanceTimersByTime(800);
-    });
-
-    expect(sendMessageMock).toHaveBeenCalledWith(CONSTANTS.API.POST_USER_SETTINGS, {
-      automaticSyncEnabled: true,
-      quickViewEnabled: false,
-      syncOnAppLaunch: true,
-      syncOnIntervalMinutes: 5,
-      replayLogMatchThresholdMs: 180000,
-      anonymizeDriverData: false,
-      telemetryCacheEnabled: true,
-      clearCacheOnExit: false,
-    });
-
-    emitIpc(CONSTANTS.API.POST_USER_SETTINGS, {
-      status: 'success',
-      data: {
-        replayLogMatchThresholdMs: 180000,
-      },
-    });
-
-    expect(requestReplaysMock).not.toHaveBeenCalled();
-    expect(markReplayCacheResetRequiredMock).toHaveBeenCalledTimes(1);
-  });
-
-  it('shows tooltip guidance for log match window info icon', async () => {
-    renderView();
-
-    emitIpc(CONSTANTS.API.GET_USER_SETTINGS, {
-      status: 'success',
-      data: {
-        lmuExecutablePath:
-          'C:/Program Files (x86)/Steam/steamapps/common/Le Mans Ultimate/Le Mans Ultimate.exe',
-        lmuReplayDirectoryPath:
-          'C:/Program Files (x86)/Steam/steamapps/common/Le Mans Ultimate/UserData/Replays',
-        replayLogMatchThresholdMs: 120000,
-      },
-    });
-
-    const infoIcon = screen.getByTestId('log-match-window-info-icon');
-    fireEvent.mouseOver(infoIcon);
-
-    expect(
-      await screen.findByText(
-        /This setting helps resolve cases where replay details do not match the associated log details\./i,
-      ),
-    ).toBeTruthy();
-  });
+  // Removed threshold-related tests
 
   it('resets replay sync settings to defaults through confirmation dialog', () => {
     renderView();
@@ -268,7 +192,6 @@ describe('UserSettingsView integration', () => {
         quickViewEnabled: true,
         syncOnAppLaunch: false,
         syncOnIntervalMinutes: 10,
-        replayLogMatchThresholdMs: 300000,
       },
     });
 
@@ -290,7 +213,6 @@ describe('UserSettingsView integration', () => {
       quickViewEnabled: false,
       syncOnAppLaunch: true,
       syncOnIntervalMinutes: 5,
-      replayLogMatchThresholdMs: 120000,
       anonymizeDriverData: false,
       telemetryCacheEnabled: true,
       clearCacheOnExit: false,
