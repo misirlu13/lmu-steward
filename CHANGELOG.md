@@ -1,3 +1,12 @@
+## 1.1.0 (2026-03-14)
+
+* Merge pull request #3 from misirlu13/feature/replay-match-log-scoring ([d45c624](https://github.com/misirlu13/lmu-steward/commit/d45c624)), closes [#3](https://github.com/misirlu13/lmu-steward/issues/3)
+* feat(constants.ts): updated the remaining TRACK_META_DATA alises that were missing ([d5c736a](https://github.com/misirlu13/lmu-steward/commit/d5c736a))
+* feat(replay.ts): completely revamped the replay to log algorithm ([de8eea0](https://github.com/misirlu13/lmu-steward/commit/de8eea0))
+* docs(readme.md): removed log match threshold from docs ([1839c8d](https://github.com/misirlu13/lmu-steward/commit/1839c8d))
+* docs(readme.md): updated readme description removing certain application settings ([2468f13](https://github.com/misirlu13/lmu-steward/commit/2468f13))
+* test(replay): updated replay and user setting tests to match new behavior ([c2536c6](https://github.com/misirlu13/lmu-steward/commit/c2536c6))
+
 ## 1.0.0 (2026-03-12)
 
 * feat: removed semantic release "release" feature so it doesn't conflict with the public GH action ([599c9f0](https://github.com/misirlu13/lmu-steward/commit/599c9f0))
