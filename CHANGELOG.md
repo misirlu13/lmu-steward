@@ -1,3 +1,9 @@
+## 1.2.0 (2026-03-31)
+
+* Merge pull request #5 from misirlu13/feature/v1.3.0-lmu-updates ([fe90267](https://github.com/misirlu13/lmu-steward/commit/fe90267)), closes [#5](https://github.com/misirlu13/lmu-steward/issues/5)
+* test(usereplayvieworchestration.test): fixed barcelona test ([8d26b53](https://github.com/misirlu13/lmu-steward/commit/8d26b53))
+* feat(constants): added support for new tracks and layouts with LMU v1.3.0 ([3609fad](https://github.com/misirlu13/lmu-steward/commit/3609fad))
+
 ## 1.1.0 (2026-03-14)
 
 * Merge pull request #3 from misirlu13/feature/replay-match-log-scoring ([d45c624](https://github.com/misirlu13/lmu-steward/commit/d45c624)), closes [#3](https://github.com/misirlu13/lmu-steward/issues/3)
