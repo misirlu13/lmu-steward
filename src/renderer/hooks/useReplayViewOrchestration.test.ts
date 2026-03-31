@@ -47,6 +47,18 @@ describe('useReplayViewOrchestration', () => {
     timestamp: 1,
   };
 
+  const barcelonaReplayFixture: LMUReplay = {
+    hash: 'replay-hash-2',
+    metadata: { sceneDesc: 'BARCELONAELMS', session: 'RACE' },
+    logData: {},
+    logDataDirectory: 'D:/logs',
+    logDataFileName: 'barcelona.xml',
+    replayDirectory: 'D:/replays',
+    replayName: 'Barcelona ELMS R1 1',
+    size: 1,
+    timestamp: 2,
+  };
+
   const baseArgs = {
     replayHash: 'replay-hash-1',
     replays: {
@@ -84,6 +96,17 @@ describe('useReplayViewOrchestration', () => {
     });
 
     expect(sendMessageMock).toHaveBeenCalledWith(CONSTANTS.API.GET_IS_REPLAY_ACTIVE);
+  });
+
+  it('handles orchestration for a new track (BARCELONAELMS)', () => {
+    const barcelonaArgs = {
+      ...baseArgs,
+      replayHash: 'replay-hash-2',
+      replays: { data: [barcelonaReplayFixture] },
+    };
+    const { result } = renderHook(() => useReplayViewOrchestration(barcelonaArgs));
+    expect(result.current.isQuickViewModeActiveForReplay).toBe(true);
+    expect(result.current.replayForView?.metadata.sceneDesc).toBe('BARCELONAELMS');
   });
 
   it('requests replay activation from quick view and updates loading state', () => {

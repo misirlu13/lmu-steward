@@ -37,6 +37,18 @@ export const CONSTANTS = {
     PUT_FOCUS_CAR: 'put.focus-car',
   },
   TRACK_META_DATA: {
+    PORTIMAOELMS: {
+      displayName: 'Algarve International Circuit',
+      background: '/start/images/tracks/backgrounds/portimaowec.webp',
+      logo: '/start/images/tracks/logos/portimaowec.svg',
+      abbr: 'AIA',
+      location: 'Portimão, Portugal',
+      aliases: [
+        'Algarve International Circuit',
+        '4 Hours of Portimao',
+        'Algarve International Circuit 1.23',
+      ],
+    },
     PORTIMAOWEC: {
       displayName: 'Algarve International Circuit',
       background: '/start/images/tracks/backgrounds/portimaowec.webp',
@@ -46,8 +58,21 @@ export const CONSTANTS = {
       aliases: [
         'Algarve International Circuit',
         '6 Hours of Portimao',
-        'Algarve International Circuit 1.21'
-      ]
+        'Algarve International Circuit 1.21',
+        'Algarve International Circuit 1.23',
+      ],
+    },
+    IMOLAELMS: {
+      displayName: 'Autodromo Enzo e Dino Ferrari (ELMS)',
+      background: '/start/images/tracks/backgrounds/imolawec.webp',
+      logo: '/start/images/tracks/logos/imolawec.svg',
+      abbr: 'IML',
+      location: 'Imola, Italy',
+      aliases: [
+        'Autodromo Enzo e Dino Ferrari',
+        '4 Hours of Imola',
+        'Autodromo Enzo e Dino Ferrari 1.23',
+      ],
     },
     IMOLAWEC: {
       displayName: 'Autodromo Enzo e Dino Ferrari',
@@ -58,8 +83,9 @@ export const CONSTANTS = {
       aliases: [
         'Autodromo Enzo e Dino Ferrari',
         '6 Hours of Imola',
-        'Autodromo Enzo e Dino Ferrari 1.21'
-      ]
+        'Autodromo Enzo e Dino Ferrari 1.21',
+        'Autodromo Enzo e Dino Ferrari 1.23',
+      ],
     },
     MONZAWEC: {
       displayName: 'Autodromo Nazionale Monza',
@@ -70,8 +96,9 @@ export const CONSTANTS = {
       aliases: [
         'Autodromo Nazionale Monza',
         '6 Hours of Monza',
-        'Autodromo Nazionale Monza 1.21'
-      ]
+        'Autodromo Nazionale Monza 1.21',
+        'Autodromo Nazionale Monza 1.27',
+      ],
     },
     MONZAWEC_GRANDE: {
       displayName: 'Autodromo Nazionale Monza (Grande)',
@@ -82,8 +109,9 @@ export const CONSTANTS = {
       aliases: [
         'Autodromo Nazionale Monza',
         'Monza Curva Grande Circuit',
-        'Autodromo Nazionale Monza 1.21'
-      ]
+        'Autodromo Nazionale Monza 1.21',
+        'Autodromo Nazionale Monza 1.27',
+      ],
     },
     INTERLAGOSWEC: {
       displayName: 'Autódromo José Carlos Pace',
@@ -94,8 +122,9 @@ export const CONSTANTS = {
       aliases: [
         'Autódromo José Carlos Pace',
         'Rolex 6 Hours Of Sao Paulo',
-        'Autódromo José Carlos Pace 1.21'
-      ]
+        'Autódromo José Carlos Pace 1.21',
+        'Autódromo José Carlos Pace 1.27',
+      ],
     },
     BAHRAINWEC: {
       displayName: 'Bahrain International Circuit',
@@ -106,8 +135,9 @@ export const CONSTANTS = {
       aliases: [
         'Bahrain International Circuit',
         '8 Hours of Bahrain',
-        'Bahrain International Circuit 1.23'
-      ]
+        'Bahrain International Circuit 1.23',
+        'Bahrain International Circuit 1.25',
+      ],
     },
     BAHRAINWEC_ENDCE: {
       displayName: 'Bahrain International Circuit (Endurance)',
@@ -118,8 +148,9 @@ export const CONSTANTS = {
       aliases: [
         'Bahrain Endurance Circuit',
         'Bahrain International Circuit',
-        'Bahrain International Circuit 1.23'
-      ]
+        'Bahrain International Circuit 1.23',
+        'Bahrain International Circuit 1.25',
+      ],
     },
     BAHRAINWEC_OUTER: {
       displayName: 'Bahrain International Circuit (Outer)',
@@ -130,8 +161,9 @@ export const CONSTANTS = {
       aliases: [
         'Bahrain Outer Circuit',
         'Bahrain International Circuit',
-        'Bahrain International Circuit 1.23'
-      ]
+        'Bahrain International Circuit 1.23',
+        'Bahrain International Circuit 1.25',
+      ],
     },
     BAHRAINWEC_PADDOCK: {
       displayName: 'Bahrain International Circuit (Paddock)',
@@ -142,8 +174,33 @@ export const CONSTANTS = {
       aliases: [
         'Bahrain Paddock Circuit',
         'Bahrain International Circuit',
-        'Bahrain International Circuit 1.23'
-      ]
+        'Bahrain International Circuit 1.23',
+        'Bahrain International Circuit 1.25',
+      ],
+    },
+    BARCELONAELMS: {
+      displayName: 'Circuit de Barcelona-Catalunya',
+      background: '/start/images/tracks/backgrounds/barcelonaelms.webp',
+      logo: '/start/images/tracks/logos/barcelonaelms.svg',
+      abbr: 'BCN',
+      location: 'Barcelona, Spain',
+      aliases: [
+        '4 Hours of Barcelona',
+        'Circuit de Barcelona',
+        'Circuit de Barcelona 1.01',
+      ],
+    },
+    SPAELMS: {
+      displayName: 'Circuit de Spa-Francorchamps (ELMS)',
+      background: '/start/images/tracks/backgrounds/spawec.webp',
+      logo: '/start/images/tracks/logos/spawec.svg',
+      abbr: 'SPA',
+      location: 'Stavelot, Belgium',
+      aliases: [
+        '4 Hours of Spa-Francorchamps',
+        'Circuit de Spa-Francorchamps',
+        'Circuit de Spa-Francorchamps 1.23',
+      ],
     },
     SPAWEC: {
       displayName: 'Circuit de Spa-Francorchamps',
@@ -154,8 +211,9 @@ export const CONSTANTS = {
       aliases: [
         '6 Hours of Spa-Francorchamps',
         'Circuit de Spa-Francorchamps',
-        'Circuit de Spa-Francorchamps 1.21'
-      ]
+        'Circuit de Spa-Francorchamps 1.21',
+        'Circuit de Spa-Francorchamps 1.23',
+      ],
     },
     SPAWEC_ENDCE: {
       displayName: 'Circuit de Spa-Francorchamps (Endurance)',
@@ -166,8 +224,9 @@ export const CONSTANTS = {
       aliases: [
         'Circuit de Spa-Francorchamps Endurance',
         'Circuit de Spa-Francorchamps',
-        'Circuit de Spa-Francorchamps 1.21'
-      ]
+        'Circuit de Spa-Francorchamps 1.21',
+        'Circuit de Spa-Francorchamps 1.23',
+      ],
     },
     LEMANSWEC: {
       displayName: 'Circuit de la Sarthe',
@@ -178,8 +237,9 @@ export const CONSTANTS = {
       aliases: [
         '24 Heures du Mans',
         'Circuit de la Sarthe',
-        'Circuit de la Sarthe 1.21'
-      ]
+        'Circuit de la Sarthe 1.21',
+        'Circuit de la Sarthe 1.27',
+      ],
     },
     LEMANSWEC_MULSANNE: {
       displayName: 'Circuit de la Sarthe (Mulsanne)',
@@ -190,8 +250,9 @@ export const CONSTANTS = {
       aliases: [
         'Circuit de la Sarthe Mulsanne',
         'Circuit de la Sarthe',
-        'Circuit de la Sarthe 1.21'
-      ]
+        'Circuit de la Sarthe 1.21',
+        'Circuit de la Sarthe 1.27',
+      ],
     },
     COTAWEC: {
       displayName: 'Circuit of the Americas',
@@ -202,8 +263,9 @@ export const CONSTANTS = {
       aliases: [
         'Lone Star Le Mans',
         'Circuit of the Americas',
-        'Circuit of the Americas 1.21'
-      ]
+        'Circuit of the Americas 1.21',
+        'Circuit of the Americas 1.27',
+      ],
     },
     COTAWEC_NATIONAL: {
       displayName: 'Circuit of the Americas (National)',
@@ -214,8 +276,9 @@ export const CONSTANTS = {
       aliases: [
         'COTA National Circuit',
         'Circuit of the Americas',
-        'Circuit of the Americas 1.21'
-      ]
+        'Circuit of the Americas 1.21',
+        'Circuit of the Americas 1.27',
+      ],
     },
     FUJIWEC: {
       displayName: 'Fuji Speedway',
@@ -226,8 +289,9 @@ export const CONSTANTS = {
       aliases: [
         '6 Hours of Fuji',
         'Fuji Speedway',
-        'Fuji Speedway 1.21'
-      ]
+        'Fuji Speedway 1.21',
+        'Fuji Speedway 1.27',
+      ],
     },
     FUJIWEC_CL: {
       displayName: 'Fuji Speedway (Classic)',
@@ -238,8 +302,9 @@ export const CONSTANTS = {
       aliases: [
         'Fuji Speedway Classic',
         'Fuji Speedway',
-        'Fuji Speedway 1.21'
-      ]
+        'Fuji Speedway 1.21',
+        'Fuji Speedway 1.27',
+      ],
     },
     QATARWEC: {
       displayName: 'Lusail International Circuit',
@@ -250,8 +315,9 @@ export const CONSTANTS = {
       aliases: [
         'Qatar 1812KM',
         'Lusail International Circuit',
-        'Lusail International Circuit 1.21'
-      ]
+        'Lusail International Circuit 1.21',
+        'Lusail International Circuit 1.27',
+      ],
     },
     QATARWEC_SHORT: {
       displayName: 'Lusail International Circuit (Short)',
@@ -262,8 +328,9 @@ export const CONSTANTS = {
       aliases: [
         'Lusail Short Circuit',
         'Lusail International Circuit',
-        'Lusail International Circuit 1.21'
-      ]
+        'Lusail International Circuit 1.21',
+        'Lusail International Circuit 1.27',
+      ],
     },
     PAULRICARDELMS: {
       displayName: 'Paul Ricard Circuit',
@@ -274,8 +341,57 @@ export const CONSTANTS = {
       aliases: [
         '4 Hours of Castellet',
         'Paul Ricard Circuit',
-        'Paul Ricard Circuit 1.05'
-      ]
+        'Paul Ricard Circuit 1.05',
+        'Paul Ricard Circuit 1.07',
+      ],
+    },
+    PAULRICARD1A: {
+      displayName: 'Paul Ricard Circuit (1A)',
+      background: '/start/images/tracks/backgrounds/paulricardelms.webp',
+      logo: '/start/images/tracks/logos/paulricardelms.svg',
+      abbr: 'PR',
+      location: 'Le Castellet, France',
+      aliases: [
+        'Paul Ricard - 1A',
+        'Paul Ricard Circuit',
+        'Paul Ricard Circuit 1.07',
+      ],
+    },
+    'PAULRICARD1A-V2': {
+      displayName: 'Paul Ricard Circuit (1A-V2)',
+      background: '/start/images/tracks/backgrounds/paulricardelms.webp',
+      logo: '/start/images/tracks/logos/paulricardelms.svg',
+      abbr: 'PR',
+      location: 'Le Castellet, France',
+      aliases: [
+        'Paul Ricard - 1A-V2',
+        'Paul Ricard Circuit',
+        'Paul Ricard Circuit 1.07',
+      ],
+    },
+    'PAULRICARD1A-V2-SHORT': {
+      displayName: 'Paul Ricard Circuit (1A-V2-Short)',
+      background: '/start/images/tracks/backgrounds/paulricardelms.webp',
+      logo: '/start/images/tracks/logos/paulricardelms.svg',
+      abbr: 'PR',
+      location: 'Le Castellet, France',
+      aliases: [
+        'Paul Ricard - 1A-V2-Short',
+        'Paul Ricard Circuit',
+        'Paul Ricard Circuit 1.07',
+      ],
+    },
+    PAULRICARD3A: {
+      displayName: 'Paul Ricard Circuit (3A)',
+      background: '/start/images/tracks/backgrounds/paulricardelms.webp',
+      logo: '/start/images/tracks/logos/paulricardelms.svg',
+      abbr: 'PR',
+      location: 'Le Castellet, France',
+      aliases: [
+        'Paul Ricard - 3A',
+        'Paul Ricard Circuit',
+        'Paul Ricard Circuit 1.07',
+      ],
     },
     SEBRINGWEC: {
       displayName: 'Sebring International Raceway',
@@ -286,8 +402,9 @@ export const CONSTANTS = {
       aliases: [
         '1000 Miles of Sebring',
         'Sebring International Raceway',
-        'Sebring International Raceway 1.23'
-      ]
+        'Sebring International Raceway 1.23',
+        'Sebring International Raceway 1.27',
+      ],
     },
     SEBRINGWEC_SCHOOL: {
       displayName: 'Sebring International Raceway (School)',
@@ -298,8 +415,9 @@ export const CONSTANTS = {
       aliases: [
         'Sebring School Circuit',
         'Sebring International Raceway',
-        'Sebring International Raceway 1.23'
-      ]
+        'Sebring International Raceway 1.23',
+        'Sebring International Raceway 1.27',
+      ],
     },
     SILVERSTONEELMS: {
       displayName: 'Silverstone Circuit',
@@ -310,8 +428,45 @@ export const CONSTANTS = {
       aliases: [
         '4 Hours of Silverstone',
         'Silverstone Circuit',
-        'Silverstone Circuit 1.07'
-      ]
+        'Silverstone Circuit 1.07',
+        'Silverstone Circuit 1.09',
+      ],
+    },
+    SILVERSTONEWEC: {
+      displayName: 'Silverstone Circuit (WEC)',
+      background: '/start/images/tracks/backgrounds/silverstoneelms.webp',
+      logo: '/start/images/tracks/logos/silverstoneelms.svg',
+      abbr: 'SIL',
+      location: 'Silverstone, United Kingdom',
+      aliases: [
+        '6 Hours of Silverstone',
+        'Silverstone Circuit',
+        'Silverstone Circuit 1.09',
+      ],
+    },
+    SILVERSTONE_INTERNATIONAL: {
+      displayName: 'Silverstone Circuit (International)',
+      background: '/start/images/tracks/backgrounds/silverstoneelms.webp',
+      logo: '/start/images/tracks/logos/silverstoneelms.svg',
+      abbr: 'SIL',
+      location: 'Silverstone, United Kingdom',
+      aliases: [
+        'Silverstone International Circuit',
+        'Silverstone Circuit',
+        'Silverstone Circuit 1.09',
+      ],
+    },
+    SILVERSTONE_NATIONAL: {
+      displayName: 'Silverstone Circuit (National)',
+      background: '/start/images/tracks/backgrounds/silverstoneelms.webp',
+      logo: '/start/images/tracks/logos/silverstoneelms.svg',
+      abbr: 'SIL',
+      location: 'Silverstone, United Kingdom',
+      aliases: [
+        'Silverstone National Circuit',
+        'Silverstone Circuit',
+        'Silverstone Circuit 1.09',
+      ],
     },
   },
   REPLAY_COMMANDS: {

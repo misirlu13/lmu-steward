@@ -5,24 +5,92 @@ import {
 
 describe('replayMetadata', () => {
   it('resolves title/location from track metadata map when available', () => {
-    const result = resolveReplayHeaderMetadata({
-      replay: {
-        metadata: {
-          sceneDesc: 'SEBRINGWEC',
-        },
-      },
-      trackMetaData: {
-        SEBRINGWEC: {
+    const cases = [
+      {
+        sceneDesc: 'SEBRINGWEC',
+        meta: {
           displayName: 'Sebring International Raceway',
           location: 'Sebring, Florida, USA',
         },
+        expected: {
+          title: 'Sebring International Raceway',
+          location: 'Sebring, Florida, USA',
+        },
       },
-    });
-
-    expect(result).toEqual({
-      title: 'Sebring International Raceway',
-      location: 'Sebring, Florida, USA',
-    });
+      {
+        sceneDesc: 'PAULRICARD1A',
+        meta: {
+          displayName: 'Paul Ricard Circuit (1A)',
+          location: 'Le Castellet, France',
+        },
+        expected: {
+          title: 'Paul Ricard Circuit (1A)',
+          location: 'Le Castellet, France',
+        },
+      },
+      {
+        sceneDesc: 'PAULRICARD1A-V2',
+        meta: {
+          displayName: 'Paul Ricard Circuit (1A-V2)',
+          location: 'Le Castellet, France',
+        },
+        expected: {
+          title: 'Paul Ricard Circuit (1A-V2)',
+          location: 'Le Castellet, France',
+        },
+      },
+      {
+        sceneDesc: 'PAULRICARD1A-V2-SHORT',
+        meta: {
+          displayName: 'Paul Ricard Circuit (1A-V2-Short)',
+          location: 'Le Castellet, France',
+        },
+        expected: {
+          title: 'Paul Ricard Circuit (1A-V2-Short)',
+          location: 'Le Castellet, France',
+        },
+      },
+      {
+        sceneDesc: 'PAULRICARD3A',
+        meta: {
+          displayName: 'Paul Ricard Circuit (3A)',
+          location: 'Le Castellet, France',
+        },
+        expected: {
+          title: 'Paul Ricard Circuit (3A)',
+          location: 'Le Castellet, France',
+        },
+      },
+      {
+        sceneDesc: 'BARCELONAELMS',
+        meta: {
+          displayName: 'Circuit de Barcelona-Catalunya',
+          location: 'Barcelona, Spain',
+        },
+        expected: {
+          title: 'Circuit de Barcelona-Catalunya',
+          location: 'Barcelona, Spain',
+        },
+      },
+      {
+        sceneDesc: 'SILVERSTONE_INTERNATIONAL',
+        meta: {
+          displayName: 'Silverstone Circuit (International)',
+          location: 'Silverstone, United Kingdom',
+        },
+        expected: {
+          title: 'Silverstone Circuit (International)',
+          location: 'Silverstone, United Kingdom',
+        },
+      },
+    ];
+    for (const { sceneDesc, meta, expected } of cases) {
+      const result = resolveReplayHeaderMetadata({
+        replay: { metadata: { sceneDesc } },
+        trackMetaData: { [sceneDesc]: meta },
+      });
+      expect(result).toEqual(expected);
+    }
   });
 
   it('falls back to sceneDesc when track metadata is missing', () => {
