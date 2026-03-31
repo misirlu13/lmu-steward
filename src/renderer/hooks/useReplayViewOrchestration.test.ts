@@ -101,11 +101,12 @@ describe('useReplayViewOrchestration', () => {
   it('handles orchestration for a new track (BARCELONAELMS)', () => {
     const barcelonaArgs = {
       ...baseArgs,
+      replayHash: 'replay-hash-2',
       replays: { data: [barcelonaReplayFixture] },
     };
     const { result } = renderHook(() => useReplayViewOrchestration(barcelonaArgs));
     expect(result.current.isQuickViewModeActiveForReplay).toBe(true);
-    expect(result.current.replayRecord?.metadata.sceneDesc).toBe('BARCELONAELMS');
+    expect(result.current.replayForView?.metadata.sceneDesc).toBe('BARCELONAELMS');
   });
 
   it('requests replay activation from quick view and updates loading state', () => {
