@@ -25,6 +25,39 @@ const electronHandler = {
   },
 };
 
+const reportRendererError = (payload: {
+  source?: string;
+  message?: string;
+  stack?: string;
+  url?: string;
+  line?: number;
+  column?: number;
+  detail?: string;
+}) => {
+  ipcRenderer.send(CONSTANTS.API.POST_RENDERER_ERROR, payload);
+};
+
+window.addEventListener('error', (event: ErrorEvent) => {
+  reportRendererError({
+    source: 'window.onerror',
+    message: event.message,
+    stack: event.error?.stack,
+    url: event.filename,
+    line: event.lineno,
+    column: event.colno,
+  });
+});
+
+window.addEventListener('unhandledrejection', (event: PromiseRejectionEvent) => {
+  const reason = event.reason;
+  reportRendererError({
+    source: 'unhandledRejection',
+    message: reason instanceof Error ? reason.message : String(reason),
+    stack: reason instanceof Error ? reason.stack : undefined,
+    detail: reason instanceof Error ? undefined : String(reason),
+  });
+});
+
 contextBridge.exposeInMainWorld('electron', electronHandler);
 
 export type ElectronHandler = typeof electronHandler;

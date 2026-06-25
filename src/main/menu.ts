@@ -134,6 +134,38 @@ export default class MenuBuilder {
           },
         ],
       },
+      ...(process.env.NODE_ENV === 'development' ||
+      process.env.DEBUG_PROD === 'true'
+        ? [
+            {
+              label: '&Debug',
+              submenu: [
+                {
+                  label: 'Test Main Process Crash',
+                  click: () => {
+                    throw new Error('Test main process crash from menu');
+                  },
+                },
+                {
+                  label: 'Test Renderer Crash',
+                  click: () => {
+                    this.mainWindow.webContents.executeJavaScript(
+                      'throw new Error("Test renderer crash from menu")',
+                    );
+                  },
+                },
+                {
+                  label: 'Test Unhandled Rejection',
+                  click: () => {
+                    this.mainWindow.webContents.executeJavaScript(
+                      'Promise.reject(new Error("Test unhandled rejection from menu"))',
+                    );
+                  },
+                },
+              ],
+            },
+          ]
+        : []),
     ];
 
     return templateDefault;

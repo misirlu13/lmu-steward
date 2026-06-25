@@ -28,6 +28,7 @@ export const CONSTANTS = {
     POST_OPEN_SETTINGS: 'post.open-settings',
     POST_SELECT_LMU_EXECUTABLE: 'post.select-lmu-executable',
     POST_SELECT_LMU_REPLAY_DIRECTORY: 'post.select-lmu-replay-directory',
+    POST_RENDERER_ERROR: 'post.renderer-error',
     REQUEST_APP_EXIT_CONFIRM: 'request.app-exit-confirm',
     REPLY_APP_EXIT_CONFIRM: 'reply.app-exit-confirm',
     PUT_REPLAY_COMMAND_SCAN: 'put.replay-command-scan',

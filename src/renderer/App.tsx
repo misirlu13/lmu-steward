@@ -15,6 +15,7 @@ import { useApi } from './providers/ApiContext';
 import { LmuDisconnectedDialog } from './components/Common/LmuDisconnectedDialog';
 import { AppExitConfirmDialog } from './components/Common/AppExitConfirmDialog';
 import { ReplayProcessingSplash } from './components/Common/ReplayProcessingSplash';
+import { RendererErrorBoundary } from './components/Common/RendererErrorBoundary';
 
 const AppRoutesShell = () => {
   const {
@@ -80,7 +81,9 @@ export default function App() {
       <NavbarProvider>
         <ThemeProvider theme={theme}>
           <LocalizationProvider dateAdapter={AdapterDayjs}>
-            <AppShell />
+            <RendererErrorBoundary>
+              <AppShell />
+            </RendererErrorBoundary>
           </LocalizationProvider>
         </ThemeProvider>
       </NavbarProvider>
