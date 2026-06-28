@@ -1,14 +1,16 @@
 import { CONSTANTS } from '@constants';
 import { generateReplayHash } from '../util';
 import { LMUReplay, LMUStewardStore } from '@types';
+import { createReadStream } from 'fs';
 import { readdir, readFile } from 'fs/promises';
 import { resolve, join } from 'path';
-import { parseStringPromise } from 'xml2js';
 import { SessionType } from '@types';
+import { parseStringPromise } from 'xml2js';
 import { readUserSettings, writeUserSettings } from './user-settings';
 
 const FIRST_RUN_GET_REPLAYS_DELAY_MS = 3000;
 const DEFAULT_REPLAY_LOG_MATCH_THRESHOLD_MS = 120_000;
+const REPLAY_CACHE_SCHEMA_VERSION = 1;
 
 const delay = (ms: number) =>
   new Promise<void>((resolve) => {
@@ -33,6 +35,9 @@ interface ReplayCacheEntry {
   timestamp?: number;
   size?: number;
   hash?: string;
+  multiplayer?: boolean;
+  logData?: ParsedRaceResults | null;
+  logDataLoaded?: boolean;
 }
 
 interface ReplayStore {
@@ -54,14 +59,38 @@ interface GetReplaysRequest {
   forceReplayCacheReset?: boolean;
 }
 
+interface ParsedSessionSummary {
+  Minutes?: number;
+  DriverCount?: number;
+  CarClasses?: string[];
+  IncidentCount?: number;
+  PenaltyCount?: number;
+  TrackLimitCount?: number;
+  Stream?: {
+    IncidentCount?: number;
+    PenaltyCount?: number;
+    TrackLimitCount?: number;
+  };
+  [key: string]: unknown;
+}
+
 interface ParsedRaceResults {
+  Setting?: string;
   DateTime?: number;
   TrackVenue?: string;
   TrackCourse?: string;
   TrackEvent?: string;
-  Race?: unknown;
-  Qualify?: unknown;
-  Practice1?: unknown;
+  GameVersion?: string;
+  FuelMult?: number;
+  TireMult?: number;
+  TireWarmers?: string;
+  IncidentCount?: number;
+  PenaltyCount?: number;
+  TrackLimitCount?: number;
+  DriverCount?: number;
+  Race?: ParsedSessionSummary;
+  Qualify?: ParsedSessionSummary;
+  Practice1?: ParsedSessionSummary;
 }
 
 interface ParsedLogXml {
@@ -69,6 +98,13 @@ interface ParsedLogXml {
     RaceResults?: ParsedRaceResults;
   };
 }
+
+const isMultiplayerSetting = (setting: unknown): boolean =>
+  String(setting ?? '').trim().toLowerCase() === 'multiplayer';
+
+const getReplayMultiplayerFromLogData = (
+  logData: ParsedRaceResults | null | undefined,
+): boolean => isMultiplayerSetting(logData?.Setting);
 
 const toErrorMessage = (error: unknown): string => {
   if (error instanceof Error) {
@@ -106,12 +142,42 @@ const buildReplayCacheIdentityKey = (replay: ReplayCacheEntry) => {
 
 let store: ReplayStore | null = null;
 
+const enforceReplayCacheSchemaVersion = (replayStore: ReplayStore) => {
+  const cachedSchemaVersion = Number(
+    replayStore.get('replayCacheSchemaVersion') ?? 0,
+  );
+
+  if (cachedSchemaVersion !== REPLAY_CACHE_SCHEMA_VERSION) {
+    replayStore.set('replays', {});
+    replayStore.set('replayCacheSchemaVersion', REPLAY_CACHE_SCHEMA_VERSION);
+  }
+};
+
 (async () => {
   const Store = (await import('electron-store')).default;
   store = new Store<LMUStewardStore>({
     name: 'lmu-steward-store',
-    defaults: { replays: {} },
+    defaults: {
+      replays: {},
+      replayCacheSchemaVersion: REPLAY_CACHE_SCHEMA_VERSION,
+      replayCacheMigratedFromAppVersion: '0.0.0',
+      replayCacheMigratedToAppVersion: '0.0.0',
+    },
+    // Bump REPLAY_CACHE_SCHEMA_VERSION when replay cache shape changes.
+    migrations: {
+      '>=0.0.0': (replayStore) => {
+        enforceReplayCacheSchemaVersion(replayStore as unknown as ReplayStore);
+      },
+    },
+    beforeEachMigration: (replayStore, context) => {
+      replayStore.set('replayCacheMigratedFromAppVersion', context.fromVersion);
+      replayStore.set('replayCacheMigratedToAppVersion', context.toVersion);
+    },
   }) as unknown as ReplayStore;
+
+  // Always enforce replay schema at startup so cache busting does not depend
+  // on whether a semver-range migration key is selected for this app version.
+  enforceReplayCacheSchemaVersion(store);
 })();
 
 /**
@@ -119,7 +185,644 @@ let store: ReplayStore | null = null;
  * Replay Directory - C:\Program Files (x86)\Steam\steamapps\common\Le Mans Ultimate\UserData\Replays
  */
 
+const decodeXmlText = (value: string): string =>
+  value
+    .replace(/&amp;/g, '&')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'");
+
+const parseLogXmlContent = (xml: string): ParsedLogXml => {
+  const raceResults: ParsedRaceResults = {};
+  let currentValueTag: 'Setting' | 'DateTime' | 'TrackVenue' | 'TrackCourse' | 'TrackEvent' | 'GameVersion' | 'FuelMult' | 'TireMult' | 'TireWarmers' | 'Minutes' | 'CarClass' | null = null;
+  let currentValueText = '';
+  let raceResultsDepth = 0;
+  let currentSessionType: 'Race' | 'Qualify' | 'Practice1' | null = null;
+  let inDriverTag = false;
+  let inStreamTag = false;
+  let driverCount = 0;
+  let incidentCount = 0;
+  let penaltyCount = 0;
+  let trackLimitCount = 0;
+  let totalDriverCount = 0;
+  let totalIncidentCount = 0;
+  let totalPenaltyCount = 0;
+  let totalTrackLimitCount = 0;
+  let currentSessionCarClasses = new Set<string>();
+
+  const commitCurrentValue = () => {
+    if (!currentValueTag) {
+      return;
+    }
+
+    const normalizedValue = decodeXmlText(currentValueText).trim();
+    if (currentValueTag === 'Setting') {
+      raceResults.Setting = normalizedValue || undefined;
+    } else if (currentValueTag === 'DateTime') {
+      raceResults.DateTime = Number(normalizedValue) || undefined;
+    } else if (currentValueTag === 'TrackVenue') {
+      raceResults.TrackVenue = normalizedValue || undefined;
+    } else if (currentValueTag === 'TrackCourse') {
+      raceResults.TrackCourse = normalizedValue || undefined;
+    } else if (currentValueTag === 'TrackEvent') {
+      raceResults.TrackEvent = normalizedValue || undefined;
+    } else if (currentValueTag === 'GameVersion') {
+      raceResults.GameVersion = normalizedValue || undefined;
+    } else if (currentValueTag === 'FuelMult') {
+      raceResults.FuelMult = Number(normalizedValue) || undefined;
+    } else if (currentValueTag === 'TireMult') {
+      raceResults.TireMult = Number(normalizedValue) || undefined;
+    } else if (currentValueTag === 'TireWarmers') {
+      raceResults.TireWarmers = normalizedValue || undefined;
+    } else if (currentValueTag === 'Minutes') {
+      if (currentSessionType && raceResults[currentSessionType]) {
+        const session = raceResults[currentSessionType] as Record<string, unknown>;
+        session.Minutes = Number(normalizedValue) || undefined;
+      }
+    } else if (currentValueTag === 'CarClass') {
+      if (currentSessionType && normalizedValue) {
+        currentSessionCarClasses.add(normalizedValue);
+      }
+    }
+
+    currentValueTag = null;
+    currentValueText = '';
+  };
+
+  const processTag = (tagText: string) => {
+    if (!tagText.startsWith('<') || tagText.startsWith('<!--')) {
+      return;
+    }
+
+    const isClosingTag = tagText.startsWith('</');
+    const isSelfClosingTag = /\/\s*>$/.test(tagText);
+    const tagNameMatch = tagText.match(/^<\s*(\/)?\s*([A-Za-z0-9:_.-]+)(?:\s[^>]*)?\/?\s*>$/);
+
+    if (!tagNameMatch) {
+      return;
+    }
+
+    const [, , rawTagName] = tagNameMatch;
+    const tagName = rawTagName.toLowerCase();
+
+    if (currentValueTag && (isClosingTag || isSelfClosingTag)) {
+      if (tagName === currentValueTag.toLowerCase()) {
+        commitCurrentValue();
+      }
+    }
+
+    if (isClosingTag) {
+      if (tagName === 'raceresults' && raceResultsDepth > 0) {
+        raceResultsDepth -= 1;
+      }
+      if (tagName === 'driver') {
+        inDriverTag = false;
+      }
+      if (tagName === 'stream') {
+        inStreamTag = false;
+      }
+      if (['race', 'qualify', 'practice1'].includes(tagName)) {
+        if (currentSessionType && raceResults[currentSessionType]) {
+          const session = raceResults[currentSessionType] as ParsedSessionSummary;
+          session.DriverCount = driverCount || undefined;
+          if (currentSessionCarClasses.size > 0) {
+            session.CarClasses = Array.from(currentSessionCarClasses);
+          }
+          session.IncidentCount = incidentCount || undefined;
+          session.PenaltyCount = penaltyCount || undefined;
+          session.TrackLimitCount = trackLimitCount || undefined;
+          session.Stream = {
+            IncidentCount: incidentCount || undefined,
+            PenaltyCount: penaltyCount || undefined,
+            TrackLimitCount: trackLimitCount || undefined,
+          };
+        }
+        currentSessionType = null;
+        driverCount = 0;
+        incidentCount = 0;
+        penaltyCount = 0;
+        trackLimitCount = 0;
+        currentSessionCarClasses = new Set<string>();
+      }
+      return;
+    }
+
+    if (tagName === 'raceresults') {
+      raceResultsDepth += 1;
+      return;
+    }
+
+    if (raceResultsDepth <= 0) {
+      return;
+    }
+
+    if (tagName === 'race') {
+      raceResults.Race = {};
+      currentSessionType = 'Race';
+      return;
+    }
+
+    if (tagName === 'qualify') {
+      raceResults.Qualify = {};
+      currentSessionType = 'Qualify';
+      return;
+    }
+
+    if (tagName === 'practice1') {
+      raceResults.Practice1 = {};
+      currentSessionType = 'Practice1';
+      return;
+    }
+
+    if (isSelfClosingTag) {
+      if (tagName === 'driver' && currentSessionType) {
+        driverCount++;
+        totalDriverCount++;
+      }
+      if (tagName === 'incident' && inStreamTag && currentSessionType) {
+        incidentCount++;
+        totalIncidentCount++;
+      }
+      if (tagName === 'penalty' && inStreamTag && currentSessionType) {
+        penaltyCount++;
+        totalPenaltyCount++;
+      }
+      if (tagName === 'tracklimit' && inStreamTag && currentSessionType) {
+        trackLimitCount++;
+        totalTrackLimitCount++;
+      }
+      return;
+    }
+
+    if (tagName === 'datetime') {
+      currentValueTag = 'DateTime';
+      currentValueText = '';
+      return;
+    }
+
+    if (tagName === 'setting') {
+      currentValueTag = 'Setting';
+      currentValueText = '';
+      return;
+    }
+
+    if (tagName === 'trackvenue') {
+      currentValueTag = 'TrackVenue';
+      currentValueText = '';
+      return;
+    }
+
+    if (tagName === 'trackcourse') {
+      currentValueTag = 'TrackCourse';
+      currentValueText = '';
+      return;
+    }
+
+    if (tagName === 'trackevent') {
+      currentValueTag = 'TrackEvent';
+      currentValueText = '';
+      return;
+    }
+
+    if (tagName === 'gameversion') {
+      currentValueTag = 'GameVersion';
+      currentValueText = '';
+      return;
+    }
+
+    if (tagName === 'fuelmult') {
+      currentValueTag = 'FuelMult';
+      currentValueText = '';
+      return;
+    }
+
+    if (tagName === 'tiremult') {
+      currentValueTag = 'TireMult';
+      currentValueText = '';
+      return;
+    }
+
+    if (tagName === 'tirewarmers') {
+      currentValueTag = 'TireWarmers';
+      currentValueText = '';
+      return;
+    }
+
+    if (tagName === 'minutes') {
+      currentValueTag = 'Minutes';
+      currentValueText = '';
+      return;
+    }
+
+    if (tagName === 'carclass') {
+      currentValueTag = 'CarClass';
+      currentValueText = '';
+      return;
+    }
+
+    if (tagName === 'driver') {
+      if (currentSessionType) {
+        driverCount++;
+        totalDriverCount++;
+      }
+      inDriverTag = true;
+      return;
+    }
+
+    if (tagName === 'incident' && inStreamTag && currentSessionType) {
+      incidentCount++;
+      totalIncidentCount++;
+      return;
+    }
+
+    if (tagName === 'penalty' && inStreamTag && currentSessionType) {
+      penaltyCount++;
+      totalPenaltyCount++;
+      return;
+    }
+
+    if (tagName === 'tracklimit' && inStreamTag && currentSessionType) {
+      trackLimitCount++;
+      totalTrackLimitCount++;
+      return;
+    }
+
+    if (tagName === 'stream') {
+      inStreamTag = true;
+      return;
+    }
+  };
+
+  let searchFrom = 0;
+  while (true) {
+    const openTagIndex = xml.indexOf('<', searchFrom);
+    if (openTagIndex === -1) {
+      break;
+    }
+
+    const closeTagIndex = xml.indexOf('>', openTagIndex + 1);
+    if (closeTagIndex === -1) {
+      break;
+    }
+
+    const textBeforeTag = xml.slice(searchFrom, openTagIndex);
+    if (currentValueTag) {
+      currentValueText += decodeXmlText(textBeforeTag);
+    }
+
+    processTag(xml.slice(openTagIndex, closeTagIndex + 1));
+    searchFrom = closeTagIndex + 1;
+  }
+
+  if (currentValueTag) {
+    currentValueText += decodeXmlText(xml.slice(searchFrom));
+    commitCurrentValue();
+  }
+
+  if (raceResultsDepth !== 0 || currentValueTag !== null) {
+    throw new Error('Malformed XML log');
+  }
+
+  raceResults.IncidentCount = totalIncidentCount || undefined;
+  raceResults.PenaltyCount = totalPenaltyCount || undefined;
+  raceResults.TrackLimitCount = totalTrackLimitCount || undefined;
+  raceResults.DriverCount = totalDriverCount || undefined;
+
+  return {
+    rFactorXML: {
+      RaceResults: raceResults,
+    },
+  };
+};
+
+const parseLogXmlFromStream = async (
+  stream: AsyncIterable<string | Buffer>,
+): Promise<ParsedLogXml> => {
+  const raceResults: ParsedRaceResults = {};
+  let currentValueTag: 'Setting' | 'DateTime' | 'TrackVenue' | 'TrackCourse' | 'TrackEvent' | 'GameVersion' | 'FuelMult' | 'TireMult' | 'TireWarmers' | 'Minutes' | 'CarClass' | null = null;
+  let currentValueText = '';
+  let raceResultsDepth = 0;
+  let pendingText = '';
+  let currentSessionType: 'Race' | 'Qualify' | 'Practice1' | null = null;
+  let inDriverTag = false;
+  let inStreamTag = false;
+  let driverCount = 0;
+  let incidentCount = 0;
+  let penaltyCount = 0;
+  let trackLimitCount = 0;
+  let totalDriverCount = 0;
+  let totalIncidentCount = 0;
+  let totalPenaltyCount = 0;
+  let totalTrackLimitCount = 0;
+  let currentSessionCarClasses = new Set<string>();
+
+  const commitCurrentValue = () => {
+    if (!currentValueTag) {
+      return;
+    }
+
+    const normalizedValue = decodeXmlText(currentValueText).trim();
+    if (currentValueTag === 'Setting') {
+      raceResults.Setting = normalizedValue || undefined;
+    } else if (currentValueTag === 'DateTime') {
+      raceResults.DateTime = Number(normalizedValue) || undefined;
+    } else if (currentValueTag === 'TrackVenue') {
+      raceResults.TrackVenue = normalizedValue || undefined;
+    } else if (currentValueTag === 'TrackCourse') {
+      raceResults.TrackCourse = normalizedValue || undefined;
+    } else if (currentValueTag === 'TrackEvent') {
+      raceResults.TrackEvent = normalizedValue || undefined;
+    } else if (currentValueTag === 'GameVersion') {
+      raceResults.GameVersion = normalizedValue || undefined;
+    } else if (currentValueTag === 'FuelMult') {
+      raceResults.FuelMult = Number(normalizedValue) || undefined;
+    } else if (currentValueTag === 'TireMult') {
+      raceResults.TireMult = Number(normalizedValue) || undefined;
+    } else if (currentValueTag === 'TireWarmers') {
+      raceResults.TireWarmers = normalizedValue || undefined;
+    } else if (currentValueTag === 'Minutes') {
+      if (currentSessionType && raceResults[currentSessionType]) {
+        (raceResults[currentSessionType] as Record<string, unknown>).Minutes = Number(normalizedValue) || undefined;
+      }
+    } else if (currentValueTag === 'CarClass') {
+      if (currentSessionType && normalizedValue) {
+        currentSessionCarClasses.add(normalizedValue);
+      }
+    }
+
+    currentValueTag = null;
+    currentValueText = '';
+  };
+
+  const processText = (text: string) => {
+    if (currentValueTag) {
+      currentValueText += decodeXmlText(text);
+    }
+  };
+
+  const processTag = (tagText: string) => {
+    if (!tagText.startsWith('<') || tagText.startsWith('<!--')) {
+      return;
+    }
+
+    const isClosingTag = tagText.startsWith('</');
+    const isSelfClosingTag = /\/\s*>$/.test(tagText);
+    const tagNameMatch = tagText.match(/^<\s*(\/)?\s*([A-Za-z0-9:_.-]+)(?:\s[^>]*)?\/?\s*>$/);
+
+    if (!tagNameMatch) {
+      return;
+    }
+
+    const [, , rawTagName] = tagNameMatch;
+    const tagName = rawTagName.toLowerCase();
+
+    if (currentValueTag && (isClosingTag || isSelfClosingTag)) {
+      if (tagName === currentValueTag.toLowerCase()) {
+        commitCurrentValue();
+      }
+    }
+
+    if (isClosingTag) {
+      if (tagName === 'raceresults' && raceResultsDepth > 0) {
+        raceResultsDepth -= 1;
+      }
+      if (tagName === 'driver') {
+        inDriverTag = false;
+      }
+      if (tagName === 'stream') {
+        inStreamTag = false;
+      }
+      if (['race', 'qualify', 'practice1'].includes(tagName)) {
+        if (currentSessionType && raceResults[currentSessionType]) {
+          const session = raceResults[currentSessionType] as ParsedSessionSummary;
+          session.DriverCount = driverCount || undefined;
+          if (currentSessionCarClasses.size > 0) {
+            session.CarClasses = Array.from(currentSessionCarClasses);
+          }
+          session.IncidentCount = incidentCount || undefined;
+          session.PenaltyCount = penaltyCount || undefined;
+          session.TrackLimitCount = trackLimitCount || undefined;
+          session.Stream = {
+            IncidentCount: incidentCount || undefined,
+            PenaltyCount: penaltyCount || undefined,
+            TrackLimitCount: trackLimitCount || undefined,
+          };
+        }
+        currentSessionType = null;
+        driverCount = 0;
+        incidentCount = 0;
+        penaltyCount = 0;
+        trackLimitCount = 0;
+        currentSessionCarClasses = new Set<string>();
+      }
+      return;
+    }
+
+    if (tagName === 'raceresults') {
+      raceResultsDepth += 1;
+      return;
+    }
+
+    if (raceResultsDepth <= 0) {
+      return;
+    }
+
+    if (tagName === 'race') {
+      raceResults.Race = {};
+      currentSessionType = 'Race';
+      return;
+    }
+
+    if (tagName === 'qualify') {
+      raceResults.Qualify = {};
+      currentSessionType = 'Qualify';
+      return;
+    }
+
+    if (tagName === 'practice1') {
+      raceResults.Practice1 = {};
+      currentSessionType = 'Practice1';
+      return;
+    }
+
+    if (isSelfClosingTag) {
+      if (tagName === 'driver' && currentSessionType) {
+        driverCount++;
+        totalDriverCount++;
+      }
+      if (tagName === 'incident' && inStreamTag && currentSessionType) {
+        incidentCount++;
+        totalIncidentCount++;
+      }
+      if (tagName === 'penalty' && inStreamTag && currentSessionType) {
+        penaltyCount++;
+        totalPenaltyCount++;
+      }
+      if (tagName === 'tracklimit' && inStreamTag && currentSessionType) {
+        trackLimitCount++;
+        totalTrackLimitCount++;
+      }
+      return;
+    }
+
+    if (tagName === 'datetime') {
+      currentValueTag = 'DateTime';
+      currentValueText = '';
+      return;
+    }
+
+    if (tagName === 'setting') {
+      currentValueTag = 'Setting';
+      currentValueText = '';
+      return;
+    }
+
+    if (tagName === 'trackvenue') {
+      currentValueTag = 'TrackVenue';
+      currentValueText = '';
+      return;
+    }
+
+    if (tagName === 'trackcourse') {
+      currentValueTag = 'TrackCourse';
+      currentValueText = '';
+      return;
+    }
+
+    if (tagName === 'trackevent') {
+      currentValueTag = 'TrackEvent';
+      currentValueText = '';
+      return;
+    }
+
+    if (tagName === 'gameversion') {
+      currentValueTag = 'GameVersion';
+      currentValueText = '';
+      return;
+    }
+
+    if (tagName === 'fuelmult') {
+      currentValueTag = 'FuelMult';
+      currentValueText = '';
+      return;
+    }
+
+    if (tagName === 'tiremult') {
+      currentValueTag = 'TireMult';
+      currentValueText = '';
+      return;
+    }
+
+    if (tagName === 'tirewarmers') {
+      currentValueTag = 'TireWarmers';
+      currentValueText = '';
+      return;
+    }
+
+    if (tagName === 'minutes') {
+      currentValueTag = 'Minutes';
+      currentValueText = '';
+      return;
+    }
+
+    if (tagName === 'carclass') {
+      currentValueTag = 'CarClass';
+      currentValueText = '';
+      return;
+    }
+
+    if (tagName === 'driver') {
+      if (currentSessionType) {
+        driverCount++;
+        totalDriverCount++;
+      }
+      inDriverTag = true;
+      return;
+    }
+
+    if (tagName === 'incident' && inStreamTag && currentSessionType) {
+      incidentCount++;
+      totalIncidentCount++;
+      return;
+    }
+
+    if (tagName === 'penalty' && inStreamTag && currentSessionType) {
+      penaltyCount++;
+      totalPenaltyCount++;
+      return;
+    }
+
+    if (tagName === 'tracklimit' && inStreamTag && currentSessionType) {
+      trackLimitCount++;
+      totalTrackLimitCount++;
+      return;
+    }
+
+    if (tagName === 'stream') {
+      inStreamTag = true;
+      return;
+    }
+  };
+
+  for await (const chunk of stream) {
+    const chunkText = typeof chunk === 'string' ? chunk : chunk.toString();
+    const combinedText = pendingText + chunkText;
+    let searchFrom = 0;
+
+    while (true) {
+      const openTagIndex = combinedText.indexOf('<', searchFrom);
+      if (openTagIndex === -1) {
+        pendingText = combinedText.slice(searchFrom);
+        break;
+      }
+
+      const closeTagIndex = combinedText.indexOf('>', openTagIndex + 1);
+      if (closeTagIndex === -1) {
+        pendingText = combinedText.slice(openTagIndex);
+        break;
+      }
+
+      processText(combinedText.slice(searchFrom, openTagIndex));
+      processTag(combinedText.slice(openTagIndex, closeTagIndex + 1));
+      searchFrom = closeTagIndex + 1;
+    }
+  }
+
+  processText(pendingText);
+
+  if (currentValueTag) {
+    commitCurrentValue();
+  }
+
+  if (raceResultsDepth !== 0 || currentValueTag !== null) {
+    throw new Error('Malformed XML log');
+  }
+
+  // Store aggregate counts at root level
+  raceResults.IncidentCount = totalIncidentCount || undefined;
+  raceResults.PenaltyCount = totalPenaltyCount || undefined;
+  raceResults.TrackLimitCount = totalTrackLimitCount || undefined;
+  raceResults.DriverCount = totalDriverCount || undefined;
+
+  return {
+    rFactorXML: {
+      RaceResults: raceResults,
+    },
+  };
+};
+
 export const parseLogXml = async (filePath: string) => {
+  try {
+    const stream = createReadStream(filePath, { encoding: 'utf-8' });
+    return await parseLogXmlFromStream(stream);
+  } catch (error) {
+    const xml = await readFile(filePath, 'utf-8');
+    return parseLogXmlContent(xml);
+  }
+};
+
+export const parseLogXmlFull = async (filePath: string) => {
   const xml = await readFile(filePath, 'utf-8');
 
   return (await parseStringPromise(xml, {
@@ -236,101 +939,100 @@ const tracksLikelyMatch = (
 export const findBestLogFile = async (
   logDir: string,
   replay: LMUReplay,
+  parser: (filePath: string) => Promise<ParsedLogXml> = parseLogXml,
 ): Promise<LogFileData | null> => {
-  const files = (await readdir(logDir)).filter((file) => file.endsWith('.xml'));
-  const replayTimestamp = replay.timestamp;
-  const replaySessionType = replay.metadata.session;
-  const replayTrackAliases = getReplayTrackAliases(replay);
+  try {
+    const files = (await readdir(logDir)).filter((file) => file.endsWith('.xml'));
+    const replayTimestamp = replay.timestamp;
+    const replaySessionType = replay.metadata.session;
+    const replayTrackAliases = getReplayTrackAliases(replay);
 
-  // Parse all log summaries
-  const logSummaries = await Promise.all(
-    files.map(async (file) => {
-      const fileData = await parseLogXml(join(logDir, file));
-      const raceResults = fileData?.rFactorXML?.RaceResults || {};
-      return {
-        fileName: file,
-        dateTime: raceResults?.DateTime ?? null,
-        sessionCode:
-          getLogDataSessionType(fileData) || getSessionCodeFromFileName(file),
-        trackVenue: raceResults?.TrackVenue || '',
-        trackCourse: raceResults?.TrackCourse || '',
-        trackEvent: raceResults?.TrackEvent || '',
-        fileData,
-      };
-    }),
-  );
+    const logSummaries = (
+      await Promise.allSettled(
+        files.map(async (file) => {
+          const fileData = await parser(join(logDir, file));
+          const raceResults = fileData?.rFactorXML?.RaceResults || {};
+          return {
+            fileName: file,
+            dateTime: raceResults?.DateTime ?? null,
+            sessionCode:
+              getLogDataSessionType(fileData) || getSessionCodeFromFileName(file),
+            trackVenue: raceResults?.TrackVenue || '',
+            trackCourse: raceResults?.TrackCourse || '',
+            trackEvent: raceResults?.TrackEvent || '',
+            fileData,
+          };
+        }),
+      )
+    ).flatMap((result) => (result.status === 'fulfilled' ? [result.value] : []));
 
-  // Only consider logs with a valid session and dateTime
-  const candidates = logSummaries.filter(
-    (log) =>
-      log.sessionCode === replaySessionType &&
-      log.dateTime !== null &&
-      log.dateTime !== undefined,
-  );
-  if (candidates.length === 0) {
+    const candidates = logSummaries.filter(
+      (log) =>
+        log.sessionCode === replaySessionType &&
+        log.dateTime !== null &&
+        log.dateTime !== undefined,
+    );
+    if (candidates.length === 0) {
+      return { logDataFileName: null, logData: null };
+    }
+
+    const ranked = candidates
+      .map((log) => {
+        const diff = Math.abs(replayTimestamp - Number(log.dateTime));
+        const trackMatch = tracksLikelyMatch(
+          replayTrackAliases,
+          log.trackVenue,
+          log.trackCourse,
+          log.trackEvent,
+        );
+        const fileNameTsMatch = log.fileName.match(
+          /^(\d{4})_(\d{2})_(\d{2})_(\d{2})_(\d{2})_(\d{2})-/,
+        );
+        let fileNameTs = null;
+        if (fileNameTsMatch) {
+          const dt = new Date(
+            Date.UTC(
+              Number(fileNameTsMatch[1]),
+              Number(fileNameTsMatch[2]) - 1,
+              Number(fileNameTsMatch[3]),
+              Number(fileNameTsMatch[4]),
+              Number(fileNameTsMatch[5]),
+              Number(fileNameTsMatch[6]),
+            ),
+          );
+          fileNameTs = Math.floor(dt.getTime() / 1000);
+        }
+        return {
+          ...log,
+          diffSec: diff,
+          trackMatch,
+          fileNameTs,
+        };
+      })
+      .sort((a, b) => {
+        if (a.trackMatch !== b.trackMatch) return b.trackMatch ? 1 : -1;
+        if (a.diffSec !== b.diffSec) return a.diffSec - b.diffSec;
+        if (
+          a.fileNameTs !== null &&
+          b.fileNameTs !== null &&
+          a.fileNameTs !== b.fileNameTs
+        ) {
+          return (
+            Math.abs(replayTimestamp - a.fileNameTs) -
+            Math.abs(replayTimestamp - b.fileNameTs)
+          );
+        }
+        return a.fileName.localeCompare(b.fileName);
+      });
+
+    const best = ranked[0];
+    return {
+      logDataFileName: best?.fileName ?? null,
+      logData: best?.fileData ?? null,
+    };
+  } catch (error) {
     return { logDataFileName: null, logData: null };
   }
-
-  // Rank candidates: prefer trackMatch, then smallest time diff, then filename timestamp, then filename
-  const ranked = candidates
-    .map((log) => {
-      const diff = Math.abs(replayTimestamp - Number(log.dateTime));
-      const trackMatch = tracksLikelyMatch(
-        replayTrackAliases,
-        log.trackVenue,
-        log.trackCourse,
-        log.trackEvent,
-      );
-      // Parse timestamp from filename if present (YYYY_MM_DD_HH_MM_SS-...)
-      const fileNameTsMatch = log.fileName.match(
-        /^(\d{4})_(\d{2})_(\d{2})_(\d{2})_(\d{2})_(\d{2})-/,
-      );
-      let fileNameTs = null;
-      if (fileNameTsMatch) {
-        const dt = new Date(
-          Date.UTC(
-            Number(fileNameTsMatch[1]),
-            Number(fileNameTsMatch[2]) - 1,
-            Number(fileNameTsMatch[3]),
-            Number(fileNameTsMatch[4]),
-            Number(fileNameTsMatch[5]),
-            Number(fileNameTsMatch[6]),
-          ),
-        );
-        fileNameTs = Math.floor(dt.getTime() / 1000);
-      }
-      return {
-        ...log,
-        diffSec: diff,
-        trackMatch,
-        fileNameTs,
-      };
-    })
-    .sort((a, b) => {
-      // Prefer trackMatch true
-      if (a.trackMatch !== b.trackMatch) return b.trackMatch ? 1 : -1;
-      // Then smallest diffSec
-      if (a.diffSec !== b.diffSec) return a.diffSec - b.diffSec;
-      // Then closest fileNameTs
-      if (
-        a.fileNameTs !== null &&
-        b.fileNameTs !== null &&
-        a.fileNameTs !== b.fileNameTs
-      ) {
-        return (
-          Math.abs(replayTimestamp - a.fileNameTs) -
-          Math.abs(replayTimestamp - b.fileNameTs)
-        );
-      }
-      // Then lexicographical filename
-      return a.fileName.localeCompare(b.fileName);
-    });
-
-  const best = ranked[0];
-  return {
-    logDataFileName: best?.fileName ?? null,
-    logData: best?.fileData ?? null,
-  };
 };
 
 interface LogMetaData {
@@ -341,27 +1043,30 @@ interface LogMetaData {
 
 export const getReplayLogData = async (
   replay: LMUReplay,
+  options?: { fullData?: boolean },
 ): Promise<LogMetaData | null> => {
-  return new Promise(async (res, reject) => {
-    try {
-      const replayDirectory = replay.replayDirectory;
-      const logDataDirectory = resolve(replayDirectory, '../Log/Results');
-      const logData = await findBestLogFile(logDataDirectory, replay);
+  try {
+    const replayDirectory = replay.replayDirectory;
+    const logDataDirectory = resolve(replayDirectory, '../Log/Results');
+    const logData = await findBestLogFile(
+      logDataDirectory,
+      replay,
+      options?.fullData ? parseLogXmlFull : parseLogXml,
+    );
 
-      if (!logData || !logData.logDataFileName || !logData.logData) {
-        res(null);
-      }
-
-      const logMetaData: LogMetaData = {
-        logData: logData?.logData?.rFactorXML?.RaceResults || null,
-        logDataDirectory,
-        logDataFileName: logData?.logDataFileName || '',
-      };
-      res(logMetaData);
-    } catch (e) {
-      reject(e);
+    if (!logData || !logData.logDataFileName || !logData.logData) {
+      return null;
     }
-  });
+
+    const logMetaData: LogMetaData = {
+      logData: logData?.logData?.rFactorXML?.RaceResults || null,
+      logDataDirectory,
+      logDataFileName: logData?.logDataFileName || '',
+    };
+    return logMetaData;
+  } catch (error) {
+    return null;
+  }
 };
 
 export const getReplayData = async (): Promise<LMUReplay[]> => {
@@ -447,10 +1152,19 @@ export const syncReplayData = async (
         };
 
         (replay as LMUReplay).hash = hash;
+        (replay as LMUReplay).multiplayer = false;
         delete replay.id; // Remove the original ID as it's no longer needed
 
         const existingReplayByHash = storedReplay[hash];
         if (existingReplayByHash) {
+          if (typeof existingReplayByHash.multiplayer !== 'boolean') {
+            storedReplay[hash] = {
+              ...existingReplayByHash,
+              multiplayer: getReplayMultiplayerFromLogData(
+                existingReplayByHash.logData,
+              ),
+            };
+          }
           markReplayProcessed();
           await yieldToEventLoop();
           continue;
@@ -459,10 +1173,19 @@ export const syncReplayData = async (
         const existingReplayByIdentity =
           storedReplayByIdentity.get(identityKey);
         if (existingReplayByIdentity) {
-          storedReplay[hash] = {
+          const mergedReplayByIdentity: ReplayCacheEntry = {
             ...existingReplayByIdentity,
             ...replay,
             hash,
+          };
+          storedReplay[hash] = {
+            ...mergedReplayByIdentity,
+            multiplayer:
+              typeof mergedReplayByIdentity.multiplayer === 'boolean'
+                ? mergedReplayByIdentity.multiplayer
+                : getReplayMultiplayerFromLogData(
+                    mergedReplayByIdentity.logData,
+                  ),
           };
           markReplayProcessed();
           await yieldToEventLoop();
@@ -476,6 +1199,10 @@ export const syncReplayData = async (
             replay.logData = logMetaData.logData;
             replay.logDataDirectory = logMetaData.logDataDirectory;
             replay.logDataFileName = logMetaData.logDataFileName;
+            replay.multiplayer = getReplayMultiplayerFromLogData(
+              logMetaData.logData,
+            );
+            replay.logDataLoaded = false;
             storedReplay[hash] = replay;
             storedReplayByIdentity.set(identityKey, replay);
           }
@@ -627,7 +1354,8 @@ export const postWatchReplay = async (
       throw new Error(`API responded with status ${response.status}`);
     }
 
-    if (!storedReplay[hash]) {
+    let cachedReplay = storedReplay[hash] as LMUReplay | undefined;
+    if (!cachedReplay) {
       const logMetaData = await getReplayLogData(replay);
 
       if (!logMetaData) {
@@ -637,13 +1365,32 @@ export const postWatchReplay = async (
       replay.logData = logMetaData.logData;
       replay.logDataDirectory = logMetaData.logDataDirectory;
       replay.logDataFileName = logMetaData.logDataFileName;
+      replay.multiplayer = getReplayMultiplayerFromLogData(logMetaData.logData);
+      replay.logDataLoaded = false;
       storedReplay[hash] = replay;
       replayStore.set('replays', storedReplay);
+      cachedReplay = storedReplay[hash] as LMUReplay;
     }
+
+    const fullLogMetaData = await getReplayLogData(replay, { fullData: true });
+    const responseReplay = {
+      ...cachedReplay,
+      logData: fullLogMetaData?.logData ?? cachedReplay.logData,
+      logDataDirectory:
+        fullLogMetaData?.logDataDirectory || cachedReplay.logDataDirectory,
+      logDataFileName:
+        fullLogMetaData?.logDataFileName || cachedReplay.logDataFileName,
+      multiplayer: fullLogMetaData?.logData
+        ? getReplayMultiplayerFromLogData(fullLogMetaData.logData)
+        : typeof cachedReplay.multiplayer === 'boolean'
+          ? cachedReplay.multiplayer
+          : getReplayMultiplayerFromLogData(cachedReplay.logData),
+      logDataLoaded: Boolean(fullLogMetaData?.logData),
+    };
 
     event.reply(CONSTANTS.API.POST_WATCH_REPLAY, {
       status: 'success',
-      data: storedReplay[hash],
+      data: responseReplay,
     });
   } catch (error: unknown) {
     event.reply(CONSTANTS.API.POST_WATCH_REPLAY, {

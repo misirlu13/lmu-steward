@@ -147,6 +147,32 @@ describe('sessionUtils', () => {
       const result = getSessionCarClasses(replay);
       expect(result).toEqual(['P2']);
     });
+
+    it('should normalize cached summary CarClasses to display format', () => {
+      const replay = {
+        metadata: { session: 'RACE' },
+        logData: {
+          Race: {
+            CarClasses: ['LMP2', 'LMGT3', 'HYPERCAR'],
+          },
+        },
+      } as unknown as LMUReplay;
+
+      expect(getSessionCarClasses(replay)).toEqual(['P2', 'GT3', 'HY']);
+    });
+
+    it('should deduplicate cached summary CarClasses after normalization', () => {
+      const replay = {
+        metadata: { session: 'RACE' },
+        logData: {
+          Race: {
+            CarClasses: ['LMP2', 'lmp2', 'LMP2_Toyota', 'LMGT3'],
+          },
+        },
+      } as unknown as LMUReplay;
+
+      expect(getSessionCarClasses(replay)).toEqual(['P2', 'GT3']);
+    });
   });
 
   describe('getSessionIncidents', () => {

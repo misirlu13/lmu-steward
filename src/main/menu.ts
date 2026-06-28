@@ -4,6 +4,7 @@ import {
   shell,
   BrowserWindow,
 } from 'electron';
+import path from 'path';
 
 export default class MenuBuilder {
   mainWindow: BrowserWindow;
@@ -160,6 +161,29 @@ export default class MenuBuilder {
                     this.mainWindow.webContents.executeJavaScript(
                       'Promise.reject(new Error("Test unhandled rejection from menu"))',
                     );
+                  },
+                },
+                {
+                  type: 'separator',
+                },
+                {
+                  label: 'Open Settings Store',
+                  click: async () => {
+                    const settingsStorePath = path.join(
+                      app.getPath('userData'),
+                      'lmu-steward-store.json',
+                    );
+                    await shell.openPath(settingsStorePath);
+                  },
+                },
+                {
+                  label: 'Open Log Store',
+                  click: async () => {
+                    const logStorePath = path.join(
+                      app.getPath('userData'),
+                      'lmu-steward-log-store.json',
+                    );
+                    await shell.openPath(logStorePath);
                   },
                 },
               ],

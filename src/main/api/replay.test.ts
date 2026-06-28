@@ -1,3 +1,5 @@
+const replayStoreSetMock = jest.fn();
+
 jest.mock('electron-store', () => ({
   __esModule: true,
   default: class MockStore {
@@ -8,6 +10,7 @@ jest.mock('electron-store', () => ({
     }
 
     set(key: string, value: unknown) {
+      replayStoreSetMock(key, value);
       this.data[key] = value;
     }
 
@@ -15,6 +18,10 @@ jest.mock('electron-store', () => ({
       this.data = { replays: {} };
     }
   },
+}));
+
+jest.mock('fs', () => ({
+  createReadStream: jest.fn(),
 }));
 
 jest.mock('fs/promises', () => ({
@@ -26,20 +33,26 @@ jest.mock('xml2js', () => ({
   parseStringPromise: jest.fn(),
 }));
 
+import { createReadStream } from 'fs';
+import { Readable } from 'stream';
 import { readdir, readFile } from 'fs/promises';
 import { parseStringPromise } from 'xml2js';
 import { LMUReplay } from '@types';
+import { CONSTANTS } from '@constants';
+import { generateReplayHash } from '../util';
 import {
   findBestLogFile,
   getLogDataSessionType,
+  getReplayLogData,
   parseLogXml,
+  postWatchReplay,
 } from './replay';
 
 describe('main/replay helpers', () => {
     it('matches known track aliases for new tracks (Paul Ricard layouts, Barcelona ELMS, Silverstone International)', async () => {
       // Paul Ricard 1A
       readdirMock.mockResolvedValue(['paulricard.xml'] as unknown as Awaited<ReturnType<typeof readdir>>);
-      readFileMock.mockResolvedValue('paulricard-xml' as unknown as Awaited<ReturnType<typeof readFile>>);
+      readFileMock.mockResolvedValue('<rFactorXML><RaceResults><DateTime>1000</DateTime><TrackVenue>Paul Ricard Circuit</TrackVenue><Race /></RaceResults></rFactorXML>' as unknown as Awaited<ReturnType<typeof readFile>>);
       parseStringPromiseMock.mockResolvedValue({
         rFactorXML: {
           RaceResults: {
@@ -62,7 +75,7 @@ describe('main/replay helpers', () => {
 
       // Paul Ricard 1A-V2
       readdirMock.mockResolvedValue(['paulricard_v2.xml'] as unknown as Awaited<ReturnType<typeof readdir>>);
-      readFileMock.mockResolvedValue('paulricard-v2-xml' as unknown as Awaited<ReturnType<typeof readFile>>);
+      readFileMock.mockResolvedValue('<rFactorXML><RaceResults><DateTime>1000</DateTime><TrackVenue>Paul Ricard Circuit</TrackVenue><Race /></RaceResults></rFactorXML>' as unknown as Awaited<ReturnType<typeof readFile>>);
       parseStringPromiseMock.mockResolvedValue({
         rFactorXML: {
           RaceResults: {
@@ -85,7 +98,7 @@ describe('main/replay helpers', () => {
 
       // Paul Ricard 1A-V2-Short
       readdirMock.mockResolvedValue(['paulricard_v2_short.xml'] as unknown as Awaited<ReturnType<typeof readdir>>);
-      readFileMock.mockResolvedValue('paulricard-v2-short-xml' as unknown as Awaited<ReturnType<typeof readFile>>);
+      readFileMock.mockResolvedValue('<rFactorXML><RaceResults><DateTime>1000</DateTime><TrackVenue>Paul Ricard Circuit</TrackVenue><Race /></RaceResults></rFactorXML>' as unknown as Awaited<ReturnType<typeof readFile>>);
       parseStringPromiseMock.mockResolvedValue({
         rFactorXML: {
           RaceResults: {
@@ -108,7 +121,7 @@ describe('main/replay helpers', () => {
 
       // Paul Ricard 3A
       readdirMock.mockResolvedValue(['paulricard_3a.xml'] as unknown as Awaited<ReturnType<typeof readdir>>);
-      readFileMock.mockResolvedValue('paulricard-3a-xml' as unknown as Awaited<ReturnType<typeof readFile>>);
+      readFileMock.mockResolvedValue('<rFactorXML><RaceResults><DateTime>1000</DateTime><TrackVenue>Paul Ricard Circuit</TrackVenue><Race /></RaceResults></rFactorXML>' as unknown as Awaited<ReturnType<typeof readFile>>);
       parseStringPromiseMock.mockResolvedValue({
         rFactorXML: {
           RaceResults: {
@@ -131,7 +144,7 @@ describe('main/replay helpers', () => {
 
       // Barcelona ELMS
       readdirMock.mockResolvedValue(['barcelona.xml'] as unknown as Awaited<ReturnType<typeof readdir>>);
-      readFileMock.mockResolvedValue('barcelona-xml' as unknown as Awaited<ReturnType<typeof readFile>>);
+      readFileMock.mockResolvedValue('<rFactorXML><RaceResults><DateTime>1000</DateTime><TrackVenue>Circuit de Barcelona</TrackVenue><Race /></RaceResults></rFactorXML>' as unknown as Awaited<ReturnType<typeof readFile>>);
       parseStringPromiseMock.mockResolvedValue({
         rFactorXML: {
           RaceResults: {
@@ -154,7 +167,7 @@ describe('main/replay helpers', () => {
 
       // Silverstone International
       readdirMock.mockResolvedValue(['silverstone_int.xml'] as unknown as Awaited<ReturnType<typeof readdir>>);
-      readFileMock.mockResolvedValue('silverstone-int-xml' as unknown as Awaited<ReturnType<typeof readFile>>);
+      readFileMock.mockResolvedValue('<rFactorXML><RaceResults><DateTime>1000</DateTime><TrackVenue>Silverstone Circuit</TrackVenue><Race /></RaceResults></rFactorXML>' as unknown as Awaited<ReturnType<typeof readFile>>);
       parseStringPromiseMock.mockResolvedValue({
         rFactorXML: {
           RaceResults: {
@@ -177,25 +190,74 @@ describe('main/replay helpers', () => {
     });
   const readdirMock = readdir as jest.MockedFunction<typeof readdir>;
   const readFileMock = readFile as jest.MockedFunction<typeof readFile>;
+  const createReadStreamMock = createReadStream as jest.MockedFunction<typeof createReadStream>;
   const parseStringPromiseMock =
     parseStringPromise as jest.MockedFunction<typeof parseStringPromise>;
 
   beforeEach(() => {
     jest.clearAllMocks();
+    createReadStreamMock.mockImplementation(() => {
+      throw new Error('stream unavailable');
+    });
   });
 
-  it('parseLogXml reads file and parses XML with expected options', async () => {
-    readFileMock.mockResolvedValue('<xml>payload</xml>' as unknown as Awaited<ReturnType<typeof readFile>>);
-    parseStringPromiseMock.mockResolvedValue({ parsed: true } as unknown as Awaited<ReturnType<typeof parseStringPromise>>);
+  it('parseLogXml reads file and parses XML summary data', async () => {
+    readFileMock.mockResolvedValue(
+      '<rFactorXML><RaceResults><Setting>Multiplayer</Setting><DateTime>1000</DateTime><TrackVenue>Sebring</TrackVenue><Race /></RaceResults></rFactorXML>' as unknown as Awaited<ReturnType<typeof readFile>>,
+    );
 
     const result = await parseLogXml('C:/logs/file.xml');
 
     expect(readFileMock).toHaveBeenCalledWith('C:/logs/file.xml', 'utf-8');
-    expect(parseStringPromiseMock).toHaveBeenCalledWith('<xml>payload</xml>', {
-      explicitArray: false,
-      mergeAttrs: true,
+    expect(result).toEqual({
+      rFactorXML: {
+        RaceResults: {
+          Setting: 'Multiplayer',
+          DateTime: 1000,
+          TrackVenue: 'Sebring',
+          Race: {},
+        },
+      },
     });
-    expect(result).toEqual({ parsed: true });
+  });
+
+  it('parseLogXml reads streamed XML and parses session summary counts', async () => {
+    const xmlChunks = [
+      '<rFactorXML><RaceResults><DateTime>1000</DateTime><TrackVenue>Sebring</TrackVenue><Race><Minutes>60</Minutes><CarClass>LMP2</CarClass><CarClass>GTE</CarClass><Driver></Driver><Driver></Driver><Stream><Incident></Incident><Penalty></Penalty><TrackLimit></TrackLimit></Stream></Race></RaceResults></rFactorXML>',
+    ];
+    const stream = Readable.from(xmlChunks, { objectMode: false });
+    createReadStreamMock.mockReturnValueOnce(stream as unknown as ReturnType<typeof createReadStream>);
+    readFileMock.mockRejectedValue(new Error('readFile should not be called'));
+
+    const result = await parseLogXml('C:/logs/file.xml');
+
+    expect(createReadStreamMock).toHaveBeenCalledWith('C:/logs/file.xml', { encoding: 'utf-8' });
+    expect(readFileMock).not.toHaveBeenCalled();
+    expect(result).toEqual({
+      rFactorXML: {
+        RaceResults: {
+          DateTime: 1000,
+          TrackVenue: 'Sebring',
+          Race: {
+            Minutes: 60,
+            DriverCount: 2,
+            CarClasses: ['LMP2', 'GTE'],
+            IncidentCount: 1,
+            PenaltyCount: 1,
+            TrackLimitCount: 1,
+            Stream: {
+              IncidentCount: 1,
+              PenaltyCount: 1,
+              TrackLimitCount: 1,
+            },
+          },
+          IncidentCount: 1,
+          PenaltyCount: 1,
+          TrackLimitCount: 1,
+          DriverCount: 2,
+        },
+      },
+    });
   });
 
   it('detects log session type from RaceResults keys', () => {
@@ -216,33 +278,9 @@ describe('main/replay helpers', () => {
 
     readFileMock.mockImplementation(async (filePath) => {
       if (String(filePath).includes('old.xml')) {
-        return 'old-xml' as unknown as Awaited<ReturnType<typeof readFile>>;
+        return '<rFactorXML><RaceResults><DateTime>1000</DateTime><TrackVenue>Sebring</TrackVenue><Qualify /></RaceResults></rFactorXML>' as unknown as Awaited<ReturnType<typeof readFile>>;
       }
-      return 'match-xml' as unknown as Awaited<ReturnType<typeof readFile>>;
-    });
-
-    parseStringPromiseMock.mockImplementation(async (xml) => {
-      if (xml === 'old-xml') {
-        return {
-          rFactorXML: {
-            RaceResults: {
-              DateTime: 1000,
-              TrackVenue: 'Sebring',
-              Qualify: {},
-            },
-          },
-        } as unknown as Awaited<ReturnType<typeof parseStringPromise>>;
-      }
-
-      return {
-        rFactorXML: {
-          RaceResults: {
-            DateTime: 995,
-            TrackVenue: 'Sebring',
-            Race: {},
-          },
-        },
-      } as unknown as Awaited<ReturnType<typeof parseStringPromise>>;
+      return '<rFactorXML><RaceResults><DateTime>995</DateTime><TrackVenue>Sebring</TrackVenue><Race /></RaceResults></rFactorXML>' as unknown as Awaited<ReturnType<typeof readFile>>;
     });
 
     const replay = {
@@ -270,34 +308,10 @@ describe('main/replay helpers', () => {
 
     readFileMock.mockImplementation(async (filePath) => {
       if (String(filePath).includes('first.xml')) {
-        return 'first-xml' as unknown as Awaited<ReturnType<typeof readFile>>;
+        return '<rFactorXML><RaceResults><DateTime>930</DateTime><TrackVenue>Sebring International Raceway</TrackVenue><Race /></RaceResults></rFactorXML>' as unknown as Awaited<ReturnType<typeof readFile>>;
       }
 
-      return 'second-xml' as unknown as Awaited<ReturnType<typeof readFile>>;
-    });
-
-    parseStringPromiseMock.mockImplementation(async (xml) => {
-      if (xml === 'first-xml') {
-        return {
-          rFactorXML: {
-            RaceResults: {
-              DateTime: 930,
-              TrackVenue: 'Sebring International Raceway',
-              Race: {},
-            },
-          },
-        } as unknown as Awaited<ReturnType<typeof parseStringPromise>>;
-      }
-
-      return {
-        rFactorXML: {
-          RaceResults: {
-            DateTime: 995,
-            TrackVenue: 'Sebring International Raceway',
-            Race: {},
-          },
-        },
-      } as unknown as Awaited<ReturnType<typeof parseStringPromise>>;
+      return '<rFactorXML><RaceResults><DateTime>995</DateTime><TrackVenue>Sebring International Raceway</TrackVenue><Race /></RaceResults></rFactorXML>' as unknown as Awaited<ReturnType<typeof readFile>>;
     });
 
     const replay = {
@@ -318,17 +332,8 @@ describe('main/replay helpers', () => {
       ['candidate.xml'] as unknown as Awaited<ReturnType<typeof readdir>>,
     );
     readFileMock.mockResolvedValue(
-      'candidate-xml' as unknown as Awaited<ReturnType<typeof readFile>>,
+      '<rFactorXML><RaceResults><DateTime>1000</DateTime><TrackVenue>Bahrain International Circuit</TrackVenue><Race /></RaceResults></rFactorXML>' as unknown as Awaited<ReturnType<typeof readFile>>,
     );
-    parseStringPromiseMock.mockResolvedValue({
-      rFactorXML: {
-        RaceResults: {
-          DateTime: 1000,
-          TrackVenue: 'Bahrain International Circuit',
-          Race: {},
-        },
-      },
-    } as unknown as Awaited<ReturnType<typeof parseStringPromise>>);
 
     const replay = {
       replayName: 'Bahrain Outer Circuit R1 2',
@@ -346,16 +351,7 @@ describe('main/replay helpers', () => {
 
   it('returns null file metadata when no logs match', async () => {
     readdirMock.mockResolvedValue(['x.xml'] as unknown as Awaited<ReturnType<typeof readdir>>);
-    readFileMock.mockResolvedValue('mismatch-xml' as unknown as Awaited<ReturnType<typeof readFile>>);
-    parseStringPromiseMock.mockResolvedValue({
-      rFactorXML: {
-        RaceResults: {
-          DateTime: 5000,
-          TrackVenue: 'Different Track',
-          Race: {},
-        },
-      },
-    } as unknown as Awaited<ReturnType<typeof parseStringPromise>>);
+    readFileMock.mockResolvedValue('<rFactorXML><RaceResults><DateTime>5000</DateTime><TrackVenue>Different Track</TrackVenue><Race /></RaceResults></rFactorXML>' as unknown as Awaited<ReturnType<typeof readFile>>);
 
     const replay = {
       timestamp: 1000,
@@ -383,16 +379,7 @@ describe('main/replay helpers', () => {
 
   it('matches when timestamp diff is within configured millisecond threshold', async () => {
     readdirMock.mockResolvedValue(['candidate.xml'] as unknown as Awaited<ReturnType<typeof readdir>>);
-    readFileMock.mockResolvedValue('candidate-xml' as unknown as Awaited<ReturnType<typeof readFile>>);
-    parseStringPromiseMock.mockResolvedValue({
-      rFactorXML: {
-        RaceResults: {
-          DateTime: 1100,
-          TrackVenue: 'Sebring',
-          Race: {},
-        },
-      },
-    } as unknown as Awaited<ReturnType<typeof parseStringPromise>>);
+    readFileMock.mockResolvedValue('<rFactorXML><RaceResults><DateTime>1100</DateTime><TrackVenue>Sebring</TrackVenue><Race /></RaceResults></rFactorXML>' as unknown as Awaited<ReturnType<typeof readFile>>);
 
     const replay = {
       timestamp: 1000,
@@ -409,16 +396,7 @@ describe('main/replay helpers', () => {
 
   it('does not match when timestamp diff exceeds configured millisecond threshold', async () => {
     readdirMock.mockResolvedValue(['candidate.xml'] as unknown as Awaited<ReturnType<typeof readdir>>);
-    readFileMock.mockResolvedValue('candidate-xml' as unknown as Awaited<ReturnType<typeof readFile>>);
-    parseStringPromiseMock.mockResolvedValue({
-      rFactorXML: {
-        RaceResults: {
-          DateTime: 1100,
-          TrackVenue: 'Sebring',
-          Race: {},
-        },
-      },
-    } as unknown as Awaited<ReturnType<typeof parseStringPromise>>);
+    readFileMock.mockResolvedValue('<rFactorXML><RaceResults><DateTime>1100</DateTime><TrackVenue>Sebring</TrackVenue><Race /></RaceResults></rFactorXML>' as unknown as Awaited<ReturnType<typeof readFile>>);
 
     const replay = {
       timestamp: 1000,
@@ -442,5 +420,139 @@ describe('main/replay helpers', () => {
         }),
       }),
     });
+  });
+
+  it('skips malformed log files instead of aborting replay sync', async () => {
+    readdirMock.mockResolvedValue([
+      'bad.xml',
+      'good.xml',
+    ] as unknown as Awaited<ReturnType<typeof readdir>>);
+
+    readFileMock.mockImplementation(async (filePath) => {
+      if (String(filePath).includes('bad.xml')) {
+        return '<rFactorXML><RaceResults><DateTime>1000</DateTime><TrackVenue>Sebring</TrackVenue><Race /></RaceResults' as unknown as Awaited<ReturnType<typeof readFile>>;
+      }
+
+      return '<rFactorXML><RaceResults><DateTime>1000</DateTime><TrackVenue>Sebring</TrackVenue><Race /></RaceResults></rFactorXML>' as unknown as Awaited<ReturnType<typeof readFile>>;
+    });
+
+    const replay = {
+      timestamp: 1000,
+      metadata: {
+        session: 'RACE',
+        sceneDesc: 'SEBRINGWEC',
+      },
+    } as unknown as LMUReplay;
+
+    const result = await findBestLogFile('C:/logs', replay);
+
+    expect(result?.logDataFileName).toBe('good.xml');
+    expect(result?.logData?.rFactorXML?.RaceResults?.Race).toEqual({});
+  });
+
+  it('loads full replay log data when explicitly requested', async () => {
+    readdirMock.mockResolvedValue(['full.xml'] as unknown as Awaited<ReturnType<typeof readdir>>);
+    readFileMock.mockResolvedValue(
+      '<rFactorXML><RaceResults><DateTime>1000</DateTime><TrackVenue>Sebring</TrackVenue><Race /></RaceResults></rFactorXML>' as unknown as Awaited<ReturnType<typeof readFile>>,
+    );
+    parseStringPromiseMock.mockResolvedValue({
+      rFactorXML: {
+        RaceResults: {
+          DateTime: 1000,
+          TrackVenue: 'Sebring',
+          Race: {},
+        },
+      },
+    } as unknown as Awaited<ReturnType<typeof parseStringPromise>>);
+
+    const replay = {
+      replayDirectory: 'C:/replays/Replay',
+      timestamp: 1000,
+      metadata: {
+        session: 'RACE',
+        sceneDesc: 'SEBRINGWEC',
+      },
+    } as unknown as LMUReplay;
+
+    const result = await getReplayLogData(replay, { fullData: true });
+
+    expect(result?.logDataFileName).toBe('full.xml');
+    expect(result?.logData).toEqual({
+      DateTime: 1000,
+      TrackVenue: 'Sebring',
+      Race: {},
+    });
+  });
+
+  it('returns full parsed log data to the renderer without persisting it again', async () => {
+    const replyMock = jest.fn();
+    const event = { reply: replyMock } as unknown as Electron.IpcMainEvent;
+    const fetchMock = jest.fn().mockImplementation(async (url: string) => {
+      if (url.endsWith('/rest/watch/replays')) {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => [
+            {
+              id: 0,
+              metadata: { session: 'RACE', sceneDesc: 'SEBRINGWEC' },
+              replayDirectory: 'C:/replays',
+              replayName: 'Sebring International Raceway R1 1',
+              size: 123,
+              timestamp: 1000,
+            },
+          ],
+        };
+      }
+
+      return { ok: true, status: 200 };
+    });
+    global.fetch = fetchMock as typeof global.fetch;
+
+    readdirMock.mockResolvedValue(['watch.xml'] as unknown as Awaited<ReturnType<typeof readdir>>);
+    readFileMock.mockResolvedValue(
+      '<rFactorXML><RaceResults><Setting>Multiplayer</Setting><DateTime>1000</DateTime><TrackVenue>Sebring</TrackVenue><GameVersion>1.0</GameVersion><Race><Minutes>90</Minutes></Race></RaceResults></rFactorXML>' as unknown as Awaited<ReturnType<typeof readFile>>,
+    );
+    parseStringPromiseMock.mockResolvedValue({
+      rFactorXML: {
+        RaceResults: {
+          Setting: 'Multiplayer',
+          DateTime: 1000,
+          TrackVenue: 'Sebring',
+          GameVersion: '1.0',
+          Race: {
+            Minutes: 90,
+            Driver: [],
+            Stream: {},
+          },
+        },
+      },
+    } as unknown as Awaited<ReturnType<typeof parseStringPromise>>);
+
+    const replay = {
+      id: 0,
+      metadata: { session: 'RACE', sceneDesc: 'SEBRINGWEC' },
+      replayDirectory: 'C:/replays',
+      replayName: 'Sebring International Raceway R1 1',
+      size: 123,
+      timestamp: 1000,
+    } as unknown as LMUReplay;
+    const replayHash = generateReplayHash(replay);
+
+    await postWatchReplay(event, replayHash);
+
+    expect(replyMock).toHaveBeenCalledWith(CONSTANTS.API.POST_WATCH_REPLAY, {
+      status: 'success',
+      data: expect.objectContaining({
+        multiplayer: true,
+        logData: expect.objectContaining({
+          GameVersion: '1.0',
+          Race: expect.objectContaining({ Minutes: 90 }),
+        }),
+        logDataLoaded: true,
+      }),
+    });
+
+    expect(replayStoreSetMock).toHaveBeenCalledTimes(1);
   });
 });

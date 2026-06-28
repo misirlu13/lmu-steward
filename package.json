@@ -288,7 +288,9 @@
     "patterns": [
       "!**/**",
       "src/main/**",
-      ".erb/dll/**"
+      ".erb/dll/**",
+      "!**/System Volume Information/**",
+      "!**/$RECYCLE.BIN/**"
     ],
     "logLevel": "quiet"
   },

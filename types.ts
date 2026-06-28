@@ -1,6 +1,7 @@
 export interface LMUReplay {
   id?: string;
   hash: string;
+  multiplayer?: boolean;
   metadata: {
     sceneDesc: string;
     session: SessionType;
@@ -8,6 +9,7 @@ export interface LMUReplay {
   logData: any;
   logDataDirectory: string;
   logDataFileName: string;
+  logDataLoaded?: boolean;
   replayDirectory: string;
   replayName: string;
   size: number;
@@ -34,6 +36,9 @@ export interface LMUStewardAPIResponse<T> {
 
 export interface LMUStewardStore {
   replays: Record<string, LMUReplay>;
+  replayCacheSchemaVersion?: number;
+  replayCacheMigratedFromAppVersion?: string;
+  replayCacheMigratedToAppVersion?: string;
 }
 
 export interface SessionIncidents {
