@@ -43,7 +43,7 @@
     "postinstall": "ts-node .erb/scripts/check-native-dep.js && electron-builder install-app-deps && npm run build:dll",
     "lint": "cross-env NODE_ENV=development eslint . --ext .js,.jsx,.ts,.tsx",
     "lint:fix": "cross-env NODE_ENV=development eslint . --ext .js,.jsx,.ts,.tsx --fix",
-    "package": "ts-node ./.erb/scripts/clean.js dist && npm run build:icons && npm run build && electron-builder build --publish never && npm run build:dll",
+    "package": "ts-node ./.erb/scripts/clean.js dist && npm run build:icons && npm run build && npm --prefix release/app run rebuild && electron-builder build --publish never && npm run build:dll",
     "rebuild": "electron-rebuild --parallel --types prod,dev,optional --module-dir release/app",
     "release": "semantic-release",
     "release:dry": "semantic-release --dry-run",
@@ -208,6 +208,7 @@
   "build": {
     "productName": "LMU Steward",
     "appId": "com.lmu.steward",
+    "npmRebuild": false,
     "asar": true,
     "afterSign": ".erb/scripts/notarize.js",
     "asarUnpack": "**\\*.{node,dll}",
