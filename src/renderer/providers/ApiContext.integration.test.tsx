@@ -58,6 +58,9 @@ describe('ApiContext integration', () => {
         <div data-testid="session-info-status">{sessionInfoStatus}</div>
         <button onClick={markReplayCacheResetRequired}>mark replay cache reset</button>
         <button onClick={() => requestReplays()}>request replays</button>
+        <button onClick={() => requestReplays({ gameType: 'multiplayer' })}>
+          request multiplayer replays
+        </button>
       </>
     );
   };
@@ -186,6 +189,24 @@ describe('ApiContext integration', () => {
         CONSTANTS.API.GET_REPLAYS,
         undefined,
       );
+    });
+  });
+
+  it('forwards game type replay filters in the replay request payload', async () => {
+    render(
+      <ApiProvider>
+        <TestConsumer />
+      </ApiProvider>,
+    );
+
+    fireEvent.click(
+      screen.getByRole('button', { name: /request multiplayer replays/i }),
+    );
+
+    await waitFor(() => {
+      expect(sendMessageMock).toHaveBeenCalledWith(CONSTANTS.API.GET_REPLAYS, {
+        gameType: 'multiplayer',
+      });
     });
   });
 });

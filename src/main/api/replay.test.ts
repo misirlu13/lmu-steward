@@ -1,23 +1,22 @@
 const replayStoreSetMock = jest.fn();
+const replayStoreData: Record<string, unknown> = { replays: {} };
 
-jest.mock('electron-store', () => ({
-  __esModule: true,
-  default: class MockStore {
-    private data: Record<string, unknown> = { replays: {} };
-
+jest.mock('../storage/local-data-store', () => ({
+  getMainPersistentStore: () => ({
     get(key: string) {
-      return this.data[key];
-    }
-
+      return replayStoreData[key];
+    },
     set(key: string, value: unknown) {
       replayStoreSetMock(key, value);
-      this.data[key] = value;
-    }
-
+      replayStoreData[key] = value;
+    },
     clear() {
-      this.data = { replays: {} };
-    }
-  },
+      Object.keys(replayStoreData).forEach((key) => {
+        delete replayStoreData[key];
+      });
+      replayStoreData.replays = {};
+    },
+  }),
 }));
 
 jest.mock('fs', () => ({
@@ -41,6 +40,7 @@ import { LMUReplay } from '@types';
 import { CONSTANTS } from '@constants';
 import { generateReplayHash } from '../util';
 import {
+  filterReplaysByGameType,
   findBestLogFile,
   getLogDataSessionType,
   getReplayLogData,
@@ -196,6 +196,10 @@ describe('main/replay helpers', () => {
 
   beforeEach(() => {
     jest.clearAllMocks();
+    Object.keys(replayStoreData).forEach((key) => {
+      delete replayStoreData[key];
+    });
+    replayStoreData.replays = {};
     createReadStreamMock.mockImplementation(() => {
       throw new Error('stream unavailable');
     });
@@ -482,6 +486,34 @@ describe('main/replay helpers', () => {
       TrackVenue: 'Sebring',
       Race: {},
     });
+  });
+
+  it('filters stored replays by game type in the backend helper', () => {
+    const filteredMultiplayerReplays = filterReplaysByGameType(
+      [
+        { replayName: 'mp', multiplayer: true },
+        { replayName: 'rw', multiplayer: false },
+        { replayName: 'default-rw' },
+      ],
+      'multiplayer',
+    );
+
+    const filteredRaceWeekendReplays = filterReplaysByGameType(
+      [
+        { replayName: 'mp', multiplayer: true },
+        { replayName: 'rw', multiplayer: false },
+        { replayName: 'default-rw' },
+      ],
+      'race-weekend',
+    );
+
+    expect(filteredMultiplayerReplays).toEqual([
+      expect.objectContaining({ replayName: 'mp' }),
+    ]);
+    expect(filteredRaceWeekendReplays).toEqual([
+      expect.objectContaining({ replayName: 'rw' }),
+      expect.objectContaining({ replayName: 'default-rw' }),
+    ]);
   });
 
   it('returns full parsed log data to the renderer without persisting it again', async () => {

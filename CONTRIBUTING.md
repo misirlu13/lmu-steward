@@ -53,93 +53,90 @@ Before opening a PR:
 
 Keep PRs focused and include a clear summary of behavior changes.
 
-## Replay Cache Schema Migration
+## Local Data Storage
 
-This project uses `electron-store` migrations for replay cache upgrades.
+This project now uses SQLite as the primary local persistence backend.
 
-### Critical Notes (Easy To Miss)
+### Current Storage Model
 
-- App version bump alone does not clear replay cache.
-- Replay cache clears only when `REPLAY_CACHE_SCHEMA_VERSION` changes.
-- Use valid semver in root `package.json` (example: `1.2.0-dev.2`, not `1.2.0.-dev.2`).
-- If `automaticSyncEnabled` and `syncOnAppLaunch` are true, replay cache can repopulate right after launch.
+- Primary backend: `better-sqlite3`
+- Database file: `lmu-steward.sqlite` in Electron `userData`
+- Compatibility backend: legacy `electron-store` JSON files
+- Cutover behavior: immediate SQLite read/write, with automatic fallback to legacy JSON if SQLite initialization or migration fails
+- Legacy retention: old JSON files are kept for one release cycle unless the user explicitly clears local storage
 
 ### Where It Is Implemented
 
-- Replay store initialization and migration hooks: `src/main/api/replay.ts`
-- Store type: `types.ts` (`LMUStewardStore`)
-- Migration-focused tests: `src/main/api/replay.migration.test.ts`
-- Replay behavior tests: `src/main/api/replay.test.ts`
+- Shared storage bootstrap, migration, and fallback: `src/main/storage/local-data-store.ts`
+- Replay cache schema enforcement: `src/main/api/replay.ts`
+- User settings persistence: `src/main/api/user-settings.ts`
+- Profile cache persistence: `src/main/api/profile.ts`
+- Storage-focused tests: `src/main/storage/local-data-store.test.ts`
 
-### Current Migration Model
+### What Is Migrated
 
-- `electron-store` runs migration steps on application version changes.
-- Replay cache invalidation is schema-based, not app-version-based.
-- Cache bust happens when stored `replayCacheSchemaVersion` differs from `REPLAY_CACHE_SCHEMA_VERSION`.
-- Replay schema enforcement runs on startup, so cache busting no longer depends on whether a range-based migration key is selected for the current app version.
-- Migration metadata keys (`replayCacheMigratedFromAppVersion`, `replayCacheMigratedToAppVersion`) are written automatically by `beforeEachMigration`.
+On first SQLite-backed launch, the app imports these legacy `electron-store` files if they exist:
 
-### When To Bump The Replay Cache Schema
+- `lmu-steward-store.json`
+- `lmu-steward-profile-cache.json`
 
-Bump `REPLAY_CACHE_SCHEMA_VERSION` in `src/main/api/replay.ts` when replay cache structure or semantics change in a way that makes existing cached entries unsafe or stale.
+Imported domains:
 
-Examples:
+- replay cache
+- replay cache schema metadata
+- user settings
+- cached profile info
 
-- Changing replay cache object shape (adding/removing/renaming persisted fields)
-- Changing how replay identity/hash is derived in a non-backward-compatible way
-- Changing assumptions that affect correctness of persisted replay analysis fields
+The legacy JSON files are not deleted during normal migration.
 
-Do not bump for unrelated refactors that keep persisted replay data compatible.
+### Replay Cache Schema
 
-### What You Should Not Edit Manually
+Replay cache invalidation remains schema-based.
 
-- Do not manually change `replayCacheMigratedFromAppVersion`.
-- Do not manually change `replayCacheMigratedToAppVersion`.
+- Bump `REPLAY_CACHE_SCHEMA_VERSION` in `src/main/api/replay.ts` when persisted replay data becomes incompatible.
+- Replay cache schema enforcement runs on startup.
+- App version bumps do not, by themselves, clear replay cache.
 
-These fields are migration audit metadata and are set automatically.
+Examples of when to bump:
+
+- replay cache object shape changes
+- replay hash/identity semantics change incompatibly
+- persisted replay-derived fields become unsafe to reuse
+
+### Failure Behavior
+
+If SQLite setup or legacy-to-SQLite migration fails:
+
+- the app automatically falls back to legacy `electron-store`
+- app startup should continue
+- no user action is required to keep the app functional
+
+### Clearing Local Storage
+
+Clear Local Storage wipes the active backend and removes retained legacy JSON files so stale data is not re-imported on next startup.
 
 ### Test Checklist (Automated)
 
 Run:
 
-- `npm test -- src/main/api/replay.migration.test.ts src/main/api/replay.test.ts`
+- `npm test -- src/main/storage/local-data-store.test.ts src/main/api/replay.migration.test.ts src/main/api/replay.test.ts src/main/api/user-settings.test.ts`
 
 Expected coverage:
 
-- Schema mismatch clears `replays` and updates `replayCacheSchemaVersion`.
-- Schema match does not clear cache.
-- Migration hook records from/to app versions.
-- Existing replay API behavior remains green.
-
-### Triggering Migrations In Dev Mode
-
-To reliably trigger `electron-store` migrations in local development:
-
-1. Ensure the root `package.json` has a top-level `version` field.
-2. Start the app once (`npm start` or `npm run start:devmode`).
-3. Stop the app.
-4. Bump `version` in root `package.json` (for example `1.2.0-dev.1` -> `1.2.0-dev.2`).
-5. Start the app again.
-
-This triggers an app-version migration pass.
-
-Note: replay cache schema busting is checked on startup regardless of migration-step selection. App-version migration bumps are still useful when validating migration metadata fields.
-
-To force an actual replay cache bust during that pass:
-
-1. Increment `REPLAY_CACHE_SCHEMA_VERSION` in `src/main/api/replay.ts`.
-2. Repeat the app version bump and restart flow above.
-
-If you want to observe an empty `replays` object before repopulation:
-
-1. Temporarily disable `syncOnAppLaunch` (or `automaticSyncEnabled`) in user settings.
-2. Run the schema bump + app version bump flow.
-3. Launch app and inspect store before manual sync.
+- legacy JSON migrates into SQLite on first access
+- SQLite initialization failure falls back to legacy `electron-store`
+- replay schema mismatch clears replay cache on startup
+- replay API behavior remains green
+- user settings validation and persistence behavior remain green
 
 ### Manual Verification In Dev
 
-In Debug mode, use the app menu item that opens `lmu-steward-store.json` and verify:
-
-- `replayCacheSchemaVersion` equals the code constant.
-- `replayCacheMigratedFromAppVersion` and `replayCacheMigratedToAppVersion` updated after version bump.
-- `replays` is cleared only when schema version changed.
+1. Start the app once.
+2. In the Debug menu, open the local data store.
+3. Confirm the SQLite file exists at the Electron `userData` path.
+4. In renderer devtools, run `await window.electron.debug.getStorageInfo()`.
+5. Confirm `backend` is `sqlite` and `primaryPath` points to `lmu-steward.sqlite`.
+6. If `backend` is `legacy`, SQLite initialization or migration failed and the app is running on the retained Electron Store fallback.
+7. If legacy JSON files already existed, confirm the app still launches and previous data is available.
+8. To verify replay cache busting, increment `REPLAY_CACHE_SCHEMA_VERSION` and relaunch.
+9. If you want to observe an empty replay cache before repopulation, temporarily disable `syncOnAppLaunch` or `automaticSyncEnabled` in settings.

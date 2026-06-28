@@ -1,12 +1,13 @@
 import { CONSTANTS } from '@constants';
 import { generateReplayHash } from '../util';
-import { LMUReplay, LMUStewardStore } from '@types';
+import { GetReplaysRequest, LMUReplay } from '@types';
 import { createReadStream } from 'fs';
 import { readdir, readFile } from 'fs/promises';
 import { resolve, join } from 'path';
 import { SessionType } from '@types';
 import { parseStringPromise } from 'xml2js';
 import { readUserSettings, writeUserSettings } from './user-settings';
+import { getMainPersistentStore } from '../storage/local-data-store';
 
 const FIRST_RUN_GET_REPLAYS_DELAY_MS = 3000;
 const DEFAULT_REPLAY_LOG_MATCH_THRESHOLD_MS = 120_000;
@@ -52,10 +53,6 @@ interface ReplaySyncProgress {
 }
 
 interface ReplaySyncOptions {
-  forceReplayCacheReset?: boolean;
-}
-
-interface GetReplaysRequest {
   forceReplayCacheReset?: boolean;
 }
 
@@ -106,6 +103,24 @@ const getReplayMultiplayerFromLogData = (
   logData: ParsedRaceResults | null | undefined,
 ): boolean => isMultiplayerSetting(logData?.Setting);
 
+const matchesReplayGameTypeFilter = (
+  replay: ReplayCacheEntry,
+  gameType: GetReplaysRequest['gameType'],
+): boolean => {
+  if (!gameType) {
+    return true;
+  }
+
+  const isMultiplayer = Boolean(replay.multiplayer);
+  return gameType === 'multiplayer' ? isMultiplayer : !isMultiplayer;
+};
+
+export const filterReplaysByGameType = (
+  replays: ReplayCacheEntry[],
+  gameType: GetReplaysRequest['gameType'],
+): ReplayCacheEntry[] =>
+  replays.filter((replay) => matchesReplayGameTypeFilter(replay, gameType));
+
 const toErrorMessage = (error: unknown): string => {
   if (error instanceof Error) {
     return error.message;
@@ -140,7 +155,7 @@ const buildReplayCacheIdentityKey = (replay: ReplayCacheEntry) => {
   ].join('|');
 };
 
-let store: ReplayStore | null = null;
+let store: ReplayStore | null = getMainPersistentStore();
 
 const enforceReplayCacheSchemaVersion = (replayStore: ReplayStore) => {
   const cachedSchemaVersion = Number(
@@ -153,32 +168,7 @@ const enforceReplayCacheSchemaVersion = (replayStore: ReplayStore) => {
   }
 };
 
-(async () => {
-  const Store = (await import('electron-store')).default;
-  store = new Store<LMUStewardStore>({
-    name: 'lmu-steward-store',
-    defaults: {
-      replays: {},
-      replayCacheSchemaVersion: REPLAY_CACHE_SCHEMA_VERSION,
-      replayCacheMigratedFromAppVersion: '0.0.0',
-      replayCacheMigratedToAppVersion: '0.0.0',
-    },
-    // Bump REPLAY_CACHE_SCHEMA_VERSION when replay cache shape changes.
-    migrations: {
-      '>=0.0.0': (replayStore) => {
-        enforceReplayCacheSchemaVersion(replayStore as unknown as ReplayStore);
-      },
-    },
-    beforeEachMigration: (replayStore, context) => {
-      replayStore.set('replayCacheMigratedFromAppVersion', context.fromVersion);
-      replayStore.set('replayCacheMigratedToAppVersion', context.toVersion);
-    },
-  }) as unknown as ReplayStore;
-
-  // Always enforce replay schema at startup so cache busting does not depend
-  // on whether a semver-range migration key is selected for this app version.
-  enforceReplayCacheSchemaVersion(store);
-})();
+enforceReplayCacheSchemaVersion(store);
 
 /**
  * Log Directory - C:\Program Files (x86)\Steam\steamapps\common\Le Mans Ultimate\UserData\Log\Results
@@ -1302,12 +1292,15 @@ export const getReplays = async (
     const replayStore = getReplayStore();
     const storedReplay =
       (replayStore.get('replays') as Record<string, ReplayCacheEntry>) || {};
+    const filteredReplays = filterReplaysByGameType(
+      Object.values(storedReplay),
+      request?.gameType,
+    )
+      .sort((a, b) => Number(b.timestamp ?? 0) - Number(a.timestamp ?? 0));
 
     event.reply(CONSTANTS.API.GET_REPLAYS, {
       status: 'success',
-      data: Object.values(storedReplay).sort(
-        (a, b) => Number(b.timestamp ?? 0) - Number(a.timestamp ?? 0),
-      ),
+      data: filteredReplays,
     });
   } catch (error: unknown) {
     event.reply(CONSTANTS.API.PUSH_REPLAY_SYNC_STATUS, {

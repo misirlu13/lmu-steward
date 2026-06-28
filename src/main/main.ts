@@ -57,6 +57,8 @@ import {
   postSelectLmuReplayDirectory,
 } from './api/lmu-launch';
 import { isDevModeEnabled, replyWithMockData } from './api/mock-api-data';
+import { getLocalDataDebugInfo } from './storage/local-data-store';
+import { GetReplaysRequest } from '@types';
 
 class AppUpdater {
   constructor() {
@@ -69,9 +71,6 @@ class AppUpdater {
 let mainWindow: BrowserWindow | null = null;
 
 type ApiChannel = (typeof CONSTANTS.API)[keyof typeof CONSTANTS.API];
-interface GetReplaysRequest {
-  forceReplayCacheReset?: boolean;
-}
 
 interface RendererErrorPayload {
   source?: string;
@@ -420,6 +419,10 @@ Object.entries(CHANNEL_CALLBACK_HANDLERS).forEach(([channel, handler]) => {
         arg,
       );
 
+
+    ipcMain.handle(CONSTANTS.API.GET_STORAGE_DEBUG_INFO, async () => {
+      return getLocalDataDebugInfo();
+    });
       if (didReplyWithMock) {
         return;
       }
@@ -431,6 +434,10 @@ Object.entries(CHANNEL_CALLBACK_HANDLERS).forEach(([channel, handler]) => {
       await configureReplayAutoSync();
     }
   });
+});
+
+ipcMain.handle(CONSTANTS.API.GET_STORAGE_DEBUG_INFO, async () => {
+  return getLocalDataDebugInfo();
 });
 
 if (process.env.NODE_ENV === 'production') {

@@ -5,6 +5,10 @@ import {
   BrowserWindow,
 } from 'electron';
 import path from 'path';
+import {
+  getLegacyLocalDataPaths,
+  getPrimaryLocalDataPath,
+} from './storage/local-data-store';
 
 export default class MenuBuilder {
   mainWindow: BrowserWindow;
@@ -167,13 +171,15 @@ export default class MenuBuilder {
                   type: 'separator',
                 },
                 {
-                  label: 'Open Settings Store',
+                  label: 'Open Local Data Store',
                   click: async () => {
-                    const settingsStorePath = path.join(
-                      app.getPath('userData'),
-                      'lmu-steward-store.json',
-                    );
-                    await shell.openPath(settingsStorePath);
+                    await shell.openPath(getPrimaryLocalDataPath());
+                  },
+                },
+                {
+                  label: 'Open Legacy Settings Store',
+                  click: async () => {
+                    await shell.openPath(getLegacyLocalDataPaths().main);
                   },
                 },
                 {

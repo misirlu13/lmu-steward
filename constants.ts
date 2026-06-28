@@ -18,6 +18,7 @@ export const CONSTANTS = {
     GET_IS_REPLAY_ACTIVE: 'get.is-replay-active',
     GET_SESSION_INFO: 'get.session-info',
     GET_FOCUSED_CAR: 'get.focused-car',
+    GET_STORAGE_DEBUG_INFO: 'get.storage-debug-info',
     POST_USER_SETTINGS: 'post.user-settings',
     POST_WATCH_REPLAY: 'post.watch-replay',
     POST_CAMERA_ANGLE: 'post.camera-angle',

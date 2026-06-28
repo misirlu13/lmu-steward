@@ -23,6 +23,11 @@ const electronHandler = {
       ipcRenderer.once(channel, (_event, ...args) => func(...args));
     },
   },
+  debug: {
+    getStorageInfo() {
+      return ipcRenderer.invoke(CONSTANTS.API.GET_STORAGE_DEBUG_INFO);
+    },
+  },
 };
 
 const reportRendererError = (payload: {
