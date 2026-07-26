@@ -162,7 +162,7 @@
     "cz-conventional-changelog": "^3.3.0",
     "detect-port": "^2.1.0",
     "electron": "^35.0.2",
-    "electron-builder": "^25.1.8",
+    "electron-builder": "^26.15.7",
     "electron-devtools-installer": "^4.0.0",
     "electron-icon-builder": "^2.0.1",
     "electronmon": "^2.0.3",
