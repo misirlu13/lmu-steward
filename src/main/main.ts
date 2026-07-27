@@ -57,6 +57,8 @@ import {
   postSelectLmuReplayDirectory,
 } from './api/lmu-launch';
 import { isDevModeEnabled, replyWithMockData } from './api/mock-api-data';
+import { getLocalDataDebugInfo } from './storage/local-data-store';
+import { GetReplaysRequest } from '@types';
 
 class AppUpdater {
   constructor() {
@@ -69,14 +71,41 @@ class AppUpdater {
 let mainWindow: BrowserWindow | null = null;
 
 type ApiChannel = (typeof CONSTANTS.API)[keyof typeof CONSTANTS.API];
-interface GetReplaysRequest {
-  forceReplayCacheReset?: boolean;
+
+interface RendererErrorPayload {
+  source?: string;
+  message?: string;
+  stack?: string;
+  url?: string;
+  line?: number;
+  column?: number;
+  detail?: string;
 }
 
 type ChannelCallbackHandler = (
   event: Electron.IpcMainEvent,
   data: unknown,
 ) => Promise<void> | void;
+
+const handleRendererError = async (
+  _event: Electron.IpcMainEvent,
+  payload: RendererErrorPayload,
+): Promise<void> => {
+  const source = payload?.source ?? 'renderer';
+  const details = [
+    `Renderer error source: ${source}`,
+    payload?.url ? `URL: ${payload.url}` : undefined,
+    payload?.line != null ? `Line: ${payload.line}` : undefined,
+    payload?.column != null ? `Column: ${payload.column}` : undefined,
+    payload?.message ? `Message: ${payload.message}` : undefined,
+    payload?.detail ? `Detail: ${payload.detail}` : undefined,
+    payload?.stack ? `Stack:\n${payload.stack}` : undefined,
+  ]
+    .filter(Boolean)
+    .join('\n');
+
+  await handleFatalError(details, 'renderer');
+};
 
 const withEventOnly =
   (
@@ -129,6 +158,9 @@ const CHANNEL_CALLBACK_HANDLERS: Partial<
   [CONSTANTS.API.POST_SELECT_LMU_REPLAY_DIRECTORY]: withEventOnly(
     postSelectLmuReplayDirectory,
   ),
+  [CONSTANTS.API.POST_RENDERER_ERROR]: withEventAndData<RendererErrorPayload>(
+    handleRendererError,
+  ),
   // PUT REQUESTS
   [CONSTANTS.API.PUT_REPLAY_COMMAND_SCAN]:
     withEventAndData<string>(putReplayCommand),
@@ -144,6 +176,144 @@ const devModeEnabled = isDevModeEnabled();
 if (devModeEnabled) {
   log.info('LMU_DEVMODE enabled: backend API calls are being served from mock data.');
 }
+
+let crashWindow: BrowserWindow | null = null;
+let crashReported = false;
+
+const escapeHtml = (value: string): string =>
+  value.replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+
+const getCrashReportText = (error: unknown, source: string): string => {
+  const errorText = error instanceof Error ? error.stack || error.message : String(error);
+  return [`Source: ${source}`, `Timestamp: ${new Date().toISOString()}`, '', errorText].join('\n');
+};
+
+const createCrashReportHtml = (details: string): string => {
+  const escapedDetails = escapeHtml(details);
+  const issueUrl = 'https://github.com/misirlu13/lmu-steward/issues/new/choose';
+
+  return `<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>LMU Steward Crash Report</title>
+    <style>
+      body { margin: 0; font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #171717; color: #f5f5f5; }
+      .container { display: flex; flex-direction: column; height: 100vh; padding: 20px; gap: 16px; }
+      h1 { margin: 0; font-size: 1.4rem; }
+      p { margin: 0; color: #cfcfcf; }
+      textarea { width: 100%; flex: 1 1 auto; resize: none; background: #0f0f0f; color: #f5f5f5; border: 1px solid #444; border-radius: 8px; padding: 12px; font-family: ui-monospace, SFMono-Regular, 'Segoe UI Mono', monospace; font-size: 0.9rem; line-height: 1.4; }
+      .actions { display: flex; flex-wrap: wrap; gap: 10px; }
+      button { border: none; border-radius: 6px; padding: 10px 14px; font-size: 0.95rem; cursor: pointer; }
+      button.primary { background: #0078d4; color: white; }
+      button.secondary { background: #2b2b2b; color: #f5f5f5; }
+      .footer { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; }
+      a { color: #80b3ff; }
+    </style>
+  </head>
+  <body>
+    <div class="container">
+      <div>
+        <h1>LMU Steward encountered an error</h1>
+        <p>Copy the text below and paste it into a GitHub issue so the maintainers can investigate.</p>
+      </div>
+      <textarea id="details" readonly>${escapedDetails}</textarea>
+      <div class="actions">
+        <button class="primary" id="copy">Copy error details</button>
+        <button class="secondary" id="openIssue">Open GitHub issue page</button>
+        <button class="secondary" id="closeApp">Close app</button>
+      </div>
+      <div class="footer">
+        <span>Once you have copied the report, close the app and reopen it.</span>
+        <a href="#" id="openRepo">Report an issue on GitHub</a>
+      </div>
+    </div>
+    <script>
+      const { clipboard, shell } = require('electron');
+      const details = document.getElementById('details');
+      document.getElementById('copy').addEventListener('click', () => {
+        clipboard.writeText(details.value);
+        alert('Error details copied to clipboard.');
+      });
+      document.getElementById('openIssue').addEventListener('click', () => {
+        shell.openExternal('${issueUrl}');
+      });
+      document.getElementById('openRepo').addEventListener('click', (event) => {
+        event.preventDefault();
+        shell.openExternal('${issueUrl}');
+      });
+      document.getElementById('closeApp').addEventListener('click', () => {
+        window.close();
+      });
+    </script>
+  </body>
+</html>`;
+};
+
+const showCrashReportWindow = async (details: string) => {
+  if (crashWindow) {
+    crashWindow.focus();
+    return;
+  }
+
+  const createWindow = () => {
+    crashWindow = new BrowserWindow({
+      width: 760,
+      height: 580,
+      minWidth: 620,
+      minHeight: 480,
+      title: 'LMU Steward crash report',
+      backgroundColor: '#171717',
+      webPreferences: {
+        nodeIntegration: true,
+        contextIsolation: false,
+      },
+    });
+
+    crashWindow.on('closed', () => {
+      crashWindow = null;
+      app.exit(1);
+    });
+
+    crashWindow.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(createCrashReportHtml(details))}`);
+    crashWindow.show();
+  };
+
+  if (app.isReady()) {
+    createWindow();
+  } else {
+    await app.whenReady();
+    createWindow();
+  }
+};
+
+const handleFatalError = async (error: unknown, source: string) => {
+  if (crashReported) {
+    return;
+  }
+
+  crashReported = true;
+  const details = getCrashReportText(error, source);
+  log.error('Unhandled application error', details);
+
+  try {
+    await showCrashReportWindow(details);
+  } catch (showError) {
+    log.error('Failed to display crash report window', showError);
+  }
+};
+
+process.on('uncaughtException', (error: unknown) => {
+  void handleFatalError(error, 'uncaughtException');
+});
+
+process.on('unhandledRejection', (reason: unknown) => {
+  void handleFatalError(reason, 'unhandledRejection');
+});
 
 let replayAutoSyncIntervalId: ReturnType<typeof setInterval> | null = null;
 let replayAutoSyncInProgress = false;
@@ -249,6 +419,10 @@ Object.entries(CHANNEL_CALLBACK_HANDLERS).forEach(([channel, handler]) => {
         arg,
       );
 
+
+    ipcMain.handle(CONSTANTS.API.GET_STORAGE_DEBUG_INFO, async () => {
+      return getLocalDataDebugInfo();
+    });
       if (didReplyWithMock) {
         return;
       }
@@ -260,6 +434,10 @@ Object.entries(CHANNEL_CALLBACK_HANDLERS).forEach(([channel, handler]) => {
       await configureReplayAutoSync();
     }
   });
+});
+
+ipcMain.handle(CONSTANTS.API.GET_STORAGE_DEBUG_INFO, async () => {
+  return getLocalDataDebugInfo();
 });
 
 if (process.env.NODE_ENV === 'production') {

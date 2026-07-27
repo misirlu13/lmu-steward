@@ -20,6 +20,10 @@ interface SessionStreamData {
   ChatMessage?: unknown[] | Record<string, unknown>;
   Score?: Array<{ et?: number | string }>;
   Minutes?: number;
+  // Count-only fields for when full data isn't available
+  TrackLimitCount?: number;
+  IncidentCount?: number;
+  PenaltyCount?: number;
 }
 
 interface SessionLogSection {
@@ -81,28 +85,39 @@ export const getSessionCarClasses = (replay: LMUReplay): string[] => {
   }
 
   const sessionType = CONSTANTS.SESSION_TYPE_MAPPINGS[replay.metadata.session];
-  const sessionInfo = logData[sessionType];
+  const sessionInfo = logData[sessionType] as SessionRootLogData | null;
 
   if (!sessionInfo) {
     return [];
   }
 
+  const dedupeNormalizedCarClasses = (values: Array<string | null>): string[] => {
+    const uniqueCarClasses = new Map<string, string>();
+
+    values
+      .filter((carClass: string | null): carClass is string => Boolean(carClass))
+      .forEach((displayCarClass: string) => {
+        const normalizedCarClass = displayCarClass.toLowerCase();
+        if (!uniqueCarClasses.has(normalizedCarClass)) {
+          uniqueCarClasses.set(normalizedCarClass, displayCarClass);
+        }
+      });
+
+    return [...uniqueCarClasses.values()];
+  };
+
+  if (Array.isArray(sessionInfo.CarClasses)) {
+    return dedupeNormalizedCarClasses(
+      sessionInfo.CarClasses.map((carClass) => normalizeDriverCarClass(carClass)),
+    );
+  }
+
   const carClasses = toObjectOrArrayEntries<SessionDriverEntry>(
     sessionInfo.Driver as SessionDriverEntry[] | Record<string, SessionDriverEntry>,
   );
-  const uniqueCarClasses = new Map<string, string>();
-
-  carClasses
-    .map((driver) => getDriverCarClass(driver))
-    .filter((carClass: string | null): carClass is string => !!carClass)
-    .forEach((displayCarClass: string) => {
-      const normalizedCarClass = displayCarClass.toLowerCase();
-      if (!uniqueCarClasses.has(normalizedCarClass)) {
-        uniqueCarClasses.set(normalizedCarClass, displayCarClass);
-      }
-    });
-
-  return [...uniqueCarClasses.values()];
+  return dedupeNormalizedCarClasses(
+    carClasses.map((driver) => getDriverCarClass(driver)),
+  );
 };
 
 export const getSessionIncidents = (replay: LMUReplay): SessionIncidents => {
@@ -120,17 +135,25 @@ export const getSessionIncidents = (replay: LMUReplay): SessionIncidents => {
       return { trackLimits: 0, incidents: 0, penalties: 0 };
     }
 
-    const trackLimits = sessionData?.Stream?.TrackLimits;
-    const incidents = sessionData?.Stream?.Incident;
-    const penalties = sessionData?.Stream?.Penalty;
+    const stream = sessionData?.Stream;
+    const trackLimits = stream?.TrackLimits;
+    const incidents = stream?.Incident;
+    const penalties = stream?.Penalty;
 
+    // Use actual array/record counts if available, otherwise fall back to cached counts
     return {
-      trackLimits: countCollectionEntries(trackLimits),
-      incidents: countCollectionEntries(incidents),
-      penalties: countCollectionEntries(
-        penalties,
-        (penalty) => Boolean(penalty?.Penalty),
-      ),
+      trackLimits: trackLimits !== undefined && trackLimits !== null
+        ? countCollectionEntries(trackLimits)
+        : (stream?.TrackLimitCount ?? 0),
+      incidents: incidents !== undefined && incidents !== null
+        ? countCollectionEntries(incidents)
+        : (stream?.IncidentCount ?? 0),
+      penalties: penalties !== undefined && penalties !== null
+        ? countCollectionEntries(
+            penalties,
+            (penalty) => Boolean(penalty?.Penalty),
+          )
+        : (stream?.PenaltyCount ?? 0),
     };
   } catch (error) {
     if (process.env.NODE_ENV !== 'test') {

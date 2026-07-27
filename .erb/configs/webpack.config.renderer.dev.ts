@@ -175,7 +175,16 @@ const configuration: webpack.Configuration = {
     hot: true,
     headers: { 'Access-Control-Allow-Origin': '*' },
     static: {
+      directory: webpackPaths.distRendererPath,
       publicPath: '/',
+      watch: {
+        ignored: [
+          '**/node_modules/**',
+          '**/.git/**',
+          '**/System Volume Information/**',
+          '**/$RECYCLE.BIN/**',
+        ],
+      },
     },
     historyApiFallback: {
       verbose: true,

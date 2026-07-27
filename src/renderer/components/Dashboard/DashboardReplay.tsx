@@ -152,7 +152,11 @@ export const DashboardReplay: React.FC<DashboardReplayProps> = ({
               <Box>
                 <Typography variant="h6">{title}</Typography>
               </Box>
-              <ReplaySubtitle timestamp={replay.timestamp} location={location} />
+              <ReplaySubtitle
+                timestamp={replay.timestamp}
+                location={location}
+                gameType={replay.multiplayer ? 'Multiplayer' : 'Race Weekend'}
+              />
               {/* <Box
                 sx={{
                   display: 'flex',

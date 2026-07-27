@@ -1008,6 +1008,10 @@ export const UserSettingsView: React.FC = () => {
                 </Tooltip>
               </Stack>
 
+              <Typography variant="caption" color="text.secondary">
+                Online gameplay will be disabled if you open LMU from here.
+              </Typography>
+
               <FormControlLabel
                 control={
                   <Switch

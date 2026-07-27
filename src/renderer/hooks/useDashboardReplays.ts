@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { LMUReplay } from '@types';
+import { GetReplaysRequest, LMUReplay } from '@types';
 import { useApi } from '../providers/ApiContext';
 import {
   getSessionCarClasses,
@@ -98,6 +98,17 @@ const getIncidentSeverity = (replay: LMUReplay): string => {
   return 'high';
 };
 
+const getGameType = (replay: LMUReplay): NonNullable<GetReplaysRequest['gameType']> =>
+  replay.multiplayer ? 'multiplayer' : 'race-weekend';
+
+const getReplayRequest = (filters: Filters): GetReplaysRequest | undefined => {
+  if (!filters.gameType) {
+    return undefined;
+  }
+
+  return { gameType: filters.gameType };
+};
+
 const matchesFilters = (replay: LMUReplay, filters: Filters): boolean => {
   const [startDate, endDate] = filters.dateRange;
   const replayTimestamp = Number(replay.timestamp) * 1000;
@@ -124,6 +135,10 @@ const matchesFilters = (replay: LMUReplay, filters: Filters): boolean => {
     const lengthMinutes = getSessionLength(replay);
     const category = getSessionLengthCategory(lengthMinutes);
     if (category !== filters.sessionLength) return false;
+  }
+
+  if (filters.gameType && getGameType(replay) !== filters.gameType) {
+    return false;
   }
 
   if (filters.carClass) {
@@ -209,8 +224,8 @@ export const useDashboardReplays = () => {
     }
 
     setHasCalledForReplays(true);
-    requestReplays();
-  }, [isConnected, hasCalledForReplays, requestReplays]);
+    requestReplays(getReplayRequest(filters));
+  }, [isConnected, hasCalledForReplays, requestReplays, filters]);
 
   const replayGroups = useMemo(() => {
     if (!replays?.data) {
@@ -269,6 +284,7 @@ export const useDashboardReplays = () => {
         filters.track ||
         filters.sessionType ||
         filters.sessionLength ||
+        filters.gameType ||
         filters.carClass ||
         filters.fieldSize ||
         filters.multiSingleClass ||
@@ -293,7 +309,11 @@ export const useDashboardReplays = () => {
   const handleApplyFilters = useCallback((nextFilters: Filters) => {
     setFilters(nextFilters);
     setPage(1);
-  }, []);
+
+    if (isConnected) {
+      requestReplays(getReplayRequest(nextFilters));
+    }
+  }, [isConnected, requestReplays]);
 
   const handleRefreshReplays = useCallback(() => {
     if (!isConnected) {
@@ -301,8 +321,8 @@ export const useDashboardReplays = () => {
       return;
     }
 
-    requestReplays();
-  }, [isConnected, requestReplays]);
+    requestReplays(getReplayRequest(filters));
+  }, [filters, isConnected, requestReplays]);
 
   return {
     replays,

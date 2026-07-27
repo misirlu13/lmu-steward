@@ -1,6 +1,7 @@
 export interface LMUReplay {
   id?: string;
   hash: string;
+  multiplayer?: boolean;
   metadata: {
     sceneDesc: string;
     session: SessionType;
@@ -8,13 +9,36 @@ export interface LMUReplay {
   logData: any;
   logDataDirectory: string;
   logDataFileName: string;
+  logDataLoaded?: boolean;
   replayDirectory: string;
   replayName: string;
   size: number;
   timestamp: number;
 }
 
+export interface LMUProfileInfo {
+  language: string;
+  name: string;
+  nationality: string;
+  nick: string;
+  steamID: string;
+}
+
+export interface ProfileCacheStore {
+  profileInfo: LMUProfileInfo | null;
+  hasFetchedProfileInfo: boolean;
+  lastFetchedAt: number | null;
+}
+
 export type SessionType = 'RACE' | 'QUALIFY' | 'PRACTICE';
+
+export type ReplayGameType = 'race-weekend' | 'multiplayer';
+export type ReplayGameTypeFilter = ReplayGameType | '';
+
+export interface GetReplaysRequest {
+  forceReplayCacheReset?: boolean;
+  gameType?: ReplayGameType;
+}
 
 export type LMUReplayCommands =
   | 'VCRCOMMAND_REVERSESCAN'
@@ -34,6 +58,9 @@ export interface LMUStewardAPIResponse<T> {
 
 export interface LMUStewardStore {
   replays: Record<string, LMUReplay>;
+  replayCacheSchemaVersion?: number;
+  replayCacheMigratedFromAppVersion?: string;
+  replayCacheMigratedToAppVersion?: string;
 }
 
 export interface SessionIncidents {

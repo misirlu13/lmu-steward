@@ -57,7 +57,7 @@ LMU Steward is a companion desktop application for **Le Mans Ultimate (LMU)** th
 
 ## Contributing
 
-Development setup, contributor commands, and release process notes are documented in [CONTRIBUTING.md](CONTRIBUTING.md).
+Development setup, contributor commands, and release process notes are documented in [CONTRIBUTING.md](CONTRIBUTING.md), including a dedicated Replay Cache Schema Migration section.
 
 ---
 

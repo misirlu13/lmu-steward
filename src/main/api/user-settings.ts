@@ -1,7 +1,24 @@
 import { CONSTANTS } from '@constants';
 import path from 'path';
+import {
+	clearPersistentStorage,
+	getMainPersistentStore,
+} from '../storage/local-data-store';
 
 export type UserSettings = Record<string, unknown>;
+
+export const DEFAULT_USER_SETTINGS: UserSettings = {
+	lmuExecutablePath: CONSTANTS.LMU_DEFAULT_EXECUTABLE_PATH,
+	lmuReplayDirectoryPath: CONSTANTS.LMU_DEFAULT_REPLAY_DIRECTORY_PATH,
+	firstRun: true,
+	automaticSyncEnabled: true,
+	quickViewEnabled: false,
+	syncOnAppLaunch: true,
+	syncOnIntervalMinutes: 5,
+	lastReplaySyncAt: null,
+	closeLmuWhenStewardExits: false,
+	closeLmuOnExitAlwaysPerformAction: false,
+};
 
 // Removed threshold constants
 
@@ -88,60 +105,26 @@ const validateUserSettingsUpdates = (updates: UserSettings): string | null => {
 	return null;
 };
 
-let store: {
-	get: (key: string) => unknown;
-	set: (key: string, value: unknown) => void;
-	clear: () => void;
-} | null = null;
-let storeInitPromise: Promise<void> | null = null;
-
-const ensureStore = async (): Promise<void> => {
-	if (store) {
-		return;
-	}
-
-	if (!storeInitPromise) {
-		storeInitPromise = (async () => {
-			const Store = (await import('electron-store')).default;
-			store = new Store<{ userSettings: UserSettings }>({
-				name: 'lmu-steward-store',
-				defaults: {
-					userSettings: {
-						lmuExecutablePath: CONSTANTS.LMU_DEFAULT_EXECUTABLE_PATH,
-						lmuReplayDirectoryPath: CONSTANTS.LMU_DEFAULT_REPLAY_DIRECTORY_PATH,
-						firstRun: true,
-						automaticSyncEnabled: true,
-						quickViewEnabled: false,
-						syncOnAppLaunch: true,
-						syncOnIntervalMinutes: 5,
-						lastReplaySyncAt: null,
-						closeLmuWhenStewardExits: false,
-						closeLmuOnExitAlwaysPerformAction: false,
-					},
-				},
-			});
-		})();
-	}
-
-	await storeInitPromise;
-};
-
 export const readUserSettings = async (): Promise<UserSettings> => {
-	await ensureStore();
-	return (store?.get('userSettings') as UserSettings) ?? {};
+	const storedSettings =
+		(getMainPersistentStore().get('userSettings') as UserSettings) ?? {};
+
+	return {
+		...DEFAULT_USER_SETTINGS,
+		...storedSettings,
+	};
 };
 
 export const writeUserSettings = async (
 	updates: UserSettings,
 ): Promise<UserSettings> => {
-	await ensureStore();
-	const existing = (store?.get('userSettings') as UserSettings) ?? {};
+	const existing = await readUserSettings();
 	const nextSettings = {
 		...existing,
 		...(updates ?? {}),
 	};
 
-	store?.set('userSettings', nextSettings);
+	getMainPersistentStore().set('userSettings', nextSettings);
 	return nextSettings;
 };
 
@@ -191,8 +174,7 @@ export const postUserSettings = async (
 
 export const postClearLocalStorage = async (event: Electron.IpcMainEvent) => {
 	try {
-		await ensureStore();
-		store?.clear();
+		clearPersistentStorage();
 
 		const data = await readUserSettings();
 

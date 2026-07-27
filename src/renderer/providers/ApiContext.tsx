@@ -8,15 +8,11 @@ import React, {
 } from 'react';
 import { initializeMessageBus, sendMessage } from '../utils/postMessage';
 import { CONSTANTS } from '@constants';
-import { LMUReplay, LoadingState, ReplaySyncStatus } from '@types';
+import { GetReplaysRequest, LMUReplay, LoadingState, ReplaySyncStatus } from '@types';
 
 interface ReplayResponse {
   status: string;
   data: LMUReplay[];
-}
-
-interface RequestReplaysOptions {
-  forceReplayCacheReset?: boolean;
 }
 
 type ApiChannel = (typeof CONSTANTS.API)[keyof typeof CONSTANTS.API];
@@ -35,7 +31,7 @@ interface ApiContextType {
   currentReplay: LMUReplay | null;
   loadingState: LoadingState;
   markReplayCacheResetRequired: () => void;
-  requestReplays: (options?: RequestReplaysOptions) => void;
+  requestReplays: (options?: GetReplaysRequest) => void;
   subscribeToApiChannel: (
     channel: ApiChannel,
     callback: ApiChannelCallback,
@@ -124,7 +120,7 @@ export const ApiProvider: React.FC<{ children: React.ReactNode }> = ({
     setIsReplayCacheResetRequired(true);
   }, []);
 
-  const requestReplays = useCallback((options?: RequestReplaysOptions) => {
+  const requestReplays = useCallback((options?: GetReplaysRequest) => {
     setActiveReplaySyncRequestCount((previousCount) => previousCount + 1);
     setReplaySyncStatus({
       status: 'in-progress',
@@ -136,7 +132,7 @@ export const ApiProvider: React.FC<{ children: React.ReactNode }> = ({
     const shouldForceReplayCacheReset =
       Boolean(options?.forceReplayCacheReset) || isReplayCacheResetRequired;
     const payload = shouldForceReplayCacheReset
-      ? { forceReplayCacheReset: true }
+      ? { ...options, forceReplayCacheReset: true }
       : options;
 
     if (shouldForceReplayCacheReset && isReplayCacheResetRequired) {

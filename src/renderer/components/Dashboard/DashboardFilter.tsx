@@ -15,6 +15,7 @@ import Select from '@mui/material/Select';
 import { Dayjs } from 'dayjs';
 import { DateRangePicker } from '../DateRangePicker/DateRangePicker';
 import { CONSTANTS } from '@constants';
+import { ReplayGameTypeFilter } from '@types';
 
 export type DateRange = [Dayjs | null, Dayjs | null];
 
@@ -23,6 +24,7 @@ export interface Filters {
 	track: string | '';
 	sessionType: string | '';
 	sessionLength: string | '';
+	gameType: ReplayGameTypeFilter;
 	carClass: string | '';
 	fieldSize: string | '';
 	multiSingleClass: string | '';
@@ -34,6 +36,7 @@ export const DEFAULT_FILTERS: Filters = {
 	track: '',
 	sessionType: '',
 	sessionLength: '',
+	gameType: '',
 	carClass: '',
 	fieldSize: '',
 	multiSingleClass: '',
@@ -66,6 +69,11 @@ const fieldSizeOptions = [
 const multiSingleClassOptions = [
 	{ label: 'Single Class', value: 'single' },
 	{ label: 'Multi Class', value: 'multi' },
+];
+
+const gameTypeOptions = [
+	{ label: 'Race Weekend', value: 'race-weekend' },
+	{ label: 'Multiplayer', value: 'multiplayer' },
 ];
 
 const incidentCountOptions = [
@@ -103,6 +111,7 @@ export const DashboardFilter: React.FC<DashboardFilterProps> = ({
 		if (filters.track) count += 1;
 		if (filters.sessionType) count += 1;
 		if (filters.sessionLength) count += 1;
+		if (filters.gameType) count += 1;
 		if (filters.carClass) count += 1;
 		if (filters.fieldSize) count += 1;
 		if (filters.multiSingleClass) count += 1;
@@ -115,6 +124,7 @@ export const DashboardFilter: React.FC<DashboardFilterProps> = ({
 		| Filters['track']
 		| Filters['sessionType']
 		| Filters['sessionLength']
+		| Filters['gameType']
 		| Filters['carClass']
 		| Filters['fieldSize']
 		| Filters['multiSingleClass']
@@ -231,6 +241,31 @@ export const DashboardFilter: React.FC<DashboardFilterProps> = ({
 							{trackKeys.map((key) => (
 								<MenuItem key={key} value={key}>
 									{CONSTANTS.TRACK_META_DATA[key].displayName}
+								</MenuItem>
+							))}
+						</Select>
+					</FormControl>
+				</Box>
+				<Box
+					sx={{ px: 2, py: 1 }}
+					onClick={(event) => event.stopPropagation()}
+					onKeyDown={(event) => event.stopPropagation()}
+				>
+					<FormControl fullWidth size="small">
+						<InputLabel id="game-type-select-label">Game Type</InputLabel>
+						<Select
+							labelId="game-type-select-label"
+							id="game-type-select"
+							label="Game Type"
+							value={pendingFilters.gameType}
+							onChange={(event) =>
+								handlePendingFilterChange('gameType', event.target.value)
+							}
+						>
+							<MenuItem value="">All</MenuItem>
+							{gameTypeOptions.map(({ label, value }) => (
+								<MenuItem key={value} value={value}>
+									{label}
 								</MenuItem>
 							))}
 						</Select>

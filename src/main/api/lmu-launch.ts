@@ -86,7 +86,7 @@ export const postLaunchLmu = async (event: Electron.IpcMainEvent) => {
         cwd: executableDirectory,
         detached: true,
         stdio: 'ignore',
-        windowsHide: true,
+        windowsHide: false,
       });
       childProcess.unref();
     } catch (spawnError) {

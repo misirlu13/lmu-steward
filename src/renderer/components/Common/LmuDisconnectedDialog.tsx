@@ -182,6 +182,10 @@ export const LmuDisconnectedDialog: React.FC<LmuDisconnectedDialogProps> = ({
             Launch LMU
           </Button>
 
+          <Typography variant="caption" color="text.secondary">
+            Online gameplay will be disabled if you open LMU from here.
+          </Typography>
+
           <Link
             component="button"
             type="button"

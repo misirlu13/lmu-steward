@@ -1,11 +1,13 @@
 import { Box, Typography } from '@mui/material';
 import LocationOnIcon from '@mui/icons-material/LocationOn';
 import CalendarMonthIcon from '@mui/icons-material/CalendarMonth';
+import EmojiFlagsIcon from '@mui/icons-material/EmojiFlags';
 
 export const ReplaySubtitle: React.FC<{
   timestamp: number | string | undefined;
   location?: string;
-}> = ({ timestamp, location }) => {
+  gameType?: string;
+}> = ({ timestamp, location, gameType }) => {
   const _ts = Number(timestamp);
   const _date = new Date(isNaN(_ts) ? 0 : _ts < 1e12 ? _ts * 1000 : _ts);
   const localizedDate = _date.toLocaleString(undefined, {
@@ -52,6 +54,20 @@ export const ReplaySubtitle: React.FC<{
             {localizedDate}
           </Typography>
         </Box>
+        {gameType && (
+          <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
+            <EmojiFlagsIcon
+              sx={{
+                width: '16px',
+                height: '16px',
+                color: 'text.secondary',
+              }}
+            />
+            <Typography color="text.secondary" variant="body2">
+              {gameType}
+            </Typography>
+          </Box>
+        )}
       </Box>
     </>
   );

@@ -38,6 +38,11 @@ const configuration: webpack.Configuration = {
     library: { type: 'commonjs2' },
   },
 
+  watchOptions: {
+    ignored:
+      /(^|[\\/])(node_modules|\.git|System Volume Information|\$RECYCLE\.BIN)([\\/]|$)/,
+  },
+
   /**
    * Determine the array of extensions that should be used to resolve modules.
    */

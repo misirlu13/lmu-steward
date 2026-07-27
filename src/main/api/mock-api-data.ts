@@ -135,6 +135,7 @@ const normalizeReplayMocks = (value: unknown): LMUReplay[] => {
 
 const fallbackReplay: LMUReplay = {
   hash: 'mock-replay-1',
+  multiplayer: false,
   metadata: {
     sceneDesc: 'SEBRINGWEC',
     session: 'RACE',
