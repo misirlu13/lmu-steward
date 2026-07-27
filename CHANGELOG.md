@@ -1,3 +1,14 @@
+## 1.3.0 (2026-07-27)
+
+* Merge pull request #11 from misirlu13/feature/performance-updates ([36b39a0](https://github.com/misirlu13/lmu-steward/commit/36b39a0)), closes [#11](https://github.com/misirlu13/lmu-steward/issues/11)
+* chore(package.json): fixed build issue when running in test env ([4d06e97](https://github.com/misirlu13/lmu-steward/commit/4d06e97))
+* chore(package.json): updated dependencies ([2fdbbe3](https://github.com/misirlu13/lmu-steward/commit/2fdbbe3))
+* refactor: added warning text to launch LMU sections ([5f7d288](https://github.com/misirlu13/lmu-steward/commit/5f7d288))
+* feat: added crash logger to LMU Steward ([fb1252b](https://github.com/misirlu13/lmu-steward/commit/fb1252b))
+* feat(filter): add game type filter to replay list page ([e4c2c52](https://github.com/misirlu13/lmu-steward/commit/e4c2c52))
+* feat(performance): improved performance by streaming prased xml ([9d11289](https://github.com/misirlu13/lmu-steward/commit/9d11289))
+* fix(launch lmu): fixed an issue where LMU Steward would launch LMU with its window hidden ([bfee7ad](https://github.com/misirlu13/lmu-steward/commit/bfee7ad))
+
 ## 1.2.0 (2026-03-31)
 
 * Merge pull request #5 from misirlu13/feature/v1.3.0-lmu-updates ([fe90267](https://github.com/misirlu13/lmu-steward/commit/fe90267)), closes [#5](https://github.com/misirlu13/lmu-steward/issues/5)
