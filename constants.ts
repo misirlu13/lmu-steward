@@ -74,6 +74,7 @@ export const CONSTANTS = {
         'Autodromo Enzo e Dino Ferrari',
         '4 Hours of Imola',
         'Autodromo Enzo e Dino Ferrari 1.23',
+        'Autodromo Enzo e Dino Ferrari 1.27',
       ],
     },
     IMOLAWEC: {
@@ -87,6 +88,7 @@ export const CONSTANTS = {
         '6 Hours of Imola',
         'Autodromo Enzo e Dino Ferrari 1.21',
         'Autodromo Enzo e Dino Ferrari 1.23',
+        'Autodromo Enzo e Dino Ferrari 1.27',
       ],
     },
     MONZAWEC: {
@@ -100,6 +102,7 @@ export const CONSTANTS = {
         '6 Hours of Monza',
         'Autodromo Nazionale Monza 1.21',
         'Autodromo Nazionale Monza 1.27',
+        'Autodromo Nazionale Monza 1.29',
       ],
     },
     MONZAWEC_GRANDE: {
@@ -113,6 +116,7 @@ export const CONSTANTS = {
         'Monza Curva Grande Circuit',
         'Autodromo Nazionale Monza 1.21',
         'Autodromo Nazionale Monza 1.27',
+        'Autodromo Nazionale Monza 1.29',
       ],
     },
     INTERLAGOSWEC: {
@@ -190,6 +194,7 @@ export const CONSTANTS = {
         '4 Hours of Barcelona',
         'Circuit de Barcelona',
         'Circuit de Barcelona 1.01',
+        'Circuit de Barcelona 1.03',
       ],
     },
     SPAELMS: {
@@ -202,6 +207,7 @@ export const CONSTANTS = {
         '4 Hours of Spa-Francorchamps',
         'Circuit de Spa-Francorchamps',
         'Circuit de Spa-Francorchamps 1.23',
+        'Circuit de Spa-Francorchamps 1.29',
       ],
     },
     SPAWEC: {
@@ -215,6 +221,7 @@ export const CONSTANTS = {
         'Circuit de Spa-Francorchamps',
         'Circuit de Spa-Francorchamps 1.21',
         'Circuit de Spa-Francorchamps 1.23',
+        'Circuit de Spa-Francorchamps 1.29',
       ],
     },
     SPAWEC_ENDCE: {
@@ -228,6 +235,7 @@ export const CONSTANTS = {
         'Circuit de Spa-Francorchamps',
         'Circuit de Spa-Francorchamps 1.21',
         'Circuit de Spa-Francorchamps 1.23',
+        'Circuit de Spa-Francorchamps 1.29',
       ],
     },
     LEMANSWEC: {
@@ -241,6 +249,7 @@ export const CONSTANTS = {
         'Circuit de la Sarthe',
         'Circuit de la Sarthe 1.21',
         'Circuit de la Sarthe 1.27',
+        'Circuit de la Sarthe 1.33',
       ],
     },
     LEMANSWEC_MULSANNE: {
@@ -254,6 +263,7 @@ export const CONSTANTS = {
         'Circuit de la Sarthe',
         'Circuit de la Sarthe 1.21',
         'Circuit de la Sarthe 1.27',
+        'Circuit de la Sarthe 1.33',
       ],
     },
     COTAWEC: {
@@ -280,6 +290,18 @@ export const CONSTANTS = {
         'Circuit of the Americas',
         'Circuit of the Americas 1.21',
         'Circuit of the Americas 1.27',
+      ],
+    },
+    DAYTONARC: {
+      displayName: 'Daytona International Speedway',
+      background: '/start/images/tracks/backgrounds/daytona.webp',
+      logo: '/start/images/tracks/logos/daytona.svg',
+      abbr: 'DAY',
+      location: 'Daytona Beach, Florida, USA',
+      aliases: [
+        'Daytona International Speedway Road Course',
+        'Daytona International Speedway',
+        'Daytona International Speedway 1.01',
       ],
     },
     FUJIWEC: {
@@ -432,6 +454,7 @@ export const CONSTANTS = {
         'Silverstone Circuit',
         'Silverstone Circuit 1.07',
         'Silverstone Circuit 1.09',
+        'Silverstone Circuit 1.11',
       ],
     },
     SILVERSTONEWEC: {
@@ -444,6 +467,7 @@ export const CONSTANTS = {
         '6 Hours of Silverstone',
         'Silverstone Circuit',
         'Silverstone Circuit 1.09',
+        'Silverstone Circuit 1.11',
       ],
     },
     SILVERSTONE_INTERNATIONAL: {
@@ -456,6 +480,7 @@ export const CONSTANTS = {
         'Silverstone International Circuit',
         'Silverstone Circuit',
         'Silverstone Circuit 1.09',
+        'Silverstone Circuit 1.11',
       ],
     },
     SILVERSTONE_NATIONAL: {
@@ -468,6 +493,19 @@ export const CONSTANTS = {
         'Silverstone National Circuit',
         'Silverstone Circuit',
         'Silverstone Circuit 1.09',
+        'Silverstone Circuit 1.11',
+      ],
+    },
+    LAGUNASECA: {
+      displayName: 'WeatherTech Raceway Laguna Seca',
+      background: '/start/images/tracks/backgrounds/lagunaseca.webp',
+      logo: '/start/images/tracks/logos/lagunaseca.svg',
+      abbr: 'LAG',
+      location: 'Monterey, California, USA',
+      aliases: [
+        'WeatherTech Raceway Laguna Seca',
+        'Laguna Seca',
+        'WeatherTech Raceway Laguna Seca 1.01',
       ],
     },
   },
