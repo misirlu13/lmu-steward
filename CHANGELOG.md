@@ -1,3 +1,8 @@
+## 1.4.0 (2026-07-28)
+
+* Merge pull request #12 from misirlu13/feature/lmu-1.4.0-updates ([5b5664e](https://github.com/misirlu13/lmu-steward/commit/5b5664e)), closes [#12](https://github.com/misirlu13/lmu-steward/issues/12)
+* feat(constants): added Daytona and Laguna Seca to supported tracks ([ce2b663](https://github.com/misirlu13/lmu-steward/commit/ce2b663))
+
 ## 1.3.0 (2026-07-27)
 
 * Merge pull request #11 from misirlu13/feature/performance-updates ([36b39a0](https://github.com/misirlu13/lmu-steward/commit/36b39a0)), closes [#11](https://github.com/misirlu13/lmu-steward/issues/11)
