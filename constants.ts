@@ -7,6 +7,7 @@ export const CONSTANTS = {
   API: {
     GET_TRACK_MAP: 'get.track-map',
     GET_API_STATUS: 'get.api-status',
+    GET_LIVE_SESSION_STATUS: 'get.live-session-status',
     GET_REPLAYS: 'get.replays',
     GET_TRACK_THUMBNAIL: 'get.track-thumbnail',
     GET_USER_SETTINGS: 'get.user-settings',

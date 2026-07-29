@@ -8,6 +8,7 @@ import { Container, ThemeProvider } from '@mui/material';
 import theme from './theme';
 import { ReplayView } from './views/Replay';
 import { DriverAnalysisView } from './views/DriverAnalysis';
+import { LiveView } from './views/Live';
 import { UserSettingsView } from './views/UserSettings';
 import { AdapterDayjs } from '@mui/x-date-pickers/AdapterDayjs';
 import { LocalizationProvider } from '@mui/x-date-pickers/LocalizationProvider';
@@ -52,6 +53,7 @@ const AppRoutesShell = () => {
             path="/replay/:replayHash/driver/:driverId"
             element={<DriverAnalysisView />}
           />
+          <Route path="/live" element={<LiveView />} />
           <Route path="/user-settings" element={<UserSettingsView />} />
         </Routes>
       </Container>

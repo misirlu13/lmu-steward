@@ -8,7 +8,13 @@ import React, {
 } from 'react';
 import { initializeMessageBus, sendMessage } from '../utils/postMessage';
 import { CONSTANTS } from '@constants';
-import { GetReplaysRequest, LMUReplay, LoadingState, ReplaySyncStatus } from '@types';
+import {
+  GetReplaysRequest,
+  LiveSessionStatus,
+  LMUReplay,
+  LoadingState,
+  ReplaySyncStatus,
+} from '@types';
 
 interface ReplayResponse {
   status: string;
@@ -21,6 +27,7 @@ type ApiChannelCallback = (data: unknown) => void;
 interface ApiContextType {
   isConnected: boolean;
   hasApiStatusResponse: boolean;
+  liveSessionStatus: LiveSessionStatus;
   quickViewEnabled: boolean;
   lastReplaySyncAt: number | null;
   isReplaySyncInProgress: boolean;
@@ -41,6 +48,7 @@ interface ApiContextType {
 const ApiContext = createContext<ApiContextType>({
   isConnected: false,
   hasApiStatusResponse: false,
+  liveSessionStatus: { state: 'detached' },
   quickViewEnabled: false,
   lastReplaySyncAt: null,
   isReplaySyncInProgress: false,
@@ -74,6 +82,9 @@ export const ApiProvider: React.FC<{ children: React.ReactNode }> = ({
     percentage: 0,
     processed: 0,
     total: 0,
+  });
+  const [liveSessionStatus, setLiveSessionStatus] = useState<LiveSessionStatus>({
+    state: 'detached',
   });
   const [isReplayActive, setIsReplayActive] = useState<boolean | null>(null);
   const [isReplayCacheResetRequired, setIsReplayCacheResetRequired] =
@@ -154,6 +165,28 @@ export const ApiProvider: React.FC<{ children: React.ReactNode }> = ({
     };
 
     const messageBusHandlers = {
+      [CONSTANTS.API.GET_LIVE_SESSION_STATUS]: createHandler(
+        CONSTANTS.API.GET_LIVE_SESSION_STATUS,
+        (data: unknown) => {
+          const payload = data as {
+            status?: string;
+            data?: LiveSessionStatus;
+          };
+
+          const next: LiveSessionStatus =
+            payload?.status === 'success' && payload.data
+              ? payload.data
+              : { state: 'detached' };
+
+          setLiveSessionStatus((previous) =>
+            previous.state === next.state &&
+            previous.trackName === next.trackName &&
+            previous.driverCount === next.driverCount
+              ? previous
+              : next,
+          );
+        },
+      ),
       [CONSTANTS.API.GET_API_STATUS]: createHandler(
         CONSTANTS.API.GET_API_STATUS,
         (data: unknown) => {
@@ -359,6 +392,7 @@ export const ApiProvider: React.FC<{ children: React.ReactNode }> = ({
     // Poll for API status updates
     const checkConnection = async () => {
       sendMessage(CONSTANTS.API.GET_API_STATUS);
+      sendMessage(CONSTANTS.API.GET_LIVE_SESSION_STATUS);
     };
     checkConnection();
     sendMessage(CONSTANTS.API.GET_USER_SETTINGS);
@@ -371,6 +405,7 @@ export const ApiProvider: React.FC<{ children: React.ReactNode }> = ({
   const contextValue: ApiContextType = {
     isConnected,
     hasApiStatusResponse,
+    liveSessionStatus,
     quickViewEnabled,
     lastReplaySyncAt,
     isReplaySyncInProgress: activeReplaySyncRequestCount > 0,

@@ -210,6 +210,15 @@ export const mockApiData: Partial<Record<ApiChannel, MockApiResolver>> = {
       loadingStatus: getMockLoadingStatus(),
     },
   }),
+  [CONSTANTS.API.GET_LIVE_SESSION_STATUS]: () => ({
+    status: 'success',
+    data: {
+      state: 'live',
+      trackName: 'Bahrain International Circuit',
+      sessionType: 'RACE',
+      driverCount: 7,
+    },
+  }),
   [CONSTANTS.API.GET_REPLAYS]: {
     status: 'success',
     data: mockReplays,

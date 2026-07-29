@@ -63,6 +63,18 @@ export interface LMUStewardStore {
   replayCacheMigratedToAppVersion?: string;
 }
 
+export type LiveCaptureState = 'detached' | 'live';
+
+export interface LiveSessionStatus {
+  state: LiveCaptureState;
+  trackName?: string;
+  sessionType?: SessionType;
+  driverCount?: number;
+  detail?: string;
+}
+
+export type LiveIndicatorState = 'unavailable' | 'standby' | 'live';
+
 export interface SessionIncidents {
   trackLimits: number;
   incidents: number;

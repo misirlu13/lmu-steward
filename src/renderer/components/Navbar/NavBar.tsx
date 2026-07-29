@@ -6,8 +6,10 @@ import IconButton from '@mui/material/IconButton';
 import Typography from '@mui/material/Typography';
 import Container from '@mui/material/Container';
 import Avatar from '@mui/material/Avatar';
+import Badge from '@mui/material/Badge';
 import Tooltip from '@mui/material/Tooltip';
 import SettingsRoundedIcon from '@mui/icons-material/SettingsRounded';
+import SensorsRoundedIcon from '@mui/icons-material/SensorsRounded';
 import { useNavigate } from 'react-router-dom';
 import { useEffect, useState } from 'react';
 import { CONSTANTS } from '@constants';
@@ -15,11 +17,19 @@ import { sendMessage } from '../../utils/postMessage';
 import { getProfileInitials } from '../../utils/profileInitials';
 import navLogoIcon from '../../../../assets/icons/48x48.png';
 import { useNavbar } from '@/renderer/providers/NavbarContext';
+import { useApi } from '../../providers/ApiContext';
+import { deriveLiveIndicator } from '../../hooks/useLiveIndicator';
 
 export const NavBar = () => {
   const navigate = useNavigate();
   const [profileName, setProfileName] = useState('');
   const { isViewHeaderAttached } = useNavbar();
+  const { isConnected, hasApiStatusResponse, liveSessionStatus } = useApi();
+  const liveIndicator = deriveLiveIndicator({
+    isConnected,
+    hasApiStatusResponse,
+    liveSessionStatus,
+  });
 
   useEffect(() => {
     const unsubscribeProfileInfo = window.electron?.ipcRenderer.on(
@@ -96,6 +106,43 @@ export const NavBar = () => {
           <Box
             sx={{ display: 'flex', flexGrow: 0, alignItems: 'center', gap: 1 }}
           >
+            <Tooltip
+              title={
+                liveIndicator.detail
+                  ? `${liveIndicator.label} — ${liveIndicator.detail}`
+                  : liveIndicator.label
+              }
+            >
+              <IconButton
+                color="inherit"
+                onClick={() => navigate('/live')}
+                aria-label={`Open live session (${liveIndicator.label})`}
+                sx={{
+                  color:
+                    liveIndicator.state === 'live' ? 'success.main' : 'inherit',
+                  opacity: liveIndicator.state === 'unavailable' ? 0.4 : 1,
+                  transition: 'color 200ms ease, opacity 200ms ease',
+                  ...(liveIndicator.state === 'live'
+                    ? {
+                        animation: 'lmu-live-pulse 1.8s ease-in-out infinite',
+                        '@keyframes lmu-live-pulse': {
+                          '0%, 100%': { opacity: 1 },
+                          '50%': { opacity: 0.45 },
+                        },
+                      }
+                    : {}),
+                }}
+              >
+                <Badge
+                  variant="dot"
+                  color="success"
+                  invisible={liveIndicator.state !== 'live'}
+                  overlap="circular"
+                >
+                  <SensorsRoundedIcon />
+                </Badge>
+              </IconButton>
+            </Tooltip>
             <Tooltip title="User Settings">
               <IconButton
                 color="inherit"

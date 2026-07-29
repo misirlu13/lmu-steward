@@ -16,6 +16,7 @@ import MenuBuilder from './menu';
 import { resolveHtmlPath } from './util';
 import { CONSTANTS } from '../../constants';
 import { getApiStatus } from './api/api-status';
+import { getLiveSessionStatus } from './api/live-session';
 import {
   getReplays,
   getIsReplayActive,
@@ -126,6 +127,7 @@ const CHANNEL_CALLBACK_HANDLERS: Partial<
 > = {
   // GET REQUESTS
   [CONSTANTS.API.GET_API_STATUS]: withEventOnly(getApiStatus),
+  [CONSTANTS.API.GET_LIVE_SESSION_STATUS]: withEventOnly(getLiveSessionStatus),
   [CONSTANTS.API.GET_TRACK_MAP]: withEventOnly(getTrackMap),
   [CONSTANTS.API.GET_REPLAYS]: withEventAndData<GetReplaysRequest | undefined>(
     getReplays,
