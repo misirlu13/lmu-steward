@@ -12,7 +12,11 @@ import path from 'path';
 import { app, BrowserWindow, shell, ipcMain } from 'electron';
 import { autoUpdater } from 'electron-updater';
 import log from 'electron-log';
-import { GetReplaysRequest, PersistedDashboardView } from '@types';
+import {
+  ArchiveReplaysRequest,
+  GetReplaysRequest,
+  PersistedDashboardView,
+} from '@types';
 import MenuBuilder from './menu';
 import { resolveHtmlPath } from './util';
 import { CONSTANTS } from '../../constants';
@@ -20,7 +24,10 @@ import { getApiStatus } from './api/api-status';
 import {
   getReplays,
   getIsReplayActive,
+  postArchiveNote,
+  postArchiveReplays,
   postCloseReplay,
+  postRestoreReplays,
   postToggleUIElement,
   postWatchReplay,
   putReplayCommand,
@@ -153,6 +160,12 @@ const CHANNEL_CALLBACK_HANDLERS: Partial<
   [CONSTANTS.API.POST_DASHBOARD_VIEW]:
     withEventAndData<PersistedDashboardView | null>(postDashboardView),
   [CONSTANTS.API.POST_WATCH_REPLAY]: withEventAndData<string>(postWatchReplay),
+  [CONSTANTS.API.POST_ARCHIVE_REPLAYS]:
+    withEventAndData<ArchiveReplaysRequest>(postArchiveReplays),
+  [CONSTANTS.API.POST_RESTORE_REPLAYS]:
+    withEventAndData<ArchiveReplaysRequest>(postRestoreReplays),
+  [CONSTANTS.API.POST_ARCHIVE_NOTE]:
+    withEventAndData<ArchiveReplaysRequest>(postArchiveNote),
   [CONSTANTS.API.POST_CAMERA_ANGLE]:
     withEventAndData<CameraAngleRequestBody>(postSetCameraAngle),
   [CONSTANTS.API.POST_CLOSE_REPLAY]: withEventOnly(postCloseReplay),

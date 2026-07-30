@@ -51,6 +51,9 @@ interface ApiContextType {
   loadingState: LoadingState;
   markReplayCacheResetRequired: () => void;
   requestReplays: (options?: GetReplaysRequest) => void;
+  archiveReplays: (hashes: string[], note?: string) => void;
+  restoreReplays: (hashes: string[]) => void;
+  setArchiveNote: (hashes: string[], note: string) => void;
   subscribeToApiChannel: (
     channel: ApiChannel,
     callback: ApiChannelCallback,
@@ -79,6 +82,9 @@ const ApiContext = createContext<ApiContextType>({
   loadingState: { loading: false, percentage: -1 },
   markReplayCacheResetRequired: () => {},
   requestReplays: () => {},
+  archiveReplays: () => {},
+  restoreReplays: () => {},
+  setArchiveNote: () => {},
   subscribeToApiChannel: () => () => {},
 });
 
@@ -118,6 +124,10 @@ export const ApiProvider: React.FC<{ children: React.ReactNode }> = ({
   const additionalCallbacksRef = useRef<
     Partial<Record<ApiChannel, Set<ApiChannelCallback>>>
   >({});
+  // Archive actions reply with a fresh replay list, so they need the same
+  // game-type scope the dashboard last asked for or the reply would silently
+  // widen the list.
+  const lastReplayRequestRef = useRef<GetReplaysRequest | undefined>(undefined);
 
   const subscribeToApiChannel = useCallback(
     (channel: ApiChannel, callback: ApiChannelCallback) => {
@@ -174,6 +184,22 @@ export const ApiProvider: React.FC<{ children: React.ReactNode }> = ({
     }
   }, []);
 
+  /**
+   * Archive replies carry the full replay list, so the list is replaced rather
+   * than patched. A failed action leaves the previous list untouched, which is
+   * why no optimistic update is needed here.
+   */
+  const applyArchiveActionPayload = useCallback((data: unknown) => {
+    const payload = data as ReplayResponse & { message?: string };
+
+    if (payload?.status !== 'success') {
+      console.error('Failed to update replay archive state:', payload?.message);
+      return;
+    }
+
+    setReplays(payload);
+  }, []);
+
   const requestReplays = useCallback(
     (options?: GetReplaysRequest) => {
       setActiveReplaySyncRequestCount((previousCount) => previousCount + 1);
@@ -194,9 +220,51 @@ export const ApiProvider: React.FC<{ children: React.ReactNode }> = ({
         setIsReplayCacheResetRequired(false);
       }
 
+      lastReplayRequestRef.current = options;
       sendMessage(CONSTANTS.API.GET_REPLAYS, payload);
     },
     [isReplayCacheResetRequired],
+  );
+
+  /**
+   * Archive, restore, and note changes all reply with the current replay list
+   * read straight from the cache. None of them sync — the data was already
+   * synced, and a full fetch-and-parse pass per row action would be unusable.
+   */
+  const sendArchiveMessage = useCallback(
+    (channel: ApiChannel, hashes: string[], note?: string) => {
+      if (hashes.length === 0) {
+        return;
+      }
+
+      sendMessage(channel, {
+        hashes,
+        note,
+        gameType: lastReplayRequestRef.current?.gameType,
+      });
+    },
+    [],
+  );
+
+  const archiveReplays = useCallback(
+    (hashes: string[], note?: string) => {
+      sendArchiveMessage(CONSTANTS.API.POST_ARCHIVE_REPLAYS, hashes, note);
+    },
+    [sendArchiveMessage],
+  );
+
+  const restoreReplays = useCallback(
+    (hashes: string[]) => {
+      sendArchiveMessage(CONSTANTS.API.POST_RESTORE_REPLAYS, hashes);
+    },
+    [sendArchiveMessage],
+  );
+
+  const setArchiveNote = useCallback(
+    (hashes: string[], note: string) => {
+      sendArchiveMessage(CONSTANTS.API.POST_ARCHIVE_NOTE, hashes, note);
+    },
+    [sendArchiveMessage],
   );
 
   useEffect(() => {
@@ -281,6 +349,18 @@ export const ApiProvider: React.FC<{ children: React.ReactNode }> = ({
           }));
         },
       ),
+      [CONSTANTS.API.POST_ARCHIVE_REPLAYS]: createHandler(
+        CONSTANTS.API.POST_ARCHIVE_REPLAYS,
+        applyArchiveActionPayload,
+      ),
+      [CONSTANTS.API.POST_RESTORE_REPLAYS]: createHandler(
+        CONSTANTS.API.POST_RESTORE_REPLAYS,
+        applyArchiveActionPayload,
+      ),
+      [CONSTANTS.API.POST_ARCHIVE_NOTE]: createHandler(
+        CONSTANTS.API.POST_ARCHIVE_NOTE,
+        applyArchiveActionPayload,
+      ),
       [CONSTANTS.API.PUSH_REPLAY_SYNC_STATUS]: createHandler(
         CONSTANTS.API.PUSH_REPLAY_SYNC_STATUS,
         (data: unknown) => {
@@ -362,6 +442,7 @@ export const ApiProvider: React.FC<{ children: React.ReactNode }> = ({
 
     initializeMessageBus(messageBusHandlers);
   }, [
+    applyArchiveActionPayload,
     applyUserSettingsPayload,
     runAdditionalCallbacks,
     setIsConnected,
@@ -414,6 +495,9 @@ export const ApiProvider: React.FC<{ children: React.ReactNode }> = ({
       loadingState,
       markReplayCacheResetRequired,
       requestReplays,
+      archiveReplays,
+      restoreReplays,
+      setArchiveNote,
       subscribeToApiChannel,
     }),
     [
@@ -433,6 +517,9 @@ export const ApiProvider: React.FC<{ children: React.ReactNode }> = ({
       loadingState,
       markReplayCacheResetRequired,
       requestReplays,
+      archiveReplays,
+      restoreReplays,
+      setArchiveNote,
       subscribeToApiChannel,
     ],
   );

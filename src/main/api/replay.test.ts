@@ -17,11 +17,15 @@ import { LMUReplay } from '@types';
 import { CONSTANTS } from '@constants';
 import { generateReplayHash } from '../util';
 import {
+  applyArchiveState,
   filterReplaysByGameType,
   findBestLogFile,
   getLogDataSessionType,
   getReplayLogData,
   parseLogXml,
+  postArchiveNote,
+  postArchiveReplays,
+  postRestoreReplays,
   postWatchReplay,
 } from './replay';
 /* eslint-enable import/first */
@@ -685,5 +689,230 @@ describe('main/replay helpers', () => {
     });
 
     expect(replayStoreSetMock).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('main/replay archive', () => {
+  const buildReplay = (overrides: Partial<LMUReplay> = {}) =>
+    ({
+      metadata: { session: 'RACE', sceneDesc: 'SEBRINGWEC' },
+      replayDirectory: 'C:/replays',
+      replayName: 'Sebring International Raceway R1 1',
+      size: 123,
+      timestamp: 1000,
+      ...overrides,
+    }) as unknown as LMUReplay;
+
+  /** Mirrors buildReplayCacheIdentityKey, which is internal to the module. */
+  const identityKeyFor = (replay: LMUReplay) =>
+    [
+      replay.metadata.sceneDesc,
+      replay.metadata.session,
+      replay.replayName,
+      String(replay.timestamp),
+      replay.replayDirectory,
+    ]
+      .map((value) => String(value).trim().toLowerCase())
+      .join('|');
+
+  const createEvent = () => {
+    const replyMock = jest.fn();
+    return {
+      replyMock,
+      event: { reply: replyMock } as unknown as Electron.IpcMainEvent,
+    };
+  };
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    Object.keys(replayStoreData).forEach((key) => {
+      delete replayStoreData[key];
+    });
+    replayStoreData.replays = {};
+    global.fetch = jest.fn() as unknown as typeof global.fetch;
+  });
+
+  it('decorates replays with archive state matched by hash', () => {
+    const replay = buildReplay();
+    const hash = generateReplayHash(replay);
+
+    const [decorated] = applyArchiveState([{ ...replay, hash }], {
+      [hash]: {
+        hash,
+        identityKey: identityKeyFor(replay),
+        archivedAt: 42,
+        note: 'reviewed',
+      },
+    });
+
+    expect(decorated).toEqual(
+      expect.objectContaining({
+        archived: true,
+        archivedAt: 42,
+        archiveNote: 'reviewed',
+      }),
+    );
+  });
+
+  it('keeps a replay archived when its hash has changed but its identity has not', () => {
+    const replay = buildReplay();
+
+    const [decorated] = applyArchiveState(
+      [{ ...replay, hash: 'current-hash' }],
+      {
+        'stale-hash': {
+          hash: 'stale-hash',
+          identityKey: identityKeyFor(replay),
+          archivedAt: 42,
+        },
+      },
+    );
+
+    expect(decorated.archived).toBe(true);
+  });
+
+  it('reports replays with no archive record as not archived', () => {
+    const replay = buildReplay();
+
+    const [decorated] = applyArchiveState([{ ...replay, hash: 'hash' }], {});
+
+    expect(decorated.archived).toBe(false);
+    expect(decorated.archiveNote).toBeUndefined();
+  });
+
+  it('archives replays with a shared note and without contacting the game', async () => {
+    const replay = buildReplay();
+    const hash = generateReplayHash(replay);
+    const secondReplay = buildReplay({ replayName: 'Sebring Q1 1' });
+    const secondHash = generateReplayHash(secondReplay);
+    replayStoreData.replays = {
+      [hash]: { ...replay, hash },
+      [secondHash]: { ...secondReplay, hash: secondHash },
+    };
+
+    const { event, replyMock } = createEvent();
+    await postArchiveReplays(event, {
+      hashes: [hash, secondHash],
+      note: 'reviewed',
+    });
+
+    const archived = replayStoreData.archivedReplays as Record<string, unknown>;
+    expect(Object.keys(archived)).toEqual([hash, secondHash]);
+    expect(archived[hash]).toEqual(
+      expect.objectContaining({
+        hash,
+        identityKey: identityKeyFor(replay),
+        note: 'reviewed',
+      }),
+    );
+    expect(archived[secondHash]).toEqual(
+      expect.objectContaining({ note: 'reviewed' }),
+    );
+
+    expect(global.fetch).not.toHaveBeenCalled();
+    expect(replyMock).toHaveBeenCalledWith(CONSTANTS.API.POST_ARCHIVE_REPLAYS, {
+      status: 'success',
+      data: [
+        expect.objectContaining({ hash, archived: true }),
+        expect.objectContaining({ hash: secondHash, archived: true }),
+      ],
+    });
+  });
+
+  it('omits the note when none was provided', async () => {
+    const replay = buildReplay();
+    const hash = generateReplayHash(replay);
+    replayStoreData.replays = { [hash]: { ...replay, hash } };
+
+    const { event } = createEvent();
+    await postArchiveReplays(event, { hashes: [hash] });
+
+    const archived = replayStoreData.archivedReplays as Record<
+      string,
+      Record<string, unknown>
+    >;
+    expect(archived[hash]).not.toHaveProperty('note');
+  });
+
+  it('replies with an error when no replays were provided', async () => {
+    const { event, replyMock } = createEvent();
+    await postArchiveReplays(event, { hashes: [] });
+
+    expect(replyMock).toHaveBeenCalledWith(CONSTANTS.API.POST_ARCHIVE_REPLAYS, {
+      status: 'error',
+      message: 'No replays were provided to archive',
+    });
+    expect(replayStoreData.archivedReplays).toBeUndefined();
+  });
+
+  it('restores a replay archived under an older hash', async () => {
+    const replay = buildReplay();
+    const hash = generateReplayHash(replay);
+    replayStoreData.replays = { [hash]: { ...replay, hash } };
+    replayStoreData.archivedReplays = {
+      'stale-hash': {
+        hash: 'stale-hash',
+        identityKey: identityKeyFor(replay),
+        archivedAt: 42,
+      },
+    };
+
+    const { event, replyMock } = createEvent();
+    await postRestoreReplays(event, { hashes: [hash] });
+
+    expect(replayStoreData.archivedReplays).toEqual({});
+    expect(global.fetch).not.toHaveBeenCalled();
+    expect(replyMock).toHaveBeenCalledWith(CONSTANTS.API.POST_RESTORE_REPLAYS, {
+      status: 'success',
+      data: [expect.objectContaining({ hash, archived: false })],
+    });
+  });
+
+  it('sets and clears notes on already-archived replays', async () => {
+    const replay = buildReplay();
+    const hash = generateReplayHash(replay);
+    replayStoreData.replays = { [hash]: { ...replay, hash } };
+    replayStoreData.archivedReplays = {
+      [hash]: {
+        hash,
+        identityKey: identityKeyFor(replay),
+        archivedAt: 42,
+        note: 'first pass',
+      },
+    };
+
+    const { event } = createEvent();
+    await postArchiveNote(event, { hashes: [hash], note: 'second pass' });
+
+    let archived = replayStoreData.archivedReplays as Record<
+      string,
+      Record<string, unknown>
+    >;
+    expect(archived[hash].note).toBe('second pass');
+
+    await postArchiveNote(event, { hashes: [hash], note: '   ' });
+
+    archived = replayStoreData.archivedReplays as Record<
+      string,
+      Record<string, unknown>
+    >;
+    expect(archived[hash]).not.toHaveProperty('note');
+    expect(archived[hash].archivedAt).toBe(42);
+  });
+
+  it('ignores note changes for replays that are not archived', async () => {
+    const replay = buildReplay();
+    const hash = generateReplayHash(replay);
+    replayStoreData.replays = { [hash]: { ...replay, hash } };
+    replayStoreData.archivedReplays = {};
+
+    const { event, replyMock } = createEvent();
+    await postArchiveNote(event, { hashes: [hash], note: 'reviewed' });
+
+    expect(replayStoreData.archivedReplays).toEqual({});
+    expect(replyMock).toHaveBeenCalledWith(
+      CONSTANTS.API.POST_ARCHIVE_NOTE,
+      expect.objectContaining({ status: 'success' }),
+    );
   });
 });

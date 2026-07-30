@@ -2,6 +2,14 @@ export interface LMUReplay {
   id?: string;
   hash: string;
   multiplayer?: boolean;
+  /**
+   * Archive state, applied when replays are read out of the cache. These are
+   * view-time decoration only and are never written back to the replay cache —
+   * the archive store is the single source of truth.
+   */
+  archived?: boolean;
+  archivedAt?: number;
+  archiveNote?: string;
   metadata: {
     sceneDesc: string;
     session: SessionType;
@@ -37,6 +45,33 @@ export type ReplayGameTypeFilter = ReplayGameType | '';
 
 export interface GetReplaysRequest {
   forceReplayCacheReset?: boolean;
+  gameType?: ReplayGameType;
+}
+
+/**
+ * A replay the user has removed from the dashboard. Archiving never touches the
+ * replay or log files on disk — it only controls what the dashboard lists.
+ *
+ * Records live outside the `replays` cache key because that cache is wiped on
+ * schema bumps and forced resets, either of which would silently un-archive
+ * everything the user has cleared.
+ */
+export interface ArchivedReplayRecord {
+  hash: string;
+  /**
+   * Secondary identity, mirroring the replay cache's own fallback lookup, so a
+   * replay that re-hashes stays archived instead of reappearing.
+   */
+  identityKey: string;
+  archivedAt: number;
+  note?: string;
+}
+
+export type ArchivedReplayStore = Record<string, ArchivedReplayRecord>;
+
+export interface ArchiveReplaysRequest {
+  hashes: string[];
+  note?: string;
   gameType?: ReplayGameType;
 }
 

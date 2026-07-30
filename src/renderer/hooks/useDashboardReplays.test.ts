@@ -209,4 +209,71 @@ describe('useDashboardReplays', () => {
       expect(payload).toMatchObject({ sortBy: 'track' });
     });
   });
+
+  describe('archived view', () => {
+    const buildReplay = (hash: string, archived: boolean) => ({
+      hash,
+      archived,
+      timestamp: hash === 'archived-hash' ? 2000 : 1000,
+      metadata: { session: 'RACE', sceneDesc: 'SEBRINGWEC' },
+      logData: {},
+    });
+
+    const setupWithReplays = () =>
+      setupApi({
+        replays: {
+          status: 'success',
+          data: [
+            buildReplay('active-hash', false),
+            buildReplay('archived-hash', true),
+          ],
+        },
+        archiveReplays: jest.fn(),
+        restoreReplays: jest.fn(),
+        setArchiveNote: jest.fn(),
+      });
+
+    it('shows only active replays by default', () => {
+      setupWithReplays();
+
+      const { result } = renderHook(() => useDashboardReplays());
+
+      expect(result.current.showArchived).toBe(false);
+      expect(result.current.filteredReplayHashes).toEqual(['active-hash']);
+      expect(result.current.archivedCount).toBe(1);
+      expect(result.current.totalReplayCount).toBe(1);
+    });
+
+    it('swaps to archived replays without issuing a replay request', () => {
+      setupWithReplays();
+
+      const { result } = renderHook(() => useDashboardReplays());
+      const requestCountBeforeToggle = requestReplays.mock.calls.length;
+
+      act(() => {
+        result.current.handleToggleArchivedView(true);
+      });
+
+      expect(result.current.filteredReplayHashes).toEqual(['archived-hash']);
+      expect(result.current.totalReplayCount).toBe(1);
+      // Switching views must never trigger a sync — the data is already here.
+      expect(requestReplays).toHaveBeenCalledTimes(requestCountBeforeToggle);
+    });
+
+    it('resets to the first page when the view changes', () => {
+      setupWithReplays();
+
+      const { result } = renderHook(() => useDashboardReplays());
+
+      act(() => {
+        result.current.setPage(2);
+      });
+
+      act(() => {
+        result.current.handleToggleArchivedView(true);
+      });
+
+      expect(result.current.page).toBe(1);
+    });
+  });
 });

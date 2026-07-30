@@ -216,6 +216,37 @@ const getMockLoadingStatus = () => {
   };
 };
 
+/**
+ * Dev mode holds archive state in memory. Without these resolvers the archive
+ * channels fall through to the real handlers, which would write archive records
+ * for mock replays into the developer's actual store.
+ */
+const mockArchivedReplays = new Map<
+  string,
+  { archivedAt: number; note?: string }
+>();
+
+const decorateMockReplays = () =>
+  mockReplays.map((replay) => {
+    const record = mockArchivedReplays.get(replay.hash);
+
+    return {
+      ...replay,
+      archived: Boolean(record),
+      archivedAt: record?.archivedAt,
+      archiveNote: record?.note,
+    };
+  });
+
+const toMockArchiveRequest = (requestData: unknown) => {
+  const request = (requestData ?? {}) as { hashes?: unknown; note?: unknown };
+
+  return {
+    hashes: Array.isArray(request.hashes) ? request.hashes.map(String) : [],
+    note: String(request.note ?? '').trim(),
+  };
+};
+
 export const mockApiData: Partial<Record<ApiChannel, MockApiResolver>> = {
   [CONSTANTS.API.GET_API_STATUS]: () => ({
     status: 'success',
@@ -223,9 +254,60 @@ export const mockApiData: Partial<Record<ApiChannel, MockApiResolver>> = {
       loadingStatus: getMockLoadingStatus(),
     },
   }),
-  [CONSTANTS.API.GET_REPLAYS]: {
+  [CONSTANTS.API.GET_REPLAYS]: () => ({
     status: 'success',
-    data: mockReplays,
+    data: decorateMockReplays(),
+  }),
+  [CONSTANTS.API.POST_ARCHIVE_REPLAYS]: (requestData: unknown) => {
+    const { hashes, note } = toMockArchiveRequest(requestData);
+
+    hashes.forEach((hash) => {
+      mockArchivedReplays.set(hash, {
+        archivedAt: Date.now(),
+        ...(note ? { note } : {}),
+      });
+    });
+
+    return {
+      status: 'success',
+      data: decorateMockReplays(),
+    };
+  },
+  [CONSTANTS.API.POST_RESTORE_REPLAYS]: (requestData: unknown) => {
+    const { hashes } = toMockArchiveRequest(requestData);
+
+    hashes.forEach((hash) => {
+      mockArchivedReplays.delete(hash);
+    });
+
+    return {
+      status: 'success',
+      data: decorateMockReplays(),
+    };
+  },
+  [CONSTANTS.API.POST_ARCHIVE_NOTE]: (requestData: unknown) => {
+    const { hashes, note } = toMockArchiveRequest(requestData);
+
+    hashes.forEach((hash) => {
+      const record = mockArchivedReplays.get(hash);
+
+      if (!record) {
+        return;
+      }
+
+      if (note) {
+        mockArchivedReplays.set(hash, { ...record, note });
+        return;
+      }
+
+      const { note: _removedNote, ...withoutNote } = record;
+      mockArchivedReplays.set(hash, withoutNote);
+    });
+
+    return {
+      status: 'success',
+      data: decorateMockReplays(),
+    };
   },
   [CONSTANTS.API.POST_WATCH_REPLAY]: (requestData: unknown) => {
     mockReplayLoadingStartedAtMs = Date.now();
