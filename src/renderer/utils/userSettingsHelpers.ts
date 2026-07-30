@@ -4,7 +4,9 @@ export const regionDisplayNames =
     : null;
 
 export const getCountryNameFromCode = (countryCode?: string): string => {
-  const normalized = String(countryCode ?? '').trim().toUpperCase();
+  const normalized = String(countryCode ?? '')
+    .trim()
+    .toUpperCase();
   if (!/^[A-Z]{2}$/.test(normalized)) {
     return normalized || 'Unknown';
   }
@@ -13,7 +15,9 @@ export const getCountryNameFromCode = (countryCode?: string): string => {
 };
 
 export const getFlagEmojiFromCountryCode = (countryCode?: string): string => {
-  const normalized = String(countryCode ?? '').trim().toUpperCase();
+  const normalized = String(countryCode ?? '')
+    .trim()
+    .toUpperCase();
   if (!/^[A-Z]{2}$/.test(normalized)) {
     return '🏳️';
   }
@@ -26,7 +30,9 @@ export const getFlagEmojiFromCountryCode = (countryCode?: string): string => {
 export const getFlagImageUrlFromCountryCode = (
   countryCode?: string,
 ): string | null => {
-  const normalized = String(countryCode ?? '').trim().toLowerCase();
+  const normalized = String(countryCode ?? '')
+    .trim()
+    .toLowerCase();
   if (!/^[a-z]{2}$/.test(normalized)) {
     return null;
   }

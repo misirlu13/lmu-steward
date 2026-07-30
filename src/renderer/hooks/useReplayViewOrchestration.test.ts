@@ -13,7 +13,10 @@ jest.mock('../utils/replayActivationPlan', () => ({
 }));
 
 jest.mock('../utils/replayDataFetchPlan', () => ({
-  buildReplayDataFetchPlan: jest.fn(() => ({ shouldRequest: false, channels: [] })),
+  buildReplayDataFetchPlan: jest.fn(() => ({
+    shouldRequest: false,
+    channels: [],
+  })),
 }));
 
 jest.mock('../utils/replayLoadingGatePlan', () => ({
@@ -33,7 +36,9 @@ jest.mock('../utils/replayForcingLoadingPlan', () => ({
 }));
 
 describe('useReplayViewOrchestration', () => {
-  const sendMessageMock = sendMessage as jest.MockedFunction<typeof sendMessage>;
+  const sendMessageMock = sendMessage as jest.MockedFunction<
+    typeof sendMessage
+  >;
 
   const replayFixture: LMUReplay = {
     hash: 'replay-hash-1',
@@ -89,13 +94,17 @@ describe('useReplayViewOrchestration', () => {
     const { result } = renderHook(() => useReplayViewOrchestration(baseArgs));
 
     expect(result.current.isQuickViewModeActiveForReplay).toBe(true);
-    expect(sendMessageMock).toHaveBeenCalledWith(CONSTANTS.API.GET_IS_REPLAY_ACTIVE);
+    expect(sendMessageMock).toHaveBeenCalledWith(
+      CONSTANTS.API.GET_IS_REPLAY_ACTIVE,
+    );
 
     act(() => {
       jest.advanceTimersByTime(1000);
     });
 
-    expect(sendMessageMock).toHaveBeenCalledWith(CONSTANTS.API.GET_IS_REPLAY_ACTIVE);
+    expect(sendMessageMock).toHaveBeenCalledWith(
+      CONSTANTS.API.GET_IS_REPLAY_ACTIVE,
+    );
   });
 
   it('handles orchestration for a new track (BARCELONAELMS)', () => {
@@ -104,9 +113,13 @@ describe('useReplayViewOrchestration', () => {
       replayHash: 'replay-hash-2',
       replays: { data: [barcelonaReplayFixture] },
     };
-    const { result } = renderHook(() => useReplayViewOrchestration(barcelonaArgs));
+    const { result } = renderHook(() =>
+      useReplayViewOrchestration(barcelonaArgs),
+    );
     expect(result.current.isQuickViewModeActiveForReplay).toBe(true);
-    expect(result.current.replayForView?.metadata.sceneDesc).toBe('BARCELONAELMS');
+    expect(result.current.replayForView?.metadata.sceneDesc).toBe(
+      'BARCELONAELMS',
+    );
   });
 
   it('requests replay activation from quick view and updates loading state', () => {
@@ -118,10 +131,14 @@ describe('useReplayViewOrchestration', () => {
       result.current.onViewReplayFromQuickView();
     });
 
-    expect(sendMessageMock).toHaveBeenCalledWith(CONSTANTS.API.GET_IS_REPLAY_ACTIVE);
+    expect(sendMessageMock).toHaveBeenCalledWith(
+      CONSTANTS.API.GET_IS_REPLAY_ACTIVE,
+    );
     expect(sendMessageMock).toHaveBeenCalledWith(CONSTANTS.API.GET_API_STATUS);
     expect(result.current.isQuickViewModeActiveForReplay).toBe(false);
     expect(result.current.isReplayLoadingUiVisible).toBe(true);
-    expect(result.current.displayedLoadingScreenProgress).toBeGreaterThanOrEqual(0.05);
+    expect(
+      result.current.displayedLoadingScreenProgress,
+    ).toBeGreaterThanOrEqual(0.05);
   });
 });

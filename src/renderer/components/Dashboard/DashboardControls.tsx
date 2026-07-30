@@ -8,7 +8,6 @@ import {
 } from '@mui/material';
 import ArrowUpwardIcon from '@mui/icons-material/ArrowUpward';
 import ArrowDownwardIcon from '@mui/icons-material/ArrowDownward';
-import { Refresh } from '@mui/icons-material';
 import { DashboardFilter, Filters } from './DashboardFilter';
 import { DashboardSortByOptions } from '../../hooks/useDashboardReplays';
 import { SegmentedButtonGroup } from '../Common/SegmentedButtonGroup';
@@ -30,7 +29,6 @@ export const DashboardControls: React.FC<DashboardControlsProps> = ({
   onSortByChange,
   onSortDirectionChange,
   onApplyFilters,
-  onRefresh,
 }) => {
   const handleSortChange = (event: SelectChangeEvent) => {
     onSortByChange(event.target.value as DashboardSortByOptions);

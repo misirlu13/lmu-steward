@@ -1,15 +1,10 @@
 import Box from '@mui/material/Box';
-import Card from '@mui/material/Card';
-import CardContent from '@mui/material/CardContent';
-import Typography from '@mui/material/Typography';
-import ReplayIcon from '@mui/icons-material/Replay';
-import { InfoCard } from '../InfoCard/InfoCard';
 
 interface DashboardSummaryProps {
   totalReplays: number;
 }
 
-export const DashboardSummary = ({ totalReplays }: DashboardSummaryProps) => {
+export const DashboardSummary = (_props: DashboardSummaryProps) => {
   return (
     <Box
       sx={{
@@ -19,8 +14,6 @@ export const DashboardSummary = ({ totalReplays }: DashboardSummaryProps) => {
         alignItems: 'center',
         flexWrap: 'wrap',
       }}
-    >
-      
-    </Box>
+    />
   );
 };

@@ -21,6 +21,7 @@ interface UseUserSettingsDerivedStateArgs {
   quickViewEnabled: boolean;
   syncOnAppLaunch: boolean;
   syncOnIntervalMinutes: number;
+  persistDashboardFiltersEnabled: boolean;
   anonymizeDriverData: boolean;
   telemetryCacheEnabled: boolean;
   clearCacheOnExit: boolean;
@@ -47,6 +48,7 @@ export const useUserSettingsDerivedState = ({
   quickViewEnabled,
   syncOnAppLaunch,
   syncOnIntervalMinutes,
+  persistDashboardFiltersEnabled,
   anonymizeDriverData,
   telemetryCacheEnabled,
   clearCacheOnExit,
@@ -60,7 +62,11 @@ export const useUserSettingsDerivedState = ({
   const isLmuRunning = hasApiStatusResponse && isConnected;
 
   const launchLmuDisabled =
-    isLoading || isSaving || isLaunching || isLaunchCooldownActive || isLmuRunning;
+    isLoading ||
+    isSaving ||
+    isLaunching ||
+    isLaunchCooldownActive ||
+    isLmuRunning;
 
   const launchLmuTooltip = isLmuRunning
     ? 'Launch is disabled because LMU is already running.'
@@ -75,7 +81,9 @@ export const useUserSettingsDerivedState = ({
     : 'Sync now is available while connected to LMU API.';
 
   const profileNationalityName = getCountryNameFromCode(profileNationalityCode);
-  const profileNationalityFlag = getFlagEmojiFromCountryCode(profileNationalityCode);
+  const profileNationalityFlag = getFlagEmojiFromCountryCode(
+    profileNationalityCode,
+  );
   const profileNationalityFlagImageUrl = getFlagImageUrlFromCountryCode(
     profileNationalityCode,
   );
@@ -107,6 +115,7 @@ export const useUserSettingsDerivedState = ({
       quickViewEnabled,
       syncOnAppLaunch,
       syncOnIntervalMinutes,
+      persistDashboardFiltersEnabled,
       anonymizeDriverData,
       telemetryCacheEnabled,
       clearCacheOnExit,
@@ -116,6 +125,7 @@ export const useUserSettingsDerivedState = ({
       quickViewEnabled,
       syncOnAppLaunch,
       syncOnIntervalMinutes,
+      persistDashboardFiltersEnabled,
       anonymizeDriverData,
       telemetryCacheEnabled,
       clearCacheOnExit,
@@ -146,7 +156,8 @@ export const useUserSettingsDerivedState = ({
 
   const areSystemPathsAtDefaults =
     lmuExecutablePath.trim() === CONSTANTS.LMU_DEFAULT_EXECUTABLE_PATH &&
-    lmuReplayDirectoryPath.trim() === CONSTANTS.LMU_DEFAULT_REPLAY_DIRECTORY_PATH;
+    lmuReplayDirectoryPath.trim() ===
+      CONSTANTS.LMU_DEFAULT_REPLAY_DIRECTORY_PATH;
 
   return {
     isLmuRunning,

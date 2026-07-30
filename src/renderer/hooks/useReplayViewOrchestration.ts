@@ -85,7 +85,7 @@ export const useReplayViewOrchestration = ({
     currentReplay?.hash === replayHash ? currentReplay : replayFromCatalog;
 
   const cachedReplayData = replayHash
-    ? replayViewCachedDataByHash.get(replayHash) ?? null
+    ? (replayViewCachedDataByHash.get(replayHash) ?? null)
     : null;
 
   const canReuseReplayOnMount = Boolean(
@@ -98,15 +98,17 @@ export const useReplayViewOrchestration = ({
   const [hasRequestedReplayData, setHasRequestedReplayData] = useState(
     canReuseReplayOnMount,
   );
-  const [sessionInfoData, setSessionInfoData] = useState<Record<string, unknown> | null>(
-    cachedReplayData?.sessionInfoData ?? null,
-  );
+  const [sessionInfoData, setSessionInfoData] = useState<Record<
+    string,
+    unknown
+  > | null>(cachedReplayData?.sessionInfoData ?? null);
   const [standingsData, setStandingsData] = useState<unknown>(
     cachedReplayData?.standingsData ?? null,
   );
-  const [standingsHistoryData, setStandingsHistoryData] = useState<Record<string, unknown> | null>(
-    cachedReplayData?.standingsHistoryData ?? null,
-  );
+  const [standingsHistoryData, setStandingsHistoryData] = useState<Record<
+    string,
+    unknown
+  > | null>(cachedReplayData?.standingsHistoryData ?? null);
   const [isReplayStartupGateActive, setIsReplayStartupGateActive] = useState(
     !canReuseReplayOnMount,
   );
@@ -237,7 +239,7 @@ export const useReplayViewOrchestration = ({
 
   useEffect(() => {
     if (!replayHash) {
-      return;
+      return undefined;
     }
 
     const pollReplayActive = () => {
@@ -326,7 +328,12 @@ export const useReplayViewOrchestration = ({
     setIsReplayStartupGateActive(true);
     setHasSeenReplayLoadStart(false);
     requestReplayActivation(replayHash);
-  }, [currentReplay?.hash, isQuickViewModeActiveForReplay, isReplayActive, replayHash]);
+  }, [
+    currentReplay?.hash,
+    isQuickViewModeActiveForReplay,
+    isReplayActive,
+    replayHash,
+  ]);
 
   useEffect(() => {
     if (!replayHash) {
@@ -386,11 +393,7 @@ export const useReplayViewOrchestration = ({
     });
 
     setHasRequestedReplayData(true);
-  }, [
-    currentReplay,
-    hasRequestedReplayData,
-    isReplayActiveForRoute,
-  ]);
+  }, [currentReplay, hasRequestedReplayData, isReplayActiveForRoute]);
 
   useEffect(() => {
     const rawLoadingPercentage = Number(loadingState?.percentage);

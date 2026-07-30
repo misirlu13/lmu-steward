@@ -5,7 +5,7 @@ export type SessionType = {
 };
 
 export const SESSION_COLOR_MAPPING: Record<keyof SessionType, string> = {
-  'RACE': 'error.main',
-  'QUALIFY': 'qualifying.main',
-  'PRACTICE': 'success.main',
-}
+  RACE: 'error.main',
+  QUALIFY: 'qualifying.main',
+  PRACTICE: 'success.main',
+};

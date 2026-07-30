@@ -6,11 +6,14 @@ import {
 } from './trackMapToSVG';
 
 describe('trackMapToSVG', () => {
-  const samplePoints: TrackPoints[] = Array.from({ length: 40 }, (_, index) => ({
-    x: index * 3,
-    y: 0,
-    z: index * 0.1,
-  }));
+  const samplePoints: TrackPoints[] = Array.from(
+    { length: 40 },
+    (_, index) => ({
+      x: index * 3,
+      y: 0,
+      z: index * 0.1,
+    }),
+  );
 
   describe('getTrackMapBounds', () => {
     it('returns null for invalid point arrays', () => {

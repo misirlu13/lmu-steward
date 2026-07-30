@@ -19,7 +19,9 @@ const readJson = (relativePath: string) => {
 };
 
 const getStandingsEntries = (payload: unknown): unknown[] => {
-  const source = payload as { entries?: unknown[]; data?: unknown[] } | unknown[];
+  const source = payload as
+    | { entries?: unknown[]; data?: unknown[] }
+    | unknown[];
   if (Array.isArray(payload)) {
     return payload;
   }
@@ -50,17 +52,32 @@ describe('replayViewState', () => {
   });
 
   it('detects awaiting replay activation state correctly', () => {
-    expect(isAwaitingReplayActivationFromQuickView(true, true, false)).toBe(true);
-    expect(isAwaitingReplayActivationFromQuickView(true, true, null)).toBe(true);
-    expect(isAwaitingReplayActivationFromQuickView(true, true, true)).toBe(false);
-    expect(isAwaitingReplayActivationFromQuickView(true, false, false)).toBe(false);
+    expect(isAwaitingReplayActivationFromQuickView(true, true, false)).toBe(
+      true,
+    );
+    expect(isAwaitingReplayActivationFromQuickView(true, true, null)).toBe(
+      true,
+    );
+    expect(isAwaitingReplayActivationFromQuickView(true, true, true)).toBe(
+      false,
+    );
+    expect(isAwaitingReplayActivationFromQuickView(true, false, false)).toBe(
+      false,
+    );
   });
 
   it('does not classify synced fixture data as partial replay data', () => {
-    const replayPayload = readJson('../../__tests__/fixtures/replay/synced/replay.json');
-    const standingsPayload = readJson('../../__tests__/fixtures/replay/synced/standings.json');
-    const replay = Array.isArray(replayPayload) ? replayPayload[0] : replayPayload;
-    const sessionKey = SESSION_TYPE_MAPPINGS[String(replay?.metadata?.session ?? '')];
+    const replayPayload = readJson(
+      '../../__tests__/fixtures/replay/synced/replay.json',
+    );
+    const standingsPayload = readJson(
+      '../../__tests__/fixtures/replay/synced/standings.json',
+    );
+    const replay = Array.isArray(replayPayload)
+      ? replayPayload[0]
+      : replayPayload;
+    const sessionKey =
+      SESSION_TYPE_MAPPINGS[String(replay?.metadata?.session ?? '')];
 
     const stream = replay?.logData?.[sessionKey]?.Stream;
     const replayTimeBaselineSeconds = computeReplayTimeBaselineSeconds(stream);
@@ -102,14 +119,23 @@ describe('replayViewState', () => {
   unsyncedTest(
     'classifies unsynced fixture data as partial replay data and enables normalization',
     () => {
-      const replayPayload = readJson('../../__tests__/fixtures/replay/unsynced/replay.json');
-      const standingsPayload = readJson('../../__tests__/fixtures/replay/unsynced/standings.json');
-      const replay = Array.isArray(replayPayload) ? replayPayload[0] : replayPayload;
-      const sessionKey = SESSION_TYPE_MAPPINGS[String(replay?.metadata?.session ?? '')];
+      const replayPayload = readJson(
+        '../../__tests__/fixtures/replay/unsynced/replay.json',
+      );
+      const standingsPayload = readJson(
+        '../../__tests__/fixtures/replay/unsynced/standings.json',
+      );
+      const replay = Array.isArray(replayPayload)
+        ? replayPayload[0]
+        : replayPayload;
+      const sessionKey =
+        SESSION_TYPE_MAPPINGS[String(replay?.metadata?.session ?? '')];
 
       const stream = replay?.logData?.[sessionKey]?.Stream;
-      const replayTimeBaselineSeconds = computeReplayTimeBaselineSeconds(stream);
-      const firstReplayEventEtSeconds = computeFirstReplayEventEtSeconds(stream);
+      const replayTimeBaselineSeconds =
+        computeReplayTimeBaselineSeconds(stream);
+      const firstReplayEventEtSeconds =
+        computeFirstReplayEventEtSeconds(stream);
       const standingsEntries = getStandingsEntries(standingsPayload);
 
       const isPartialReplayDataDetected = detectPartialReplayData({
@@ -118,6 +144,9 @@ describe('replayViewState', () => {
         standingsEntries,
       });
 
+      // `unsyncedTest` resolves to `it` or `it.skip` depending on whether the
+      // fixtures are present, which the plugin cannot detect statically.
+      /* eslint-disable jest/no-standalone-expect */
       expect(isPartialReplayDataDetected).toBe(true);
       expect(
         shouldNormalizeReplayTime(
@@ -125,6 +154,7 @@ describe('replayViewState', () => {
           replayTimeBaselineSeconds,
         ),
       ).toBe(true);
+      /* eslint-enable jest/no-standalone-expect */
     },
   );
 

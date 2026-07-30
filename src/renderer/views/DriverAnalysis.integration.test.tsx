@@ -1,8 +1,8 @@
 import React from 'react';
 import { fireEvent, render, screen } from '@testing-library/react';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
-import { DriverAnalysisView } from './DriverAnalysis';
 import { CONSTANTS } from '@constants';
+import { DriverAnalysisView } from './DriverAnalysis';
 import { useApi } from '../providers/ApiContext';
 import { useDriverAnalysisData } from '../hooks/useDriverAnalysisData';
 import { jumpToIncidentInReplay } from '../utils/replayCommands';
@@ -68,8 +68,12 @@ describe('DriverAnalysisView integration', () => {
   const useDriverAnalysisDataMock =
     useDriverAnalysisData as jest.MockedFunction<typeof useDriverAnalysisData>;
   const jumpToIncidentInReplayMock =
-    jumpToIncidentInReplay as jest.MockedFunction<typeof jumpToIncidentInReplay>;
-  const sendMessageMock = sendMessage as jest.MockedFunction<typeof sendMessage>;
+    jumpToIncidentInReplay as jest.MockedFunction<
+      typeof jumpToIncidentInReplay
+    >;
+  const sendMessageMock = sendMessage as jest.MockedFunction<
+    typeof sendMessage
+  >;
 
   const incident = {
     id: 'incident-1',
@@ -91,7 +95,10 @@ describe('DriverAnalysisView integration', () => {
     riskIndex: 20,
   } as unknown as ReplayDriverStanding;
 
-  const renderView = (quickViewEnabled: boolean, isReplayActive: boolean | null) => {
+  const renderView = (
+    _quickViewEnabled: boolean,
+    _isReplayActive: boolean | null,
+  ) => {
     render(
       <MemoryRouter
         initialEntries={[
@@ -111,7 +118,10 @@ describe('DriverAnalysisView integration', () => {
             path="/replay/:replayHash"
             element={<div data-testid="replay-route" />}
           />
-          <Route path="/driver/:replayHash/:driverId" element={<DriverAnalysisView />} />
+          <Route
+            path="/driver/:replayHash/:driverId"
+            element={<DriverAnalysisView />}
+          />
         </Routes>
       </MemoryRouter>,
     );
@@ -172,7 +182,9 @@ describe('DriverAnalysisView integration', () => {
 
     expect(jumpToIncidentInReplayMock).not.toHaveBeenCalled();
     expect(
-      screen.getByText(/Quick View is enabled\. Replay playback actions are unavailable/i),
+      screen.getByText(
+        /Quick View is enabled\. Replay playback actions are unavailable/i,
+      ),
     ).toBeTruthy();
     expect(screen.queryByTestId('replay-jump-controls')).toBeNull();
   });
@@ -188,7 +200,9 @@ describe('DriverAnalysisView integration', () => {
 
     fireEvent.click(screen.getByText('Dashboard'));
 
-    expect(sendMessageMock).toHaveBeenCalledWith(CONSTANTS.API.POST_CLOSE_REPLAY);
+    expect(sendMessageMock).toHaveBeenCalledWith(
+      CONSTANTS.API.POST_CLOSE_REPLAY,
+    );
   });
 
   it('navigates back to replay when session analysis breadcrumb is clicked', () => {

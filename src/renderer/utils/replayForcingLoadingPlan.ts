@@ -20,7 +20,8 @@ export const shouldDisableReplayForcingLoadingScreen = ({
   const isReplayReady = hasCurrentReplay && hasRequestedReplayData;
   const hasReachedTerminalProgress =
     normalizedLoadingProgress >= 1 || rawLoadingPercentage < 0;
-  const isLoadingComplete = isReplayReady && !isLoading && hasReachedTerminalProgress;
+  const isLoadingComplete =
+    isReplayReady && !isLoading && hasReachedTerminalProgress;
 
   return isLoadingComplete;
 };

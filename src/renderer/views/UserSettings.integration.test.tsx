@@ -15,7 +15,13 @@ jest.mock('../utils/postMessage', () => ({
 }));
 
 jest.mock('../components/Common/ViewHeader', () => ({
-  ViewHeader: ({ title, subtitle }: { title: React.ReactNode; subtitle: React.ReactNode }) => (
+  ViewHeader: ({
+    title,
+    subtitle,
+  }: {
+    title: React.ReactNode;
+    subtitle: React.ReactNode;
+  }) => (
     <div data-testid="user-settings-header">
       <div>{title}</div>
       <div>{subtitle}</div>
@@ -25,7 +31,9 @@ jest.mock('../components/Common/ViewHeader', () => ({
 
 describe('UserSettingsView integration', () => {
   const useApiMock = useApi as jest.MockedFunction<typeof useApi>;
-  const sendMessageMock = sendMessage as jest.MockedFunction<typeof sendMessage>;
+  const sendMessageMock = sendMessage as jest.MockedFunction<
+    typeof sendMessage
+  >;
   let requestReplaysMock: jest.Mock;
   let markReplayCacheResetRequiredMock: jest.Mock;
 
@@ -37,10 +45,12 @@ describe('UserSettingsView integration', () => {
 
     (window as unknown as { electron?: unknown }).electron = {
       ipcRenderer: {
-        on: jest.fn((channel: string, callback: (...args: unknown[]) => void) => {
-          ipcHandlers[channel] = callback;
-          return jest.fn();
-        }),
+        on: jest.fn(
+          (channel: string, callback: (...args: unknown[]) => void) => {
+            ipcHandlers[channel] = callback;
+            return jest.fn();
+          },
+        ),
       },
     };
 
@@ -80,8 +90,12 @@ describe('UserSettingsView integration', () => {
   it('requests initial settings/profile and posts manual save payload', () => {
     renderView();
 
-    expect(sendMessageMock).toHaveBeenCalledWith(CONSTANTS.API.GET_USER_SETTINGS);
-    expect(sendMessageMock).toHaveBeenCalledWith(CONSTANTS.API.GET_PROFILE_INFO);
+    expect(sendMessageMock).toHaveBeenCalledWith(
+      CONSTANTS.API.GET_USER_SETTINGS,
+    );
+    expect(sendMessageMock).toHaveBeenCalledWith(
+      CONSTANTS.API.GET_PROFILE_INFO,
+    );
 
     emitIpc(CONSTANTS.API.GET_USER_SETTINGS, {
       status: 'success',
@@ -107,13 +121,16 @@ describe('UserSettingsView integration', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'Save Changes' }));
 
-    expect(sendMessageMock).toHaveBeenCalledWith(CONSTANTS.API.POST_USER_SETTINGS, {
-      lmuExecutablePath:
-        'D:/Steam/steamapps/common/Le Mans Ultimate/Le Mans Ultimate.exe',
-      lmuReplayDirectoryPath:
-        'C:/Program Files (x86)/Steam/steamapps/common/Le Mans Ultimate/UserData/Replays',
-      closeLmuWhenStewardExits: false,
-    });
+    expect(sendMessageMock).toHaveBeenCalledWith(
+      CONSTANTS.API.POST_USER_SETTINGS,
+      {
+        lmuExecutablePath:
+          'D:/Steam/steamapps/common/Le Mans Ultimate/Le Mans Ultimate.exe',
+        lmuReplayDirectoryPath:
+          'C:/Program Files (x86)/Steam/steamapps/common/Le Mans Ultimate/UserData/Replays',
+        closeLmuWhenStewardExits: false,
+      },
+    );
   });
 
   it('autosaves toggle settings after debounce', () => {
@@ -145,15 +162,53 @@ describe('UserSettingsView integration', () => {
       jest.advanceTimersByTime(800);
     });
 
-    expect(sendMessageMock).toHaveBeenCalledWith(CONSTANTS.API.POST_USER_SETTINGS, {
-      automaticSyncEnabled: true,
-      quickViewEnabled: true,
-      syncOnAppLaunch: true,
-      syncOnIntervalMinutes: 5,
-      anonymizeDriverData: false,
-      telemetryCacheEnabled: true,
-      clearCacheOnExit: false,
+    expect(sendMessageMock).toHaveBeenCalledWith(
+      CONSTANTS.API.POST_USER_SETTINGS,
+      {
+        automaticSyncEnabled: true,
+        quickViewEnabled: true,
+        syncOnAppLaunch: true,
+        syncOnIntervalMinutes: 5,
+        persistDashboardFiltersEnabled: false,
+        anonymizeDriverData: false,
+        telemetryCacheEnabled: true,
+        clearCacheOnExit: false,
+      },
+    );
+  });
+
+  it('hydrates and autosaves the remember-filters toggle', () => {
+    renderView();
+
+    emitIpc(CONSTANTS.API.GET_USER_SETTINGS, {
+      status: 'success',
+      data: {
+        lmuExecutablePath:
+          'C:/Program Files (x86)/Steam/steamapps/common/Le Mans Ultimate/Le Mans Ultimate.exe',
+        lmuReplayDirectoryPath:
+          'C:/Program Files (x86)/Steam/steamapps/common/Le Mans Ultimate/UserData/Replays',
+        persistDashboardFiltersEnabled: true,
+      },
     });
+
+    const toggleLabel = screen.getByText('Remember Filters and Sorting');
+    const toggleRow = toggleLabel.closest('div');
+    const toggle = within(toggleRow?.parentElement as HTMLElement).getByRole(
+      'switch',
+    );
+
+    expect((toggle as HTMLInputElement).checked).toBe(true);
+
+    fireEvent.click(toggle);
+
+    act(() => {
+      jest.advanceTimersByTime(800);
+    });
+
+    expect(sendMessageMock).toHaveBeenCalledWith(
+      CONSTANTS.API.POST_USER_SETTINGS,
+      expect.objectContaining({ persistDashboardFiltersEnabled: false }),
+    );
   });
 
   it('opens clear-local-storage dialog and sends confirmation action', () => {
@@ -169,11 +224,17 @@ describe('UserSettingsView integration', () => {
       },
     });
 
-    fireEvent.click(screen.getByRole('button', { name: 'Clear Local Storage' }));
+    fireEvent.click(
+      screen.getByRole('button', { name: 'Clear Local Storage' }),
+    );
     const dialog = screen.getByRole('dialog');
-    fireEvent.click(within(dialog).getByRole('button', { name: 'Clear Local Storage' }));
+    fireEvent.click(
+      within(dialog).getByRole('button', { name: 'Clear Local Storage' }),
+    );
 
-    expect(sendMessageMock).toHaveBeenCalledWith(CONSTANTS.API.POST_CLEAR_LOCAL_STORAGE);
+    expect(sendMessageMock).toHaveBeenCalledWith(
+      CONSTANTS.API.POST_CLEAR_LOCAL_STORAGE,
+    );
   });
 
   // Removed threshold-related tests
@@ -208,14 +269,18 @@ describe('UserSettingsView integration', () => {
       jest.advanceTimersByTime(800);
     });
 
-    expect(sendMessageMock).toHaveBeenCalledWith(CONSTANTS.API.POST_USER_SETTINGS, {
-      automaticSyncEnabled: true,
-      quickViewEnabled: false,
-      syncOnAppLaunch: true,
-      syncOnIntervalMinutes: 5,
-      anonymizeDriverData: false,
-      telemetryCacheEnabled: true,
-      clearCacheOnExit: false,
-    });
+    expect(sendMessageMock).toHaveBeenCalledWith(
+      CONSTANTS.API.POST_USER_SETTINGS,
+      {
+        automaticSyncEnabled: true,
+        quickViewEnabled: false,
+        syncOnAppLaunch: true,
+        syncOnIntervalMinutes: 5,
+        persistDashboardFiltersEnabled: false,
+        anonymizeDriverData: false,
+        telemetryCacheEnabled: true,
+        clearCacheOnExit: false,
+      },
+    );
   });
 });

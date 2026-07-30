@@ -1,17 +1,21 @@
-import { MemoryRouter as Router, Routes, Route, useLocation } from 'react-router-dom';
+import {
+  MemoryRouter as Router,
+  Routes,
+  Route,
+  useLocation,
+} from 'react-router-dom';
 import './App.css';
+import { Container, ThemeProvider } from '@mui/material';
+import { AdapterDayjs } from '@mui/x-date-pickers/AdapterDayjs';
+import { LocalizationProvider } from '@mui/x-date-pickers/LocalizationProvider';
 import { NavbarProvider } from './providers/NavbarContext';
 import { DashboardView } from './views/Dashboard';
-import { ApiProvider } from './providers/ApiContext';
+import { ApiProvider, useApi } from './providers/ApiContext';
 import { NavBar } from './components/Navbar/NavBar';
-import { Container, ThemeProvider } from '@mui/material';
 import theme from './theme';
 import { ReplayView } from './views/Replay';
 import { DriverAnalysisView } from './views/DriverAnalysis';
 import { UserSettingsView } from './views/UserSettings';
-import { AdapterDayjs } from '@mui/x-date-pickers/AdapterDayjs';
-import { LocalizationProvider } from '@mui/x-date-pickers/LocalizationProvider';
-import { useApi } from './providers/ApiContext';
 import { LmuDisconnectedDialog } from './components/Common/LmuDisconnectedDialog';
 import { AppExitConfirmDialog } from './components/Common/AppExitConfirmDialog';
 import { ReplayProcessingSplash } from './components/Common/ReplayProcessingSplash';
@@ -26,11 +30,13 @@ const AppRoutesShell = () => {
   } = useApi();
   const location = useLocation();
   const showDisconnectedDialog =
-    hasApiStatusResponse && !isConnected && location.pathname !== '/user-settings';
+    hasApiStatusResponse &&
+    !isConnected &&
+    location.pathname !== '/user-settings';
 
   return (
     <>
-      <NavBar></NavBar>
+      <NavBar />
       <Container
         sx={{
           backgroundColor: 'background.default',
@@ -75,7 +81,7 @@ const AppShell = () => {
   );
 };
 
-export default function App() {
+const App = () => {
   return (
     <ApiProvider>
       <NavbarProvider>
@@ -89,4 +95,6 @@ export default function App() {
       </NavbarProvider>
     </ApiProvider>
   );
-}
+};
+
+export default App;

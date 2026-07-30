@@ -43,8 +43,8 @@ export const ReplayChat: React.FC<{ replay: LMUReplay | null }> = ({
 
   const formattedChatMessages = chatMessages.map((msg) => {
     const chatMessage = msg as ReplayChatMessageLike;
-    const sessionStream =
-      (sessionData as
+    const sessionStream = (
+      sessionData as
         | {
             Stream?: {
               Score?: Array<{ et?: number | string }>;
@@ -52,18 +52,21 @@ export const ReplayChat: React.FC<{ replay: LMUReplay | null }> = ({
             };
           }
         | null
-        | undefined)?.Stream;
+        | undefined
+    )?.Stream;
     const scoreEntries = Array.isArray(sessionStream?.Score)
       ? sessionStream.Score
       : [];
-    const latestScoreEt = Number(scoreEntries[scoreEntries.length - 1]?.et ?? NaN);
+    const latestScoreEt = Number(
+      scoreEntries[scoreEntries.length - 1]?.et ?? NaN,
+    );
     const fallbackEt = Number(sessionStream?.Minutes ?? 0) * 60;
-    const baselineEt = Number.isFinite(latestScoreEt) ? latestScoreEt : fallbackEt;
+    const baselineEt = Number.isFinite(latestScoreEt)
+      ? latestScoreEt
+      : fallbackEt;
 
     const timestamp =
-      Number(replay?.timestamp) +
-      Number(chatMessage.et) -
-      Number(baselineEt);
+      Number(replay?.timestamp) + Number(chatMessage.et) - Number(baselineEt);
     const date = new Date(Number(timestamp) * 1000);
     const localizedTime = date.toLocaleTimeString(undefined, {
       hour: 'numeric',
@@ -76,8 +79,8 @@ export const ReplayChat: React.FC<{ replay: LMUReplay | null }> = ({
     const message = stringSplit[1] || '';
     const driver = getDriverObject(user);
     return {
-      driver: driver,
-      message: message,
+      driver,
+      message,
       time: localizedTime,
     };
   });
@@ -89,6 +92,9 @@ export const ReplayChat: React.FC<{ replay: LMUReplay | null }> = ({
       {/* Placeholder content */}
       {formattedChatMessages && formattedChatMessages.length > 0 ? (
         formattedChatMessages.map((msg, index: number) => (
+          // Chat is an append-only transcript from an immutable replay log, so
+          // rows are never reordered or inserted mid-list.
+          // eslint-disable-next-line react/no-array-index-key
           <Box key={index} sx={{ mb: 1 }}>
             <Typography
               sx={{

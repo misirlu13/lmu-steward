@@ -23,8 +23,8 @@ export const UserSettingsClearStorageDialog: React.FC<
       <DialogTitle>Clear Local Storage?</DialogTitle>
       <DialogContent>
         <DialogContentText>
-          This removes LMU Steward data stored on this device and resets settings
-          to their defaults. This action cannot be undone.
+          This removes LMU Steward data stored on this device and resets
+          settings to their defaults. This action cannot be undone.
         </DialogContentText>
       </DialogContent>
       <DialogActions>

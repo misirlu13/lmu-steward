@@ -28,9 +28,9 @@ describe('replaySelectors', () => {
       const qualificationEntries = { qualification: { entries: [{ id: 2 }] } };
       const qualificationData = { qualification: { data: [{ id: 3 }] } };
 
-      expect(extractQualificationEntries({ qualification: qualificationArray })).toBe(
-        qualificationArray,
-      );
+      expect(
+        extractQualificationEntries({ qualification: qualificationArray }),
+      ).toBe(qualificationArray);
       expect(extractQualificationEntries(qualificationEntries)).toBe(
         qualificationEntries.qualification.entries,
       );
@@ -47,7 +47,9 @@ describe('replaySelectors', () => {
       const pointsFromPoints = { points: [{ x: 4, y: 5, z: 6 }] };
 
       expect(extractTrackMapPoints(pointsFromRoot)).toEqual(pointsFromRoot);
-      expect(extractTrackMapPoints(pointsFromPoints)).toEqual(pointsFromPoints.points);
+      expect(extractTrackMapPoints(pointsFromPoints)).toEqual(
+        pointsFromPoints.points,
+      );
     });
 
     it('filters out non-racing path points and invalid coordinates', () => {

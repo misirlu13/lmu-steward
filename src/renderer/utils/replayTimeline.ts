@@ -235,7 +235,9 @@ export const buildReplayTimelineEvents = ({
   }
 
   const drivers = toArray<TimelineDriverEntry>(
-    currentSessionLogData?.Driver as TimelineDriverEntry | TimelineDriverEntry[],
+    currentSessionLogData?.Driver as
+      | TimelineDriverEntry
+      | TimelineDriverEntry[],
   );
   const driverByName = new Map<string, TimelineDriverEntry>();
   const driverByCarNumber = new Map<string, TimelineDriverEntry>();
@@ -243,7 +245,8 @@ export const buildReplayTimelineEvents = ({
   const standingsByName = new Map<string, TimelineStandingEntry>();
   const standingsByCarNumber = new Map<string, TimelineStandingEntry>();
   const canNormalizeReplayTime =
-    shouldNormalizeReplayTimeForView && Number.isFinite(replayTimeBaselineSeconds);
+    shouldNormalizeReplayTimeForView &&
+    Number.isFinite(replayTimeBaselineSeconds);
 
   drivers.forEach((driver) => {
     const name = String(driver?.Name ?? '').trim();
@@ -372,9 +375,7 @@ export const buildReplayTimelineEvents = ({
   };
 
   const collisionEvents = toArray<TimelineIncidentEntry>(
-    stream.Incident as
-      | TimelineIncidentEntry
-      | TimelineIncidentEntry[],
+    stream.Incident as TimelineIncidentEntry | TimelineIncidentEntry[],
   )
     .map((item, index: number) => {
       const sourceText = String(item?._ ?? '').trim();
@@ -423,9 +424,7 @@ export const buildReplayTimelineEvents = ({
     );
 
   const trackLimitEvents = toArray<TimelineTrackLimitEntry>(
-    stream.TrackLimits as
-      | TimelineTrackLimitEntry
-      | TimelineTrackLimitEntry[],
+    stream.TrackLimits as TimelineTrackLimitEntry | TimelineTrackLimitEntry[],
   )
     .map((item, index: number) => {
       const driverName = String(item?.Driver ?? '').trim();
@@ -447,9 +446,7 @@ export const buildReplayTimelineEvents = ({
     );
 
   const penaltyEvents = toArray<TimelinePenaltyEntry>(
-    stream.Penalty as
-      | TimelinePenaltyEntry
-      | TimelinePenaltyEntry[],
+    stream.Penalty as TimelinePenaltyEntry | TimelinePenaltyEntry[],
   )
     .map((item, index: number) => {
       const driverName = String(item?.Driver ?? '').trim();

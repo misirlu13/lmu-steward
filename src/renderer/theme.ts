@@ -11,7 +11,7 @@ declare module '@mui/material/styles' {
   }
 }
 
-let theme = createTheme({
+const baseTheme = createTheme({
   palette: {
     mode: 'dark',
     primary: {
@@ -64,10 +64,10 @@ let theme = createTheme({
   },
 });
 
-theme = createTheme(theme, {
+const theme = createTheme(baseTheme, {
   // Custom colors created with augmentColor go here
   palette: {
-    qualifying: theme.palette.augmentColor({
+    qualifying: baseTheme.palette.augmentColor({
       color: {
         main: '#AB47BC',
       },

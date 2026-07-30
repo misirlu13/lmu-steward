@@ -3,16 +3,32 @@ import React, {
   useCallback,
   useContext,
   useEffect,
+  useMemo,
   useRef,
   useState,
 } from 'react';
-import { initializeMessageBus, sendMessage } from '../utils/postMessage';
 import { CONSTANTS } from '@constants';
-import { GetReplaysRequest, LMUReplay, LoadingState, ReplaySyncStatus } from '@types';
+import {
+  GetReplaysRequest,
+  LMUReplay,
+  LoadingState,
+  PersistedDashboardView,
+  ReplaySyncStatus,
+} from '@types';
+import { initializeMessageBus, sendMessage } from '../utils/postMessage';
 
 interface ReplayResponse {
   status: string;
   data: LMUReplay[];
+}
+
+interface UserSettingsResponse {
+  status?: string;
+  data?: {
+    quickViewEnabled?: boolean;
+    persistDashboardFiltersEnabled?: boolean;
+    dashboardView?: PersistedDashboardView | null;
+  };
 }
 
 type ApiChannel = (typeof CONSTANTS.API)[keyof typeof CONSTANTS.API];
@@ -21,7 +37,10 @@ type ApiChannelCallback = (data: unknown) => void;
 interface ApiContextType {
   isConnected: boolean;
   hasApiStatusResponse: boolean;
+  hasUserSettingsResponse: boolean;
   quickViewEnabled: boolean;
+  persistDashboardFiltersEnabled: boolean;
+  persistedDashboardView: PersistedDashboardView | null;
   lastReplaySyncAt: number | null;
   isReplaySyncInProgress: boolean;
   replaySyncStatus: ReplaySyncStatus;
@@ -41,7 +60,10 @@ interface ApiContextType {
 const ApiContext = createContext<ApiContextType>({
   isConnected: false,
   hasApiStatusResponse: false,
+  hasUserSettingsResponse: false,
   quickViewEnabled: false,
+  persistDashboardFiltersEnabled: false,
+  persistedDashboardView: null,
   lastReplaySyncAt: null,
   isReplaySyncInProgress: false,
   replaySyncStatus: {
@@ -65,7 +87,12 @@ export const ApiProvider: React.FC<{ children: React.ReactNode }> = ({
 }) => {
   const [isConnected, setIsConnected] = useState(false);
   const [hasApiStatusResponse, setHasApiStatusResponse] = useState(false);
+  const [hasUserSettingsResponse, setHasUserSettingsResponse] = useState(false);
   const [quickViewEnabled, setQuickViewEnabled] = useState(false);
+  const [persistDashboardFiltersEnabled, setPersistDashboardFiltersEnabled] =
+    useState(false);
+  const [persistedDashboardView, setPersistedDashboardView] =
+    useState<PersistedDashboardView | null>(null);
   const [lastReplaySyncAt, setLastReplaySyncAt] = useState<number | null>(null);
   const [activeReplaySyncRequestCount, setActiveReplaySyncRequestCount] =
     useState(0);
@@ -78,9 +105,9 @@ export const ApiProvider: React.FC<{ children: React.ReactNode }> = ({
   const [isReplayActive, setIsReplayActive] = useState<boolean | null>(null);
   const [isReplayCacheResetRequired, setIsReplayCacheResetRequired] =
     useState(false);
-  const [currentTrackMap, setCurrentTrackMap] = useState<
-    { data?: unknown } | null
-  >(null);
+  const [currentTrackMap, setCurrentTrackMap] = useState<{
+    data?: unknown;
+  } | null>(null);
   const [replays, setReplays] = useState<ReplayResponse | null>(null);
   const [currentReplay, setCurrentReplay] = useState<LMUReplay | null>(null);
   const [loadingState, setLoadingState] = useState<LoadingState>({
@@ -120,27 +147,57 @@ export const ApiProvider: React.FC<{ children: React.ReactNode }> = ({
     setIsReplayCacheResetRequired(true);
   }, []);
 
-  const requestReplays = useCallback((options?: GetReplaysRequest) => {
-    setActiveReplaySyncRequestCount((previousCount) => previousCount + 1);
-    setReplaySyncStatus({
-      status: 'in-progress',
-      percentage: 0,
-      processed: 0,
-      total: 0,
-    });
+  const applyUserSettingsPayload = useCallback((data: unknown) => {
+    const payload = data as UserSettingsResponse;
 
-    const shouldForceReplayCacheReset =
-      Boolean(options?.forceReplayCacheReset) || isReplayCacheResetRequired;
-    const payload = shouldForceReplayCacheReset
-      ? { ...options, forceReplayCacheReset: true }
-      : options;
+    // Flagged regardless of status so consumers waiting on settings (such as
+    // the dashboard restoring persisted filters) can fall back to defaults
+    // instead of blocking forever when settings fail to load.
+    setHasUserSettingsResponse(true);
 
-    if (shouldForceReplayCacheReset && isReplayCacheResetRequired) {
-      setIsReplayCacheResetRequired(false);
+    if (payload?.status !== 'success') {
+      return;
     }
 
-    sendMessage(CONSTANTS.API.GET_REPLAYS, payload);
-  }, [isReplayCacheResetRequired]);
+    if (typeof payload?.data?.quickViewEnabled === 'boolean') {
+      setQuickViewEnabled(payload.data.quickViewEnabled);
+    }
+
+    if (typeof payload?.data?.persistDashboardFiltersEnabled === 'boolean') {
+      setPersistDashboardFiltersEnabled(
+        payload.data.persistDashboardFiltersEnabled,
+      );
+    }
+
+    if (payload?.data && 'dashboardView' in payload.data) {
+      setPersistedDashboardView(payload.data.dashboardView ?? null);
+    }
+  }, []);
+
+  const requestReplays = useCallback(
+    (options?: GetReplaysRequest) => {
+      setActiveReplaySyncRequestCount((previousCount) => previousCount + 1);
+      setReplaySyncStatus({
+        status: 'in-progress',
+        percentage: 0,
+        processed: 0,
+        total: 0,
+      });
+
+      const shouldForceReplayCacheReset =
+        Boolean(options?.forceReplayCacheReset) || isReplayCacheResetRequired;
+      const payload = shouldForceReplayCacheReset
+        ? { ...options, forceReplayCacheReset: true }
+        : options;
+
+      if (shouldForceReplayCacheReset && isReplayCacheResetRequired) {
+        setIsReplayCacheResetRequired(false);
+      }
+
+      sendMessage(CONSTANTS.API.GET_REPLAYS, payload);
+    },
+    [isReplayCacheResetRequired],
+  );
 
   useEffect(() => {
     const createHandler = (
@@ -281,54 +338,19 @@ export const ApiProvider: React.FC<{ children: React.ReactNode }> = ({
       ),
       [CONSTANTS.API.GET_USER_SETTINGS]: createHandler(
         CONSTANTS.API.GET_USER_SETTINGS,
-        (data: unknown) => {
-          const payload = data as {
-            status?: string;
-            data?: { quickViewEnabled?: boolean };
-          };
-
-          if (payload?.status !== 'success') {
-            return;
-          }
-
-          if (typeof payload?.data?.quickViewEnabled === 'boolean') {
-            setQuickViewEnabled(payload.data.quickViewEnabled);
-          }
-        },
+        applyUserSettingsPayload,
       ),
       [CONSTANTS.API.PUSH_USER_SETTINGS]: createHandler(
         CONSTANTS.API.PUSH_USER_SETTINGS,
-        (data: unknown) => {
-          const payload = data as {
-            status?: string;
-            data?: { quickViewEnabled?: boolean };
-          };
-
-          if (payload?.status !== 'success') {
-            return;
-          }
-
-          if (typeof payload?.data?.quickViewEnabled === 'boolean') {
-            setQuickViewEnabled(payload.data.quickViewEnabled);
-          }
-        },
+        applyUserSettingsPayload,
       ),
       [CONSTANTS.API.POST_USER_SETTINGS]: createHandler(
         CONSTANTS.API.POST_USER_SETTINGS,
-        (data: unknown) => {
-          const payload = data as {
-            status?: string;
-            data?: { quickViewEnabled?: boolean };
-          };
-
-          if (payload?.status !== 'success') {
-            return;
-          }
-
-          if (typeof payload?.data?.quickViewEnabled === 'boolean') {
-            setQuickViewEnabled(payload.data.quickViewEnabled);
-          }
-        },
+        applyUserSettingsPayload,
+      ),
+      [CONSTANTS.API.POST_DASHBOARD_VIEW]: createHandler(
+        CONSTANTS.API.POST_DASHBOARD_VIEW,
+        applyUserSettingsPayload,
       ),
       [CONSTANTS.API.GET_SESSION_INFO]: createHandler(
         CONSTANTS.API.GET_SESSION_INFO,
@@ -339,7 +361,13 @@ export const ApiProvider: React.FC<{ children: React.ReactNode }> = ({
     };
 
     initializeMessageBus(messageBusHandlers);
-  }, [runAdditionalCallbacks, setIsConnected, setCurrentTrackMap, setReplays]);
+  }, [
+    applyUserSettingsPayload,
+    runAdditionalCallbacks,
+    setIsConnected,
+    setCurrentTrackMap,
+    setReplays,
+  ]);
 
   useEffect(() => {
     return () => {
@@ -368,22 +396,46 @@ export const ApiProvider: React.FC<{ children: React.ReactNode }> = ({
     };
   }, [apiStatusInterval]);
 
-  const contextValue: ApiContextType = {
-    isConnected,
-    hasApiStatusResponse,
-    quickViewEnabled,
-    lastReplaySyncAt,
-    isReplaySyncInProgress: activeReplaySyncRequestCount > 0,
-    replaySyncStatus,
-    isReplayActive,
-    currentTrackMap,
-    replays,
-    currentReplay,
-    loadingState,
-    markReplayCacheResetRequired,
-    requestReplays,
-    subscribeToApiChannel,
-  };
+  const contextValue: ApiContextType = useMemo(
+    () => ({
+      isConnected,
+      hasApiStatusResponse,
+      hasUserSettingsResponse,
+      quickViewEnabled,
+      persistDashboardFiltersEnabled,
+      persistedDashboardView,
+      lastReplaySyncAt,
+      isReplaySyncInProgress: activeReplaySyncRequestCount > 0,
+      replaySyncStatus,
+      isReplayActive,
+      currentTrackMap,
+      replays,
+      currentReplay,
+      loadingState,
+      markReplayCacheResetRequired,
+      requestReplays,
+      subscribeToApiChannel,
+    }),
+    [
+      isConnected,
+      hasApiStatusResponse,
+      hasUserSettingsResponse,
+      quickViewEnabled,
+      persistDashboardFiltersEnabled,
+      persistedDashboardView,
+      lastReplaySyncAt,
+      activeReplaySyncRequestCount,
+      replaySyncStatus,
+      isReplayActive,
+      currentTrackMap,
+      replays,
+      currentReplay,
+      loadingState,
+      markReplayCacheResetRequired,
+      requestReplays,
+      subscribeToApiChannel,
+    ],
+  );
 
   return (
     <ApiContext.Provider value={contextValue}>{children}</ApiContext.Provider>

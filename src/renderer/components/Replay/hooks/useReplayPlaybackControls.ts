@@ -100,7 +100,6 @@ export const useReplayPlaybackControls = () => {
         return;
       }
       onForwardBySpeed();
-      return;
     }
   };
 

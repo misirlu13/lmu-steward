@@ -21,7 +21,10 @@ export const ReplayProcessingSplash: React.FC<ReplayProcessingSplashProps> = ({
   processedCount,
   totalCount,
 }) => {
-  const normalizedPercentage = Math.max(0, Math.min(1, progressPercentage || 0));
+  const normalizedPercentage = Math.max(
+    0,
+    Math.min(1, progressPercentage || 0),
+  );
   const progressPercentLabel = Math.round(normalizedPercentage * 100);
 
   return (
@@ -52,7 +55,8 @@ export const ReplayProcessingSplash: React.FC<ReplayProcessingSplashProps> = ({
             </Typography>
           </Stack>
           <Typography variant="body2" color="text.secondary">
-            LMU Steward is syncing and analyzing replay data. Please keep this window open.
+            LMU Steward is syncing and analyzing replay data. Please keep this
+            window open.
           </Typography>
           <Stack spacing={0.75}>
             <Box
@@ -67,7 +71,11 @@ export const ReplayProcessingSplash: React.FC<ReplayProcessingSplashProps> = ({
                   ? `${Math.min(processedCount, totalCount)} / ${totalCount} replays`
                   : 'Preparing replay sync'}
               </Typography>
-              <Typography variant="caption" color="text.secondary" fontWeight={700}>
+              <Typography
+                variant="caption"
+                color="text.secondary"
+                fontWeight={700}
+              >
                 {`${progressPercentLabel}%`}
               </Typography>
             </Box>

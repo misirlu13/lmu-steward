@@ -1,3 +1,4 @@
+import { LMUReplay } from '@types';
 import {
   normalizeDriverCarClass,
   getDriverCarClass,
@@ -10,7 +11,6 @@ import {
   getDriverList,
   getChatMessages,
 } from './sessionUtils';
-import { LMUReplay } from '@types';
 import syncedReplayFixtures from '../../__tests__/fixtures/replay/synced/replay.json';
 
 const syncedReplayFixture = syncedReplayFixtures[0] as LMUReplay;
@@ -204,7 +204,10 @@ describe('sessionUtils', () => {
           Race: {
             Stream: {
               Incident: [{ et: 100 }, { et: 200 }],
-              Penalty: [{ Penalty: 'DT', et: 150 }, { Penalty: null, et: 250 }],
+              Penalty: [
+                { Penalty: 'DT', et: 150 },
+                { Penalty: null, et: 250 },
+              ],
               TrackLimits: [{ et: 50 }],
             },
           },

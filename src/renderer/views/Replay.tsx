@@ -17,10 +17,7 @@ import {
   ReplayIncidentEvent,
   ReplayMasterIncidentTimeline,
 } from '../components/Replay/ReplayMasterIncidentTimeline';
-import {
-  ReplayDriverStanding,
-  ReplayDriverStandings,
-} from '../components/Replay/ReplayDriverStandings';
+import { ReplayDriverStandings } from '../components/Replay/ReplayDriverStandings';
 import { ReplayIncidentHeatmap } from '../components/Replay/ReplayIncidentHeatmap';
 import { getSessionIncidents } from '../utils/sessionUtils';
 import { SESSION_COLOR_MAPPING } from '../utils/sessionColorMapping';
@@ -40,6 +37,12 @@ import { useReplayViewOrchestration } from '../hooks/useReplayViewOrchestration'
 
 const PARTIAL_REPLAY_DATA_NOTICE =
   'Partial replay data detected. This replay appears to have started after the live session was already in progress, so incident timing may be approximate.';
+
+const sessionTypeLabelMap: Record<string, string> = {
+  RACE: 'Race',
+  QUALIFY: 'Qualifying',
+  PRACTICE: 'Practice',
+};
 
 export const ReplayView: React.FC = () => {
   const { replayHash } = useParams<{ replayHash: string }>();
@@ -83,12 +86,6 @@ export const ReplayView: React.FC = () => {
     setIsChatOpen(newOpen);
   };
 
-  const sessionTypeLabelMap: Record<string, string> = {
-    RACE: 'Race',
-    QUALIFY: 'Qualifying',
-    PRACTICE: 'Practice',
-  };
-
   const { title, location } = useMemo(
     () =>
       resolveReplayHeaderMetadata({
@@ -113,7 +110,6 @@ export const ReplayView: React.FC = () => {
 
   const {
     currentSessionLogData,
-    standingsEntries,
     isPartialReplayDataDetected,
     summaryClassCounts,
     timelineEvents,
@@ -152,7 +148,7 @@ export const ReplayView: React.FC = () => {
 
       return undefined;
     });
-  }, [timelineEvents]);
+  }, [timelineEvents, setSelectedIncidentId]);
 
   const onJumpToIncident = (event: ReplayIncidentEvent) => {
     setSelectedIncidentId(event.id);

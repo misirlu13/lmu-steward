@@ -1,18 +1,35 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
-import { GetReplaysRequest, LMUReplay } from '@types';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { CONSTANTS } from '@constants';
+import {
+  DashboardSortByOptions,
+  DashboardSortDirection,
+  GetReplaysRequest,
+  LMUReplay,
+  PersistedDashboardView,
+} from '@types';
 import { useApi } from '../providers/ApiContext';
+import { sendMessage } from '../utils/postMessage';
 import {
   getSessionCarClasses,
   getTotalSessionIncidents,
 } from '../utils/sessionUtils';
+import { DEFAULT_FILTERS, Filters } from '../utils/dashboardFilters';
 import {
-  DEFAULT_FILTERS,
-  Filters,
-} from '../components/Dashboard/DashboardFilter';
+  DEFAULT_SORT_BY,
+  DEFAULT_SORT_DIRECTION,
+  deserializeDashboardView,
+  serializeDashboardView,
+} from '../utils/dashboardViewPersistence';
 
-export type DashboardSortByOptions = 'date' | 'track' | 'incidents';
+export type { DashboardSortByOptions };
 
 const REPLAYS_PER_PAGE = 5;
+
+/**
+ * Filters and sort can change rapidly while the user tweaks the menu, so writes
+ * are coalesced rather than issued on every keystroke or toggle.
+ */
+const PERSIST_DEBOUNCE_MS = 500;
 
 interface SessionDriverLike {
   CarClass?: string;
@@ -20,7 +37,7 @@ interface SessionDriverLike {
 
 const getSessionLength = (replay: LMUReplay): number | null => {
   const sessionType = replay.metadata.session;
-  const logData = replay.logData;
+  const { logData } = replay;
 
   if (sessionType === 'RACE' && logData?.Race?.Minutes) {
     return logData.Race.Minutes;
@@ -44,7 +61,7 @@ const getSessionLengthCategory = (minutes: number | null): string => {
 
 const getSessionDrivers = (replay: LMUReplay): SessionDriverLike[] => {
   const sessionType = replay.metadata.session;
-  const logData = replay.logData;
+  const { logData } = replay;
 
   if (sessionType === 'RACE' && logData?.Race?.Driver) {
     return Array.isArray(logData.Race.Driver)
@@ -65,7 +82,8 @@ const getSessionDrivers = (replay: LMUReplay): SessionDriverLike[] => {
   return [];
 };
 
-const getFieldSize = (replay: LMUReplay): number => getSessionDrivers(replay).length;
+const getFieldSize = (replay: LMUReplay): number =>
+  getSessionDrivers(replay).length;
 
 const getFieldSizeCategory = (size: number): string => {
   if (size <= 10) return 'small';
@@ -98,7 +116,9 @@ const getIncidentSeverity = (replay: LMUReplay): string => {
   return 'high';
 };
 
-const getGameType = (replay: LMUReplay): NonNullable<GetReplaysRequest['gameType']> =>
+const getGameType = (
+  replay: LMUReplay,
+): NonNullable<GetReplaysRequest['gameType']> =>
   replay.multiplayer ? 'multiplayer' : 'race-weekend';
 
 const getReplayRequest = (filters: Filters): GetReplaysRequest | undefined => {
@@ -173,7 +193,7 @@ const matchesFilters = (replay: LMUReplay, filters: Filters): boolean => {
 const sortReplays = (
   replayGroups: LMUReplay[][],
   sortBy: DashboardSortByOptions,
-  sortDirection: 'asc' | 'desc',
+  sortDirection: DashboardSortDirection,
 ): LMUReplay[][] => {
   return replayGroups.sort((groupA, groupB) => {
     if (sortBy === 'track') {
@@ -203,14 +223,44 @@ const sortReplays = (
 };
 
 export const useDashboardReplays = () => {
-  const { isConnected, replays, requestReplays } = useApi();
+  const {
+    isConnected,
+    hasUserSettingsResponse,
+    persistDashboardFiltersEnabled,
+    persistedDashboardView,
+    replays,
+    requestReplays,
+  } = useApi();
 
   const [hasCalledForReplays, setHasCalledForReplays] = useState(false);
   const [hasReplaysResponded, setHasReplaysResponded] = useState(false);
+  const [hasHydratedView, setHasHydratedView] = useState(false);
   const [page, setPage] = useState(1);
-  const [sortBy, setSortBy] = useState<DashboardSortByOptions>('date');
-  const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('desc');
+  const [sortBy, setSortBy] = useState<DashboardSortByOptions>(DEFAULT_SORT_BY);
+  const [sortDirection, setSortDirection] = useState<DashboardSortDirection>(
+    DEFAULT_SORT_DIRECTION,
+  );
   const [filters, setFilters] = useState<Filters>(DEFAULT_FILTERS);
+  const hasHydratedViewRef = useRef(false);
+  const lastPersistedViewRef = useRef('');
+  const pendingViewRef = useRef<PersistedDashboardView | null>(null);
+  const persistTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // The dashboard unmounts whenever the user opens a replay, so a debounced
+  // write still in flight is flushed rather than dropped.
+  useEffect(
+    () => () => {
+      if (persistTimeoutRef.current) {
+        clearTimeout(persistTimeoutRef.current);
+      }
+
+      if (pendingViewRef.current) {
+        sendMessage(CONSTANTS.API.POST_DASHBOARD_VIEW, pendingViewRef.current);
+        pendingViewRef.current = null;
+      }
+    },
+    [],
+  );
 
   useEffect(() => {
     if (replays && !hasReplaysResponded) {
@@ -218,14 +268,93 @@ export const useDashboardReplays = () => {
     }
   }, [replays, hasReplaysResponded]);
 
+  // Restores persisted filters and sort exactly once per mount. Running again
+  // on later settings pushes would stomp on filters the user has since changed.
   useEffect(() => {
-    if (!isConnected || hasCalledForReplays) {
+    if (hasHydratedViewRef.current || !hasUserSettingsResponse) {
+      return;
+    }
+
+    hasHydratedViewRef.current = true;
+
+    const restoredView = persistDashboardFiltersEnabled
+      ? deserializeDashboardView(persistedDashboardView)
+      : null;
+
+    if (restoredView) {
+      setFilters(restoredView.filters);
+      setSortBy(restoredView.sortBy);
+      setSortDirection(restoredView.sortDirection);
+    }
+
+    lastPersistedViewRef.current = JSON.stringify(
+      serializeDashboardView(
+        restoredView ?? {
+          filters: DEFAULT_FILTERS,
+          sortBy: DEFAULT_SORT_BY,
+          sortDirection: DEFAULT_SORT_DIRECTION,
+        },
+      ),
+    );
+    setHasHydratedView(true);
+  }, [
+    hasUserSettingsResponse,
+    persistDashboardFiltersEnabled,
+    persistedDashboardView,
+  ]);
+
+  useEffect(() => {
+    if (!hasHydratedView || !persistDashboardFiltersEnabled) {
+      return undefined;
+    }
+
+    const nextView = serializeDashboardView({ filters, sortBy, sortDirection });
+    const serializedView = JSON.stringify(nextView);
+
+    if (serializedView === lastPersistedViewRef.current) {
+      return undefined;
+    }
+
+    if (persistTimeoutRef.current) {
+      clearTimeout(persistTimeoutRef.current);
+    }
+
+    pendingViewRef.current = nextView;
+    persistTimeoutRef.current = setTimeout(() => {
+      lastPersistedViewRef.current = serializedView;
+      pendingViewRef.current = null;
+      sendMessage(CONSTANTS.API.POST_DASHBOARD_VIEW, nextView);
+    }, PERSIST_DEBOUNCE_MS);
+
+    return () => {
+      if (persistTimeoutRef.current) {
+        clearTimeout(persistTimeoutRef.current);
+      }
+    };
+  }, [
+    filters,
+    sortBy,
+    sortDirection,
+    hasHydratedView,
+    persistDashboardFiltersEnabled,
+  ]);
+
+  // Gated on hydration so the initial fetch carries the restored gameType,
+  // which is resolved in the main process rather than client-side.
+  useEffect(() => {
+    if (!isConnected || hasCalledForReplays || !hasHydratedView) {
       return;
     }
 
     setHasCalledForReplays(true);
     requestReplays(getReplayRequest(filters));
-  }, [isConnected, hasCalledForReplays, requestReplays, filters]);
+  }, [
+    isConnected,
+    hasCalledForReplays,
+    hasHydratedView,
+    requestReplays,
+    filters,
+  ]);
 
   const replayGroups = useMemo(() => {
     if (!replays?.data) {
@@ -306,14 +435,17 @@ export const useDashboardReplays = () => {
     );
   }, [replayGroups, page, totalPages]);
 
-  const handleApplyFilters = useCallback((nextFilters: Filters) => {
-    setFilters(nextFilters);
-    setPage(1);
+  const handleApplyFilters = useCallback(
+    (nextFilters: Filters) => {
+      setFilters(nextFilters);
+      setPage(1);
 
-    if (isConnected) {
-      requestReplays(getReplayRequest(nextFilters));
-    }
-  }, [isConnected, requestReplays]);
+      if (isConnected) {
+        requestReplays(getReplayRequest(nextFilters));
+      }
+    },
+    [isConnected, requestReplays],
+  );
 
   const handleRefreshReplays = useCallback(() => {
     if (!isConnected) {

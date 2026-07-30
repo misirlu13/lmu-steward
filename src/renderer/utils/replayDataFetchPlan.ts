@@ -16,7 +16,11 @@ export const buildReplayDataFetchPlan = ({
   hasRequestedReplayData: boolean;
   isReplayActiveForRoute: boolean | null;
 }): ReplayDataFetchPlan => {
-  if (!hasCurrentReplay || hasRequestedReplayData || isReplayActiveForRoute !== true) {
+  if (
+    !hasCurrentReplay ||
+    hasRequestedReplayData ||
+    isReplayActiveForRoute !== true
+  ) {
     return {
       shouldRequest: false,
       channels: [],

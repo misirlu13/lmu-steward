@@ -3,7 +3,10 @@ import { CONSTANTS } from '@constants';
 import { LMUReplay } from '@types';
 import { ReplayIncidentEvent } from '../components/Replay/ReplayMasterIncidentTimeline';
 import { ReplayDriverStanding } from '../components/Replay/ReplayDriverStandings';
-import { ReplayHeatmapSpot, ReplayHeatmapWorldSpot } from '../components/Replay/ReplayIncidentHeatmap';
+import {
+  ReplayHeatmapSpot,
+  ReplayHeatmapWorldSpot,
+} from '../components/Replay/ReplayIncidentHeatmap';
 import { TrackPoints } from '../utils/trackMapToSVG';
 import { buildReplayStandings } from '../utils/replayStandings';
 import { buildReplayTimelineEvents } from '../utils/replayTimeline';
