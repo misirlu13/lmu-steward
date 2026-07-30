@@ -29,7 +29,10 @@ const resolveMockResponse = async (
   return resolver;
 };
 
-const readMockJsonFile = (fileName: string, fallbackValue: unknown): unknown => {
+const readMockJsonFile = (
+  fileName: string,
+  fallbackValue: unknown,
+): unknown => {
   try {
     const fullPath = resolve(process.cwd(), '.erb', 'mocks', fileName);
 
@@ -46,7 +49,11 @@ const readMockJsonFile = (fileName: string, fallbackValue: unknown): unknown => 
 
 const isResponseObject = (
   value: unknown,
-): value is { status: 'success' | 'error'; data?: unknown; message?: string } => {
+): value is {
+  status: 'success' | 'error';
+  data?: unknown;
+  message?: string;
+} => {
   if (!value || typeof value !== 'object') {
     return false;
   }
@@ -151,7 +158,10 @@ const fallbackReplay: LMUReplay = {
 
 const replayMockData = readMockJsonFile('replayMock.json', []);
 const standingsMockData = readMockJsonFile('standingsMock.json', []);
-const standingsHistoryMockData = readMockJsonFile('standingsHistoryMock.json', {});
+const standingsHistoryMockData = readMockJsonFile(
+  'standingsHistoryMock.json',
+  {},
+);
 const sessionInfoMockData = readMockJsonFile('sessionInfoMock.json', null);
 const trackMapMockData = readMockJsonFile('trackMapMock.json', null);
 
@@ -162,7 +172,10 @@ if (mockReplays.length === 0) {
 }
 
 const standingsResponse = toStandingsSuccessResponse(standingsMockData);
-const standingsHistoryResponse = toSuccessResponse(standingsHistoryMockData, {});
+const standingsHistoryResponse = toSuccessResponse(
+  standingsHistoryMockData,
+  {},
+);
 const sessionInfoResponse = toSuccessResponse(sessionInfoMockData, {
   inRealtime: false,
   gamePhase: 9,
@@ -249,26 +262,6 @@ export const mockApiData: Partial<Record<ApiChannel, MockApiResolver>> = {
       slotID: 0,
     },
   },
-  [CONSTANTS.API.GET_USER_SETTINGS]: {
-    status: 'success',
-    data: {
-      lmuExecutablePath: CONSTANTS.LMU_DEFAULT_EXECUTABLE_PATH,
-      lmuReplayDirectoryPath: CONSTANTS.LMU_DEFAULT_REPLAY_DIRECTORY_PATH,
-      firstRun: false,
-      profileName: 'Race Steward',
-      profileEmail: 'steward@example.com',
-      profileRole: 'Chief Steward',
-      automaticSyncEnabled: true,
-      syncOnAppLaunch: true,
-      syncOnIntervalMinutes: 5,
-      anonymizeDriverData: false,
-      telemetryCacheEnabled: true,
-      clearCacheOnExit: false,
-      lastReplaySyncAt: Date.now(),
-      closeLmuWhenStewardExits: false,
-      closeLmuOnExitAlwaysPerformAction: false,
-    },
-  },
   [CONSTANTS.API.GET_PROFILE_INFO]: {
     status: 'success',
     data: {
@@ -284,10 +277,6 @@ export const mockApiData: Partial<Record<ApiChannel, MockApiResolver>> = {
       lastFetchedAt: Date.now(),
     },
   },
-  [CONSTANTS.API.POST_USER_SETTINGS]: {
-    status: 'success',
-    data: {},
-  },
   [CONSTANTS.API.POST_REPLAY_COMMAND_UI]: {
     status: 'success',
   },
@@ -296,20 +285,6 @@ export const mockApiData: Partial<Record<ApiChannel, MockApiResolver>> = {
   },
   [CONSTANTS.API.POST_CLOSE_LMU]: {
     status: 'success',
-  },
-  [CONSTANTS.API.POST_CLEAR_LOCAL_STORAGE]: {
-    status: 'success',
-    data: {
-      lmuExecutablePath: CONSTANTS.LMU_DEFAULT_EXECUTABLE_PATH,
-      lmuReplayDirectoryPath: CONSTANTS.LMU_DEFAULT_REPLAY_DIRECTORY_PATH,
-      firstRun: true,
-      automaticSyncEnabled: true,
-      syncOnAppLaunch: true,
-      syncOnIntervalMinutes: 5,
-      lastReplaySyncAt: null,
-      closeLmuWhenStewardExits: false,
-      closeLmuOnExitAlwaysPerformAction: false,
-    },
   },
   [CONSTANTS.API.POST_CLOSE_REPLAY]: {
     status: 'success',
@@ -364,11 +339,30 @@ export const mockApiData: Partial<Record<ApiChannel, MockApiResolver>> = {
   },
 };
 
+/**
+ * Channels backed by the local settings store rather than the LMU API. Dev mode
+ * stands in for the game, not for the user's own configuration, so these are
+ * served by the real handlers and persist across restarts as usual.
+ */
+const PASSTHROUGH_CHANNELS: ReadonlySet<ApiChannel> = new Set([
+  CONSTANTS.API.GET_USER_SETTINGS,
+  CONSTANTS.API.POST_USER_SETTINGS,
+  CONSTANTS.API.POST_DASHBOARD_VIEW,
+  CONSTANTS.API.POST_CLEAR_LOCAL_STORAGE,
+]);
+
+export const isMockPassthroughChannel = (channel: ApiChannel): boolean =>
+  PASSTHROUGH_CHANNELS.has(channel);
+
 export const replyWithMockData = async (
   event: Electron.IpcMainEvent,
   channel: ApiChannel,
   requestData: unknown,
 ): Promise<boolean> => {
+  if (isMockPassthroughChannel(channel)) {
+    return false;
+  }
+
   const resolver = mockApiData[channel];
 
   if (resolver === undefined) {

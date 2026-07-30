@@ -56,13 +56,21 @@ jest.mock('../components/Replay/ReplayChat', () => ({
 }));
 
 jest.mock('../components/Replay/ReplaySummary', () => ({
-  ReplaySummary: ({ isQuickViewModeActive }: { isQuickViewModeActive?: boolean }) => (
-    <div data-testid="replay-summary">quick-view:{String(isQuickViewModeActive)}</div>
+  ReplaySummary: ({
+    isQuickViewModeActive,
+  }: {
+    isQuickViewModeActive?: boolean;
+  }) => (
+    <div data-testid="replay-summary">
+      quick-view:{String(isQuickViewModeActive)}
+    </div>
   ),
 }));
 
 jest.mock('../components/Replay/ReplayMasterIncidentTimeline', () => ({
-  ReplayMasterIncidentTimeline: () => <div data-testid="master-incident-timeline" />,
+  ReplayMasterIncidentTimeline: () => (
+    <div data-testid="master-incident-timeline" />
+  ),
 }));
 
 jest.mock('../components/Replay/ReplayDriverStandings', () => ({
@@ -75,7 +83,9 @@ jest.mock('../components/Replay/ReplayIncidentHeatmap', () => ({
 
 describe('ReplayView quick view integration', () => {
   const useApiMock = useApi as jest.MockedFunction<typeof useApi>;
-  const sendMessageMock = sendMessage as jest.MockedFunction<typeof sendMessage>;
+  const sendMessageMock = sendMessage as jest.MockedFunction<
+    typeof sendMessage
+  >;
 
   const replayRecord = {
     hash: 'hash-1',
@@ -125,7 +135,9 @@ describe('ReplayView quick view integration', () => {
     renderReplay();
 
     expect(
-      screen.getByText(/Quick View is enabled\. Replay playback-dependent data is limited/i),
+      screen.getByText(
+        /Quick View is enabled\. Replay playback-dependent data is limited/i,
+      ),
     ).toBeTruthy();
     expect(screen.getByTestId('replay-summary').textContent).toContain(
       'quick-view:true',
@@ -146,7 +158,9 @@ describe('ReplayView quick view integration', () => {
     renderReplay();
 
     expect(
-      screen.queryByText(/Quick View is enabled\. Replay playback-dependent data is limited/i),
+      screen.queryByText(
+        /Quick View is enabled\. Replay playback-dependent data is limited/i,
+      ),
     ).toBeNull();
     expect(screen.getByTestId('replay-summary').textContent).toContain(
       'quick-view:false',
@@ -168,6 +182,8 @@ describe('ReplayView quick view integration', () => {
 
     fireEvent.click(screen.getByText('Dashboard'));
 
-    expect(sendMessageMock).toHaveBeenCalledWith(CONSTANTS.API.POST_CLOSE_REPLAY);
+    expect(sendMessageMock).toHaveBeenCalledWith(
+      CONSTANTS.API.POST_CLOSE_REPLAY,
+    );
   });
 });

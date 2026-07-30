@@ -70,7 +70,9 @@ export const ReplayJumpBar = ({ totalDurationSeconds }: ReplayJumpBarProps) => {
   const [speed, setSpeed] = useState<0.5 | 1 | 2>(1);
   const [cameraMode, setCameraMode] = useState<CameraMode>('driving');
   const [jumpPercent, setJumpPercent] = useState(0);
-  const [currentPlaybackDirection, setCurrentPlaybackDirection] = useState<'forward' | 'reverse'>('forward');
+  const [currentPlaybackDirection, setCurrentPlaybackDirection] = useState<
+    'forward' | 'reverse'
+  >('forward');
 
   const hasValidDuration =
     Number.isFinite(totalDurationSeconds) && Number(totalDurationSeconds) > 0;
@@ -172,7 +174,6 @@ export const ReplayJumpBar = ({ totalDurationSeconds }: ReplayJumpBarProps) => {
         return;
       }
       onForwardBySpeed();
-      return;
     }
   };
 
@@ -239,10 +240,23 @@ export const ReplayJumpBar = ({ totalDurationSeconds }: ReplayJumpBarProps) => {
   return (
     <Paper
       variant="outlined"
-      sx={{ borderColor: 'divider', borderRadius: 0, p: 2, position: 'fixed', bottom: 0, left: 0, right: 0, zIndex: 1000 }}
+      sx={{
+        borderColor: 'divider',
+        borderRadius: 0,
+        p: 2,
+        position: 'fixed',
+        bottom: 0,
+        left: 0,
+        right: 0,
+        zIndex: 1000,
+      }}
     >
       <Box sx={{ px: 1 }}>
-        <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 0.5 }}>
+        <Typography
+          variant="caption"
+          color="text.secondary"
+          sx={{ display: 'block', mb: 0.5 }}
+        >
           Replay Jump Bar
         </Typography>
         <Slider
@@ -256,7 +270,9 @@ export const ReplayJumpBar = ({ totalDurationSeconds }: ReplayJumpBarProps) => {
           valueLabelDisplay="on"
           valueLabelFormat={(value) =>
             hasValidDuration
-              ? formatDurationLabel((Number(value) / 100) * replayDurationSeconds)
+              ? formatDurationLabel(
+                  (Number(value) / 100) * replayDurationSeconds,
+                )
               : '--:--:--'
           }
         />
@@ -274,11 +290,7 @@ export const ReplayJumpBar = ({ totalDurationSeconds }: ReplayJumpBarProps) => {
         justifyContent={{ xs: 'space-between', md: 'space-between' }}
         sx={{ mt: 1 }}
       >
-        <Stack
-          direction="row"
-          spacing={0.5}
-          alignItems="center"
-        >
+        <Stack direction="row" spacing={0.5} alignItems="center">
           <IconButton onClick={onReverseBySpeed} size="small">
             <FastRewindIcon />
           </IconButton>

@@ -40,6 +40,30 @@ export interface GetReplaysRequest {
   gameType?: ReplayGameType;
 }
 
+export type DashboardSortByOptions = 'date' | 'track' | 'incidents';
+
+export type DashboardSortDirection = 'asc' | 'desc';
+
+/**
+ * Dashboard filter and sort state as written to persistent storage. Dates are
+ * stored as ISO strings because Dayjs instances do not survive serialization.
+ */
+export interface PersistedDashboardView {
+  filters: {
+    dateRange: [string | null, string | null];
+    track: string;
+    sessionType: string;
+    sessionLength: string;
+    gameType: ReplayGameTypeFilter;
+    carClass: string;
+    fieldSize: string;
+    multiSingleClass: string;
+    incidentCount: string;
+  };
+  sortBy: DashboardSortByOptions;
+  sortDirection: DashboardSortDirection;
+}
+
 export type LMUReplayCommands =
   | 'VCRCOMMAND_REVERSESCAN'
   | 'VCRCOMMAND_PLAYBACKWARDS'
@@ -48,7 +72,6 @@ export type LMUReplayCommands =
   | 'VCRCOMMAND_SLOW'
   | 'VCRCOMMAND_PLAY'
   | 'VCRCOMMAND_FORWARDSCAN';
-
 
 export interface LMUStewardAPIResponse<T> {
   status: 'success' | 'error';

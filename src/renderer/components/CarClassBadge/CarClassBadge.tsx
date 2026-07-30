@@ -1,11 +1,11 @@
-import Box from "@mui/material/Box";
+import Box from '@mui/material/Box';
 
 const carClassColorMap: Record<string, string> = {
-  'P2': 'primary.dark',
-  'P3': 'qualifying.main',
-  'HY': 'error.main',
-  'GT3': 'success.alt',
-  'GTE': 'warning.alt',
+  P2: 'primary.dark',
+  P3: 'qualifying.main',
+  HY: 'error.main',
+  GT3: 'success.alt',
+  GTE: 'warning.alt',
 };
 
 export const getCarClassBadgeColor = (carClass: string) => {

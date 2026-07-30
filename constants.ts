@@ -20,6 +20,7 @@ export const CONSTANTS = {
     GET_FOCUSED_CAR: 'get.focused-car',
     GET_STORAGE_DEBUG_INFO: 'get.storage-debug-info',
     POST_USER_SETTINGS: 'post.user-settings',
+    POST_DASHBOARD_VIEW: 'post.dashboard-view',
     POST_WATCH_REPLAY: 'post.watch-replay',
     POST_CAMERA_ANGLE: 'post.camera-angle',
     POST_CLOSE_REPLAY: 'post.close-replay',

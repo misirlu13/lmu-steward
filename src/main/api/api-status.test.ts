@@ -3,7 +3,8 @@ import { getApiStatus } from './api-status';
 
 describe('main/api-status', () => {
   const fetchMock = jest.fn();
-  const createEvent = () => ({ reply: jest.fn() } as unknown as Electron.IpcMainEvent);
+  const createEvent = () =>
+    ({ reply: jest.fn() }) as unknown as Electron.IpcMainEvent;
 
   beforeEach(() => {
     jest.clearAllMocks();
@@ -24,7 +25,7 @@ describe('main/api-status', () => {
     expect(fetchMock).toHaveBeenCalledWith(
       `${CONSTANTS.LMU_API_BASE_URL}/navigation/state`,
     );
-    expect((event.reply as jest.Mock)).toHaveBeenCalledWith(
+    expect(event.reply as jest.Mock).toHaveBeenCalledWith(
       CONSTANTS.API.GET_API_STATUS,
       { status: 'success', data: payload },
     );
@@ -41,7 +42,7 @@ describe('main/api-status', () => {
 
     await getApiStatus(event);
 
-    expect((event.reply as jest.Mock)).toHaveBeenCalledWith(
+    expect(event.reply as jest.Mock).toHaveBeenCalledWith(
       CONSTANTS.API.GET_API_STATUS,
       { status: 'error', message: 'API responded with status 503' },
     );
@@ -54,7 +55,7 @@ describe('main/api-status', () => {
 
     await getApiStatus(event);
 
-    expect((event.reply as jest.Mock)).toHaveBeenCalledWith(
+    expect(event.reply as jest.Mock).toHaveBeenCalledWith(
       CONSTANTS.API.GET_API_STATUS,
       { status: 'error', message: 'Network unavailable' },
     );

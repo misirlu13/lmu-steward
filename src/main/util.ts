@@ -1,7 +1,7 @@
 /* eslint import/prefer-default-export: off */
 import { URL } from 'url';
 import path from 'path';
-import crypto from "crypto"
+import crypto from 'crypto';
 
 interface ReplayHashSource {
   metadata?: {
@@ -29,11 +29,8 @@ export function generateReplayHash(replay: ReplayHashSource): string {
     replay.metadata?.session,
     replay.replayName,
     replay.timestamp,
-    replay.size
-  ].join("|")
+    replay.size,
+  ].join('|');
 
-  return crypto
-    .createHash("sha256")
-    .update(identityString)
-    .digest("hex")
+  return crypto.createHash('sha256').update(identityString).digest('hex');
 }

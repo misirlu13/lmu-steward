@@ -93,12 +93,12 @@ export const AppExitConfirmDialog: React.FC = () => {
         </DialogContentText>
         <FormControlLabel
           sx={{ mt: 1 }}
-          control={(
+          control={
             <Checkbox
               checked={alwaysPerformAction}
               onChange={(_, checked) => setAlwaysPerformAction(checked)}
             />
-          )}
+          }
           label="Always perform this action"
         />
       </DialogContent>

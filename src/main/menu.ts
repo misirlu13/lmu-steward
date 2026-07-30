@@ -1,9 +1,4 @@
-import {
-  app,
-  Menu,
-  shell,
-  BrowserWindow,
-} from 'electron';
+import { app, Menu, shell, BrowserWindow } from 'electron';
 import path from 'path';
 import {
   getLegacyLocalDataPaths,

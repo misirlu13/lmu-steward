@@ -3,14 +3,14 @@
 import { contextBridge, ipcRenderer, IpcRendererEvent } from 'electron';
 import { CONSTANTS } from '@constants';
 
-export type Channels = typeof CONSTANTS.API[keyof typeof CONSTANTS.API];
+export type Channels = (typeof CONSTANTS.API)[keyof typeof CONSTANTS.API];
 
 const electronHandler = {
   ipcRenderer: {
     sendMessage(channel: Channels, ...args: unknown[]) {
       ipcRenderer.send(channel, ...args);
     },
-    on(channel: Channels, func: (...args: unknown[]) => (void)) {
+    on(channel: Channels, func: (...args: unknown[]) => void) {
       const subscription = (_event: IpcRendererEvent, ...args: unknown[]) =>
         func(...args);
       ipcRenderer.on(channel, subscription);
@@ -53,15 +53,18 @@ window.addEventListener('error', (event: ErrorEvent) => {
   });
 });
 
-window.addEventListener('unhandledrejection', (event: PromiseRejectionEvent) => {
-  const reason = event.reason;
-  reportRendererError({
-    source: 'unhandledRejection',
-    message: reason instanceof Error ? reason.message : String(reason),
-    stack: reason instanceof Error ? reason.stack : undefined,
-    detail: reason instanceof Error ? undefined : String(reason),
-  });
-});
+window.addEventListener(
+  'unhandledrejection',
+  (event: PromiseRejectionEvent) => {
+    const { reason } = event;
+    reportRendererError({
+      source: 'unhandledRejection',
+      message: reason instanceof Error ? reason.message : String(reason),
+      stack: reason instanceof Error ? reason.stack : undefined,
+      detail: reason instanceof Error ? undefined : String(reason),
+    });
+  },
+);
 
 contextBridge.exposeInMainWorld('electron', electronHandler);
 

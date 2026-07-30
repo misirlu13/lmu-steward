@@ -1,5 +1,4 @@
 import {
-  Box,
   Chip,
   Paper,
   TableContainer,
@@ -68,7 +67,10 @@ export const LapByLapPerformanceBreakdown: React.FC<
   }, [orderedRows, page]);
 
   useEffect(() => {
-    const maxPage = Math.max(0, Math.ceil(orderedRows.length / ROWS_PER_PAGE) - 1);
+    const maxPage = Math.max(
+      0,
+      Math.ceil(orderedRows.length / ROWS_PER_PAGE) - 1,
+    );
     if (page > maxPage) {
       setPage(maxPage);
     }
@@ -88,13 +90,24 @@ export const LapByLapPerformanceBreakdown: React.FC<
         spacing={1.5}
         alignItems="center"
         justifyContent="space-between"
-        sx={{ px: 2, py: 1.5, borderBottom: '1px solid', borderColor: 'divider' }}
+        sx={{
+          px: 2,
+          py: 1.5,
+          borderBottom: '1px solid',
+          borderColor: 'divider',
+        }}
       >
         <Typography variant="subtitle1" fontWeight={700}>
           Lap-by-Lap Performance Breakdown
         </Typography>
 
-        <Stack direction="row" spacing={1.5} alignItems="center" useFlexGap flexWrap="wrap">
+        <Stack
+          direction="row"
+          spacing={1.5}
+          alignItems="center"
+          useFlexGap
+          flexWrap="wrap"
+        >
           <ToggleButtonGroup
             exclusive
             size="small"
@@ -112,13 +125,21 @@ export const LapByLapPerformanceBreakdown: React.FC<
           </ToggleButtonGroup>
           <Stack direction="row" spacing={0.5} alignItems="center">
             <WarningAmberIcon sx={{ fontSize: 14, color: 'warning.main' }} />
-            <Typography variant="caption" color="text.secondary" fontWeight={700}>
+            <Typography
+              variant="caption"
+              color="text.secondary"
+              fontWeight={700}
+            >
               Track Limits
             </Typography>
           </Stack>
           <Stack direction="row" spacing={0.5} alignItems="center">
             <ReportProblemIcon sx={{ fontSize: 14, color: 'error.main' }} />
-            <Typography variant="caption" color="text.secondary" fontWeight={700}>
+            <Typography
+              variant="caption"
+              color="text.secondary"
+              fontWeight={700}
+            >
               Incidents
             </Typography>
           </Stack>
@@ -157,11 +178,15 @@ export const LapByLapPerformanceBreakdown: React.FC<
                   <TableCell sx={{ fontFamily: 'monospace', fontWeight: 700 }}>
                     {row.lapNumber}
                   </TableCell>
-                  <TableCell sx={{ fontFamily: 'monospace' }}>{row.standingLabel}</TableCell>
+                  <TableCell sx={{ fontFamily: 'monospace' }}>
+                    {row.standingLabel}
+                  </TableCell>
                   <TableCell
                     sx={{
                       fontFamily: 'monospace',
-                      color: row.isFastestLap ? 'qualifying.main' : 'text.primary',
+                      color: row.isFastestLap
+                        ? 'qualifying.main'
+                        : 'text.primary',
                       fontWeight: row.isFastestLap ? 700 : 400,
                     }}
                   >
@@ -183,7 +208,9 @@ export const LapByLapPerformanceBreakdown: React.FC<
                   </TableCell>
                   <TableCell align="center">
                     {row.hasTrackLimit ? (
-                      <WarningAmberIcon sx={{ fontSize: 16, color: 'warning.main' }} />
+                      <WarningAmberIcon
+                        sx={{ fontSize: 16, color: 'warning.main' }}
+                      />
                     ) : (
                       <Typography variant="caption" color="text.secondary">
                         -
@@ -192,7 +219,9 @@ export const LapByLapPerformanceBreakdown: React.FC<
                   </TableCell>
                   <TableCell align="center">
                     {row.hasIncident ? (
-                      <ReportProblemIcon sx={{ fontSize: 16, color: 'error.main' }} />
+                      <ReportProblemIcon
+                        sx={{ fontSize: 16, color: 'error.main' }}
+                      />
                     ) : (
                       <Typography variant="caption" color="text.secondary">
                         -

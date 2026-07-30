@@ -12,7 +12,9 @@ jest.mock('../components/DriverAnalysis/driverAnalysisUtils', () => ({
 }));
 
 describe('replayCommands', () => {
-  const sendMessageMock = sendMessage as jest.MockedFunction<typeof sendMessage>;
+  const sendMessageMock = sendMessage as jest.MockedFunction<
+    typeof sendMessage
+  >;
   const resolveIncidentFocusTargetMock =
     resolveIncidentFocusTarget as jest.MockedFunction<
       typeof resolveIncidentFocusTarget

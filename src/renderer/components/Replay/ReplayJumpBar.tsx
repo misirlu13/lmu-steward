@@ -38,14 +38,25 @@ export const ReplayJumpBar = ({
   const INCIDENT_JUMP_DEBOUNCE_MS = 300;
   const CAMERA_COMMAND_DEBOUNCE_MS = 300;
   const INCIDENT_TOOLTIP_HIDE_MS = 1800;
-  const { isPlaying, speed, onForwardBySpeed, onPlayPause, onReverseBySpeed, onSpeedChange } =
-    useReplayPlaybackControls();
+  const {
+    isPlaying,
+    speed,
+    onForwardBySpeed,
+    onPlayPause,
+    onReverseBySpeed,
+    onSpeedChange,
+  } = useReplayPlaybackControls();
   const { cameraMode, onCameraModeChange, onCycleCamera } =
     useReplayCameraControls(CAMERA_COMMAND_DEBOUNCE_MS);
   const [incidentSliderIndex, setIncidentSliderIndex] = useState(0);
-  const [isIncidentTooltipVisible, setIsIncidentTooltipVisible] = useState(false);
-  const incidentJumpDebounceTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const incidentTooltipHideTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [isIncidentTooltipVisible, setIsIncidentTooltipVisible] =
+    useState(false);
+  const incidentJumpDebounceTimeoutRef = useRef<ReturnType<
+    typeof setTimeout
+  > | null>(null);
+  const incidentTooltipHideTimeoutRef = useRef<ReturnType<
+    typeof setTimeout
+  > | null>(null);
 
   const hasIncidents = incidents.length > 0;
   const selectedIncidentIndexFromId = useMemo(() => {
@@ -53,11 +64,15 @@ export const ReplayJumpBar = ({
       return -1;
     }
 
-    return incidents.findIndex((incident) => incident.id === selectedIncidentId);
+    return incidents.findIndex(
+      (incident) => incident.id === selectedIncidentId,
+    );
   }, [incidents, selectedIncidentId]);
 
   const activeIncidentIndex =
-    selectedIncidentIndexFromId >= 0 ? selectedIncidentIndexFromId : incidentSliderIndex;
+    selectedIncidentIndexFromId >= 0
+      ? selectedIncidentIndexFromId
+      : incidentSliderIndex;
   const safeIncidentIndex = hasIncidents
     ? Math.min(Math.max(activeIncidentIndex, 0), incidents.length - 1)
     : 0;
@@ -112,7 +127,10 @@ export const ReplayJumpBar = ({
       return;
     }
 
-    const clampedIndex = Math.min(Math.max(Math.floor(index), 0), incidents.length - 1);
+    const clampedIndex = Math.min(
+      Math.max(Math.floor(index), 0),
+      incidents.length - 1,
+    );
     setIncidentSliderIndex(clampedIndex);
     showIncidentTooltipTemporarily();
 
@@ -131,7 +149,10 @@ export const ReplayJumpBar = ({
       return;
     }
 
-    const clampedIndex = Math.min(Math.max(Math.floor(index), 0), incidents.length - 1);
+    const clampedIndex = Math.min(
+      Math.max(Math.floor(index), 0),
+      incidents.length - 1,
+    );
     setIncidentSliderIndex(clampedIndex);
     showIncidentTooltipTemporarily();
 
@@ -206,14 +227,20 @@ export const ReplayJumpBar = ({
       }}
     >
       <Box sx={{ px: 1 }}>
-        <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 0.5 }}>
+        <Typography
+          variant="caption"
+          color="text.secondary"
+          sx={{ display: 'block', mb: 0.5 }}
+        >
           Incident Jump Navigator
         </Typography>
         {hasIncidents ? (
           <>
             <Slider
               value={safeIncidentIndex}
-              onChange={(_, value) => scheduleJumpToIncidentAtIndex(value as number)}
+              onChange={(_, value) =>
+                scheduleJumpToIncidentAtIndex(value as number)
+              }
               onChangeCommitted={(_, value) => onIncidentSliderCommitted(value)}
               size="small"
               min={0}
@@ -255,15 +282,8 @@ export const ReplayJumpBar = ({
         justifyContent={{ xs: 'space-between', md: 'space-between' }}
         sx={{ mt: 1 }}
       >
-        <Stack
-          direction="row"
-          spacing={0.5}
-          alignItems="center"
-        >
-          <IconButton
-            onClick={onReverseBySpeed}
-            size="small"
-          >
+        <Stack direction="row" spacing={0.5} alignItems="center">
+          <IconButton onClick={onReverseBySpeed} size="small">
             <FastRewindIcon />
           </IconButton>
           <IconButton
@@ -276,10 +296,7 @@ export const ReplayJumpBar = ({
           >
             {isPlaying ? <PauseIcon /> : <PlayArrowIcon />}
           </IconButton>
-          <IconButton
-            onClick={onForwardBySpeed}
-            size="small"
-          >
+          <IconButton onClick={onForwardBySpeed} size="small">
             <FastForwardIcon />
           </IconButton>
           <ToggleButtonGroup
@@ -312,7 +329,9 @@ export const ReplayJumpBar = ({
               <Button
                 size="small"
                 variant="outlined"
-                onClick={() => jumpToIncidentAtIndex(getPreviousIncidentButtonIndex())}
+                onClick={() =>
+                  jumpToIncidentAtIndex(getPreviousIncidentButtonIndex())
+                }
                 disabled={!hasIncidents}
               >
                 Previous Incident
@@ -320,7 +339,9 @@ export const ReplayJumpBar = ({
               <Button
                 size="small"
                 variant="outlined"
-                onClick={() => jumpToIncidentAtIndex(getNextIncidentButtonIndex())}
+                onClick={() =>
+                  jumpToIncidentAtIndex(getNextIncidentButtonIndex())
+                }
                 disabled={!hasIncidents}
               >
                 Next Incident

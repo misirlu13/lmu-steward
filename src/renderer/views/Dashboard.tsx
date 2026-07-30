@@ -1,10 +1,10 @@
 import { Box, Typography } from '@mui/material';
+import FolderOffIcon from '@mui/icons-material/FolderOff';
 import { DashboardReplay } from '../components/Dashboard/DashboardReplay';
 import { ViewHeader } from '../components/Common/ViewHeader';
 import { DashboardControls } from '../components/Dashboard/DashboardControls';
 import { DashboardFooterSummary } from '../components/Dashboard/DashboardFooterSummary';
 import { useDashboardReplays } from '../hooks/useDashboardReplays';
-import FolderOffIcon from '@mui/icons-material/FolderOff';
 
 export const DashboardView: React.FC = () => {
   const {

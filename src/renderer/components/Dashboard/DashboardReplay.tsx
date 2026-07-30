@@ -1,4 +1,4 @@
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import { LMUReplay, SessionIncidents, SessionMetaData } from '@types';
 import Box from '@mui/material/Box';
 import Typography from '@mui/material/Typography';
@@ -6,8 +6,6 @@ import { CONSTANTS } from '@constants';
 import Accordion from '@mui/material/Accordion';
 import AccordionSummary from '@mui/material/AccordionSummary';
 import AccordionDetails from '@mui/material/AccordionDetails';
-import CalendarMonthIcon from '@mui/icons-material/CalendarMonth';
-import { useState } from 'react';
 import Table from '@mui/material/Table';
 import TableBody from '@mui/material/TableBody';
 import TableCell from '@mui/material/TableCell';
@@ -25,8 +23,12 @@ import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
 import { useNavigate } from 'react-router-dom';
 import { getSessionIncidentScore } from '@/renderer/utils/incidentScore';
 import { SessionIncidentSeverityLabel } from '../IncidentSeverityLabels/SessionIncidentSeverityLabel';
-import LocationOnIcon from '@mui/icons-material/LocationOn';
-import { getSessionCarClasses, getSessionIncidents, getSessionMetaData, getSessionDuration } from '../../utils/sessionUtils';
+import {
+  getSessionCarClasses,
+  getSessionIncidents,
+  getSessionMetaData,
+  getSessionDuration,
+} from '../../utils/sessionUtils';
 import { CarClassBadge } from '../CarClassBadge/CarClassBadge';
 import { ReplaySubtitle } from '../Common/ReplaySubtitle';
 
@@ -42,6 +44,27 @@ interface DashboardReplayTableRow {
   sessionMetaData: SessionMetaData;
 }
 
+const sessionOrder: Record<string, number> = {
+  RACE: 0,
+  QUALIFY: 1,
+  PRACTICE: 2,
+};
+
+const sessionTypeLabelMap: Record<
+  string,
+  DashboardReplayTableRow['sessionType']
+> = {
+  RACE: 'Race',
+  QUALIFY: 'Qualifying',
+  PRACTICE: 'Practice',
+};
+
+const sessionColorMap: Record<string, string> = {
+  Race: 'error.main',
+  Qualifying: 'qualifying.main',
+  Practice: 'success.main',
+};
+
 export const DashboardReplay: React.FC<DashboardReplayProps> = ({
   replayGroup,
 }) => {
@@ -56,24 +79,6 @@ export const DashboardReplay: React.FC<DashboardReplayProps> = ({
   const [isActive, setIsActive] = useState<boolean>(false);
   const [tableRows, setTableRows] = useState<DashboardReplayTableRow[]>([]);
   const navigate = useNavigate();
-  const sessionOrder: Record<string, number> = {
-    RACE: 0,
-    QUALIFY: 1,
-    PRACTICE: 2,
-  };
-  const sessionTypeLabelMap: Record<
-    string,
-    DashboardReplayTableRow['sessionType']
-  > = {
-    RACE: 'Race',
-    QUALIFY: 'Qualifying',
-    PRACTICE: 'Practice',
-  };
-  const sessionColorMap: Record<string, string> = {
-    Race: 'error.main',
-    Qualifying: 'qualifying.main',
-    Practice: 'success.main',
-  };
 
   useEffect(() => {
     const rows = [...replayGroup]
@@ -84,12 +89,13 @@ export const DashboardReplay: React.FC<DashboardReplayProps> = ({
           sessionOrder[b.metadata.session] ?? Number.MAX_SAFE_INTEGER;
         return aOrder - bOrder;
       })
-      .map((replay) => ({
-        hash: replay.hash,
-        sessionType: sessionTypeLabelMap[replay.metadata.session] ?? 'Practice',
-        incidents: getSessionIncidents(replay),
-        duration: getSessionDuration(replay),
-        sessionMetaData: getSessionMetaData(replay),
+      .map((groupReplay) => ({
+        hash: groupReplay.hash,
+        sessionType:
+          sessionTypeLabelMap[groupReplay.metadata.session] ?? 'Practice',
+        incidents: getSessionIncidents(groupReplay),
+        duration: getSessionDuration(groupReplay),
+        sessionMetaData: getSessionMetaData(groupReplay),
       }));
 
     setTableRows(rows);
@@ -138,7 +144,7 @@ export const DashboardReplay: React.FC<DashboardReplayProps> = ({
                 backgroundSize: 'cover',
                 backgroundPosition: 'center',
               }}
-            ></Box>
+            />
             <Box
               sx={{
                 display: 'flex',
@@ -219,7 +225,14 @@ export const DashboardReplay: React.FC<DashboardReplayProps> = ({
                 >
                   Car Class
                 </Typography>
-                <Box sx={{display: 'flex', flexDirection: 'row', mt: 0.5, gap: 0.75}}>
+                <Box
+                  sx={{
+                    display: 'flex',
+                    flexDirection: 'row',
+                    mt: 0.5,
+                    gap: 0.75,
+                  }}
+                >
                   {getSessionCarClasses(replay)?.map((carClass) => (
                     <CarClassBadge key={carClass} carClass={carClass} />
                   ))}
@@ -550,4 +563,3 @@ export const DashboardReplay: React.FC<DashboardReplayProps> = ({
     </Box>
   );
 };
-

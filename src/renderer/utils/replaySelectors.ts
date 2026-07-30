@@ -26,9 +26,7 @@ interface HeatmapEnvelope<T> {
   heatmapSpots?: T[];
 }
 
-export const extractStandingsEntries = <T,>(
-  standingsData: unknown,
-): T[] => {
+export const extractStandingsEntries = <T>(standingsData: unknown): T[] => {
   const source = standingsData as T[] | StandingsEnvelope<T> | null | undefined;
   if (Array.isArray(source)) {
     return source;
@@ -45,9 +43,7 @@ export const extractStandingsEntries = <T,>(
   return [];
 };
 
-export const extractQualificationEntries = <T,>(
-  standingsData: unknown,
-): T[] => {
+export const extractQualificationEntries = <T>(standingsData: unknown): T[] => {
   const source = standingsData as QualificationEnvelope<T> | null | undefined;
   const qualification = source?.qualification;
   if (Array.isArray(qualification)) {
@@ -65,10 +61,12 @@ export const extractQualificationEntries = <T,>(
   return [];
 };
 
-export const extractTrackMapPoints = (
-  source: unknown,
-): TrackPoints[] => {
-  const trackMapSource = source as ReplayTrackPointLike[] | TrackMapEnvelope | null | undefined;
+export const extractTrackMapPoints = (source: unknown): TrackPoints[] => {
+  const trackMapSource = source as
+    | ReplayTrackPointLike[]
+    | TrackMapEnvelope
+    | null
+    | undefined;
   let points: ReplayTrackPointLike[] = [];
 
   if (Array.isArray(trackMapSource)) {
@@ -90,9 +88,11 @@ export const extractTrackMapPoints = (
   );
 };
 
-export const extractHeatmapSpots = <T,>(
-  standingsHistoryData: unknown,
-): T[] =>
-  Array.isArray((standingsHistoryData as HeatmapEnvelope<T> | null | undefined)?.heatmapSpots)
-    ? (standingsHistoryData as HeatmapEnvelope<T> | null | undefined)!.heatmapSpots!
+export const extractHeatmapSpots = <T>(standingsHistoryData: unknown): T[] =>
+  Array.isArray(
+    (standingsHistoryData as HeatmapEnvelope<T> | null | undefined)
+      ?.heatmapSpots,
+  )
+    ? (standingsHistoryData as HeatmapEnvelope<T> | null | undefined)!
+        .heatmapSpots!
     : [];

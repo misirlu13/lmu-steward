@@ -140,9 +140,7 @@ const buildDriverIncidentMap = (
 
   if (stream) {
     toArray<{ Driver?: string }>(
-      stream.TrackLimits as
-        | { Driver?: string }
-        | Array<{ Driver?: string }>,
+      stream.TrackLimits as { Driver?: string } | Array<{ Driver?: string }>,
     ).forEach((item) => {
       const rawName = String(item?.Driver ?? '').trim();
       const key = getDriverIncidentKey(rawName);
@@ -150,9 +148,7 @@ const buildDriverIncidentMap = (
     });
 
     toArray<{ Driver?: string }>(
-      stream.Penalty as
-        | { Driver?: string }
-        | Array<{ Driver?: string }>,
+      stream.Penalty as { Driver?: string } | Array<{ Driver?: string }>,
     ).forEach((item) => {
       const rawName = String(item?.Driver ?? '').trim();
       const key = getDriverIncidentKey(rawName);
@@ -160,9 +156,7 @@ const buildDriverIncidentMap = (
     });
 
     toArray<{ _?: string }>(
-      stream.Incident as
-        | { _?: string }
-        | Array<{ _?: string }>,
+      stream.Incident as { _?: string } | Array<{ _?: string }>,
     ).forEach((item) => {
       const sourceText = String(item?._ ?? '').trim();
       const primary = extractNameAndCarNumberFromIncident(sourceText);
@@ -228,9 +222,15 @@ export const buildReplayStandings = ({
       sessionDriverByPosition.set(position, driver);
     }
 
-    const normalizedClass = normalizeDriverCarClass(String(driver?.CarClass ?? ''));
+    const normalizedClass = normalizeDriverCarClass(
+      String(driver?.CarClass ?? ''),
+    );
     const classPosition = Number(driver?.ClassPosition);
-    if (normalizedClass && Number.isFinite(classPosition) && classPosition > 0) {
+    if (
+      normalizedClass &&
+      Number.isFinite(classPosition) &&
+      classPosition > 0
+    ) {
       sessionDriverByClassAndClassPosition.set(
         `${normalizedClass}|${classPosition}`,
         driver,
@@ -240,7 +240,9 @@ export const buildReplayStandings = ({
 
   qualificationEntries.forEach((rawEntry) => {
     const entry = rawEntry as QualificationEntry;
-    const name = String(entry?.driverName ?? entry?.Driver ?? entry?.Name ?? '').trim();
+    const name = String(
+      entry?.driverName ?? entry?.Driver ?? entry?.Name ?? '',
+    ).trim();
     if (name) {
       qualificationByName.set(normalizeDriverName(name), entry);
     }
@@ -250,7 +252,9 @@ export const buildReplayStandings = ({
       qualificationByCarNumber.set(carNumber, entry);
     }
 
-    const id = String(entry?.driverId ?? entry?.slotID ?? entry?.ID ?? '').trim();
+    const id = String(
+      entry?.driverId ?? entry?.slotID ?? entry?.ID ?? '',
+    ).trim();
     if (id) {
       qualificationById.set(id, entry);
     }
@@ -263,8 +267,9 @@ export const buildReplayStandings = ({
     }
   });
 
-  const { driverIncidentMap, getDriverIncidentKey } =
-    buildDriverIncidentMap(currentSessionLogData);
+  const { driverIncidentMap, getDriverIncidentKey } = buildDriverIncidentMap(
+    currentSessionLogData,
+  );
 
   return standingsEntries.map((rawEntry, index: number) => {
     const entry = rawEntry as StandingsEntry;
@@ -280,7 +285,9 @@ export const buildReplayStandings = ({
     const matchedSessionDriver =
       sessionDriverByName.get(normalizeDriverName(driverName)) ||
       (carNumber ? sessionDriverByCarNumber.get(carNumber) : undefined) ||
-      (normalizedEntryClass && Number.isFinite(entryClassPosition) && entryClassPosition > 0
+      (normalizedEntryClass &&
+      Number.isFinite(entryClassPosition) &&
+      entryClassPosition > 0
         ? sessionDriverByClassAndClassPosition.get(
             `${normalizedEntryClass}|${entryClassPosition}`,
           )
@@ -290,7 +297,11 @@ export const buildReplayStandings = ({
         : undefined);
 
     const driverId = String(
-      entry?.driverId ?? entry?.slotID ?? entry?.carId ?? entry?.steamID ?? index,
+      entry?.driverId ??
+        entry?.slotID ??
+        entry?.carId ??
+        entry?.steamID ??
+        index,
     );
 
     const matchedQualification =
@@ -304,7 +315,9 @@ export const buildReplayStandings = ({
     const logBestLapTime = getBestLapSecondsFromDriver(matchedSessionDriver);
     const standingsBestLapTime = Number(entry?.bestLapTime);
     const hasValidLogBestLap =
-      logBestLapTime !== null && Number.isFinite(logBestLapTime) && logBestLapTime > 0;
+      logBestLapTime !== null &&
+      Number.isFinite(logBestLapTime) &&
+      logBestLapTime > 0;
     const fastestLapSeconds = hasValidLogBestLap
       ? logBestLapTime
       : Number.isFinite(standingsBestLapTime) && standingsBestLapTime > 0
@@ -325,7 +338,9 @@ export const buildReplayStandings = ({
         };
 
     const totalDriverIncidents =
-      incidentStats.trackLimits + incidentStats.incidents + incidentStats.penalties;
+      incidentStats.trackLimits +
+      incidentStats.incidents +
+      incidentStats.penalties;
 
     const lapsCompletedForRisk = Number(
       matchedSessionDriver?.Laps ?? entry?.lapsCompleted ?? 0,
@@ -334,7 +349,10 @@ export const buildReplayStandings = ({
     const riskIndex = Math.round(
       Math.max(
         0,
-        Math.min(100, getDriverIncidentScore(incidentStats, lapsCompletedForRisk) * 10),
+        Math.min(
+          100,
+          getDriverIncidentScore(incidentStats, lapsCompletedForRisk) * 10,
+        ),
       ),
     );
 
@@ -360,12 +378,16 @@ export const buildReplayStandings = ({
         entry?.SlotID ??
         '',
     ).trim();
-    const focusDriverSid = String(matchedSessionDriver?.ID ?? entry?.driverId ?? '').trim();
+    const focusDriverSid = String(
+      matchedSessionDriver?.ID ?? entry?.driverId ?? '',
+    ).trim();
     const entryQualificationPosition = Number(entry?.qualification);
     const resolvedStartingPosition =
-      Number.isFinite(matchedQualificationPosition) && matchedQualificationPosition > 0
+      Number.isFinite(matchedQualificationPosition) &&
+      matchedQualificationPosition > 0
         ? matchedQualificationPosition
-        : Number.isFinite(entryQualificationPosition) && entryQualificationPosition > 0
+        : Number.isFinite(entryQualificationPosition) &&
+            entryQualificationPosition > 0
           ? entryQualificationPosition
           : undefined;
 
@@ -374,20 +396,29 @@ export const buildReplayStandings = ({
       startingPosition: resolvedStartingPosition,
       driverName,
       driverId,
-      teamName: String(entry?.fullTeamName ?? entry?.teamName ?? 'Unknown Team'),
+      teamName: String(
+        entry?.fullTeamName ?? entry?.teamName ?? 'Unknown Team',
+      ),
       carName: String(
-        entry?.vehicleName ?? entry?.carName ?? entry?.vehicleFilename ?? 'Unknown Car',
+        entry?.vehicleName ??
+          entry?.carName ??
+          entry?.vehicleFilename ??
+          'Unknown Car',
       ),
       carClass:
         normalizeDriverCarClass(
           String(entry?.carClass ?? matchedSessionDriver?.CarClass ?? ''),
-        ) || String(entry?.carClass ?? matchedSessionDriver?.CarClass ?? 'Unknown'),
+        ) ||
+        String(entry?.carClass ?? matchedSessionDriver?.CarClass ?? 'Unknown'),
       fastestLap: formatLapTime(fastestLapSeconds),
       incidents: totalDriverIncidents,
       riskIndex,
       isAiDriver:
-        String(matchedSessionDriver?.isPlayer ?? matchedSessionDriver?.IsPlayer ?? '').trim() ===
-        '0',
+        String(
+          matchedSessionDriver?.isPlayer ??
+            matchedSessionDriver?.IsPlayer ??
+            '',
+        ).trim() === '0',
       slotId: focusSlotId || undefined,
       driverSid: focusDriverSid || undefined,
       hasLapData: Boolean(matchedSessionDriver),

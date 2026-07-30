@@ -1,11 +1,10 @@
 import { CONSTANTS } from '@constants';
-import { generateReplayHash } from '../util';
-import { GetReplaysRequest, LMUReplay } from '@types';
+import { GetReplaysRequest, LMUReplay, SessionType } from '@types';
 import { createReadStream } from 'fs';
 import { readdir, readFile } from 'fs/promises';
-import { resolve, join } from 'path';
-import { SessionType } from '@types';
+import { resolve as resolvePath, join } from 'path';
 import { parseStringPromise } from 'xml2js';
+import { generateReplayHash } from '../util';
 import { readUserSettings, writeUserSettings } from './user-settings';
 import { getMainPersistentStore } from '../storage/local-data-store';
 
@@ -97,7 +96,9 @@ interface ParsedLogXml {
 }
 
 const isMultiplayerSetting = (setting: unknown): boolean =>
-  String(setting ?? '').trim().toLowerCase() === 'multiplayer';
+  String(setting ?? '')
+    .trim()
+    .toLowerCase() === 'multiplayer';
 
 const getReplayMultiplayerFromLogData = (
   logData: ParsedRaceResults | null | undefined,
@@ -129,6 +130,8 @@ const toErrorMessage = (error: unknown): string => {
   return String(error ?? 'Unknown error');
 };
 
+const store: ReplayStore | null = getMainPersistentStore();
+
 const getReplayStore = (): ReplayStore => {
   if (!store) {
     throw new Error('Replay store is not initialized');
@@ -154,8 +157,6 @@ const buildReplayCacheIdentityKey = (replay: ReplayCacheEntry) => {
       .toLowerCase(),
   ].join('|');
 };
-
-let store: ReplayStore | null = getMainPersistentStore();
 
 const enforceReplayCacheSchemaVersion = (replayStore: ReplayStore) => {
   const cachedSchemaVersion = Number(
@@ -185,11 +186,23 @@ const decodeXmlText = (value: string): string =>
 
 const parseLogXmlContent = (xml: string): ParsedLogXml => {
   const raceResults: ParsedRaceResults = {};
-  let currentValueTag: 'Setting' | 'DateTime' | 'TrackVenue' | 'TrackCourse' | 'TrackEvent' | 'GameVersion' | 'FuelMult' | 'TireMult' | 'TireWarmers' | 'Minutes' | 'CarClass' | null = null;
+  let currentValueTag:
+    | 'Setting'
+    | 'DateTime'
+    | 'TrackVenue'
+    | 'TrackCourse'
+    | 'TrackEvent'
+    | 'GameVersion'
+    | 'FuelMult'
+    | 'TireMult'
+    | 'TireWarmers'
+    | 'Minutes'
+    | 'CarClass'
+    | null = null;
   let currentValueText = '';
   let raceResultsDepth = 0;
   let currentSessionType: 'Race' | 'Qualify' | 'Practice1' | null = null;
-  let inDriverTag = false;
+  let _inDriverTag = false;
   let inStreamTag = false;
   let driverCount = 0;
   let incidentCount = 0;
@@ -227,7 +240,10 @@ const parseLogXmlContent = (xml: string): ParsedLogXml => {
       raceResults.TireWarmers = normalizedValue || undefined;
     } else if (currentValueTag === 'Minutes') {
       if (currentSessionType && raceResults[currentSessionType]) {
-        const session = raceResults[currentSessionType] as Record<string, unknown>;
+        const session = raceResults[currentSessionType] as Record<
+          string,
+          unknown
+        >;
         session.Minutes = Number(normalizedValue) || undefined;
       }
     } else if (currentValueTag === 'CarClass') {
@@ -247,7 +263,9 @@ const parseLogXmlContent = (xml: string): ParsedLogXml => {
 
     const isClosingTag = tagText.startsWith('</');
     const isSelfClosingTag = /\/\s*>$/.test(tagText);
-    const tagNameMatch = tagText.match(/^<\s*(\/)?\s*([A-Za-z0-9:_.-]+)(?:\s[^>]*)?\/?\s*>$/);
+    const tagNameMatch = tagText.match(
+      /^<\s*(\/)?\s*([A-Za-z0-9:_.-]+)(?:\s[^>]*)?\/?\s*>$/,
+    );
 
     if (!tagNameMatch) {
       return;
@@ -267,14 +285,16 @@ const parseLogXmlContent = (xml: string): ParsedLogXml => {
         raceResultsDepth -= 1;
       }
       if (tagName === 'driver') {
-        inDriverTag = false;
+        _inDriverTag = false;
       }
       if (tagName === 'stream') {
         inStreamTag = false;
       }
       if (['race', 'qualify', 'practice1'].includes(tagName)) {
         if (currentSessionType && raceResults[currentSessionType]) {
-          const session = raceResults[currentSessionType] as ParsedSessionSummary;
+          const session = raceResults[
+            currentSessionType
+          ] as ParsedSessionSummary;
           session.DriverCount = driverCount || undefined;
           if (currentSessionCarClasses.size > 0) {
             session.CarClasses = Array.from(currentSessionCarClasses);
@@ -416,7 +436,7 @@ const parseLogXmlContent = (xml: string): ParsedLogXml => {
         driverCount++;
         totalDriverCount++;
       }
-      inDriverTag = true;
+      _inDriverTag = true;
       return;
     }
 
@@ -440,12 +460,11 @@ const parseLogXmlContent = (xml: string): ParsedLogXml => {
 
     if (tagName === 'stream') {
       inStreamTag = true;
-      return;
     }
   };
 
   let searchFrom = 0;
-  while (true) {
+  for (;;) {
     const openTagIndex = xml.indexOf('<', searchFrom);
     if (openTagIndex === -1) {
       break;
@@ -490,12 +509,24 @@ const parseLogXmlFromStream = async (
   stream: AsyncIterable<string | Buffer>,
 ): Promise<ParsedLogXml> => {
   const raceResults: ParsedRaceResults = {};
-  let currentValueTag: 'Setting' | 'DateTime' | 'TrackVenue' | 'TrackCourse' | 'TrackEvent' | 'GameVersion' | 'FuelMult' | 'TireMult' | 'TireWarmers' | 'Minutes' | 'CarClass' | null = null;
+  let currentValueTag:
+    | 'Setting'
+    | 'DateTime'
+    | 'TrackVenue'
+    | 'TrackCourse'
+    | 'TrackEvent'
+    | 'GameVersion'
+    | 'FuelMult'
+    | 'TireMult'
+    | 'TireWarmers'
+    | 'Minutes'
+    | 'CarClass'
+    | null = null;
   let currentValueText = '';
   let raceResultsDepth = 0;
   let pendingText = '';
   let currentSessionType: 'Race' | 'Qualify' | 'Practice1' | null = null;
-  let inDriverTag = false;
+  let _inDriverTag = false;
   let inStreamTag = false;
   let driverCount = 0;
   let incidentCount = 0;
@@ -533,7 +564,8 @@ const parseLogXmlFromStream = async (
       raceResults.TireWarmers = normalizedValue || undefined;
     } else if (currentValueTag === 'Minutes') {
       if (currentSessionType && raceResults[currentSessionType]) {
-        (raceResults[currentSessionType] as Record<string, unknown>).Minutes = Number(normalizedValue) || undefined;
+        (raceResults[currentSessionType] as Record<string, unknown>).Minutes =
+          Number(normalizedValue) || undefined;
       }
     } else if (currentValueTag === 'CarClass') {
       if (currentSessionType && normalizedValue) {
@@ -558,7 +590,9 @@ const parseLogXmlFromStream = async (
 
     const isClosingTag = tagText.startsWith('</');
     const isSelfClosingTag = /\/\s*>$/.test(tagText);
-    const tagNameMatch = tagText.match(/^<\s*(\/)?\s*([A-Za-z0-9:_.-]+)(?:\s[^>]*)?\/?\s*>$/);
+    const tagNameMatch = tagText.match(
+      /^<\s*(\/)?\s*([A-Za-z0-9:_.-]+)(?:\s[^>]*)?\/?\s*>$/,
+    );
 
     if (!tagNameMatch) {
       return;
@@ -578,14 +612,16 @@ const parseLogXmlFromStream = async (
         raceResultsDepth -= 1;
       }
       if (tagName === 'driver') {
-        inDriverTag = false;
+        _inDriverTag = false;
       }
       if (tagName === 'stream') {
         inStreamTag = false;
       }
       if (['race', 'qualify', 'practice1'].includes(tagName)) {
         if (currentSessionType && raceResults[currentSessionType]) {
-          const session = raceResults[currentSessionType] as ParsedSessionSummary;
+          const session = raceResults[
+            currentSessionType
+          ] as ParsedSessionSummary;
           session.DriverCount = driverCount || undefined;
           if (currentSessionCarClasses.size > 0) {
             session.CarClasses = Array.from(currentSessionCarClasses);
@@ -727,7 +763,7 @@ const parseLogXmlFromStream = async (
         driverCount++;
         totalDriverCount++;
       }
-      inDriverTag = true;
+      _inDriverTag = true;
       return;
     }
 
@@ -751,7 +787,6 @@ const parseLogXmlFromStream = async (
 
     if (tagName === 'stream') {
       inStreamTag = true;
-      return;
     }
   };
 
@@ -760,7 +795,7 @@ const parseLogXmlFromStream = async (
     const combinedText = pendingText + chunkText;
     let searchFrom = 0;
 
-    while (true) {
+    for (;;) {
       const openTagIndex = combinedText.indexOf('<', searchFrom);
       if (openTagIndex === -1) {
         pendingText = combinedText.slice(searchFrom);
@@ -806,7 +841,7 @@ export const parseLogXml = async (filePath: string) => {
   try {
     const stream = createReadStream(filePath, { encoding: 'utf-8' });
     return await parseLogXmlFromStream(stream);
-  } catch (error) {
+  } catch {
     const xml = await readFile(filePath, 'utf-8');
     return parseLogXmlContent(xml);
   }
@@ -932,7 +967,9 @@ export const findBestLogFile = async (
   parser: (filePath: string) => Promise<ParsedLogXml> = parseLogXml,
 ): Promise<LogFileData | null> => {
   try {
-    const files = (await readdir(logDir)).filter((file) => file.endsWith('.xml'));
+    const files = (await readdir(logDir)).filter((file) =>
+      file.endsWith('.xml'),
+    );
     const replayTimestamp = replay.timestamp;
     const replaySessionType = replay.metadata.session;
     const replayTrackAliases = getReplayTrackAliases(replay);
@@ -946,7 +983,8 @@ export const findBestLogFile = async (
             fileName: file,
             dateTime: raceResults?.DateTime ?? null,
             sessionCode:
-              getLogDataSessionType(fileData) || getSessionCodeFromFileName(file),
+              getLogDataSessionType(fileData) ||
+              getSessionCodeFromFileName(file),
             trackVenue: raceResults?.TrackVenue || '',
             trackCourse: raceResults?.TrackCourse || '',
             trackEvent: raceResults?.TrackEvent || '',
@@ -954,7 +992,9 @@ export const findBestLogFile = async (
           };
         }),
       )
-    ).flatMap((result) => (result.status === 'fulfilled' ? [result.value] : []));
+    ).flatMap((result) =>
+      result.status === 'fulfilled' ? [result.value] : [],
+    );
 
     const candidates = logSummaries.filter(
       (log) =>
@@ -1020,7 +1060,7 @@ export const findBestLogFile = async (
       logDataFileName: best?.fileName ?? null,
       logData: best?.fileData ?? null,
     };
-  } catch (error) {
+  } catch {
     return { logDataFileName: null, logData: null };
   }
 };
@@ -1036,8 +1076,8 @@ export const getReplayLogData = async (
   options?: { fullData?: boolean },
 ): Promise<LogMetaData | null> => {
   try {
-    const replayDirectory = replay.replayDirectory;
-    const logDataDirectory = resolve(replayDirectory, '../Log/Results');
+    const { replayDirectory } = replay;
+    const logDataDirectory = resolvePath(replayDirectory, '../Log/Results');
     const logData = await findBestLogFile(
       logDataDirectory,
       replay,
@@ -1054,34 +1094,26 @@ export const getReplayLogData = async (
       logDataFileName: logData?.logDataFileName || '',
     };
     return logMetaData;
-  } catch (error) {
+  } catch {
     return null;
   }
 };
 
 export const getReplayData = async (): Promise<LMUReplay[]> => {
-  return new Promise(async (resolve, reject) => {
-    try {
-      const response = await fetch(
-        `${CONSTANTS.LMU_API_BASE_URL}/rest/watch/replays`,
-      );
+  const response = await fetch(
+    `${CONSTANTS.LMU_API_BASE_URL}/rest/watch/replays`,
+  );
 
-      if (!response.ok) {
-        reject(new Error(`API responded with status ${response.status}`));
-        return;
-      }
+  if (!response.ok) {
+    throw new Error(`API responded with status ${response.status}`);
+  }
 
-      const payload: unknown = await response.json();
-      if (!Array.isArray(payload)) {
-        reject(new Error('Replay API returned non-array payload'));
-        return;
-      }
+  const payload: unknown = await response.json();
+  if (!Array.isArray(payload)) {
+    throw new Error('Replay API returned non-array payload');
+  }
 
-      resolve(payload as LMUReplay[]);
-    } catch (error) {
-      reject(error);
-    }
-  });
+  return payload as LMUReplay[];
 };
 
 export const syncReplayData = async (
@@ -1089,126 +1121,115 @@ export const syncReplayData = async (
     onProgress?: (progress: ReplaySyncProgress) => void;
   },
 ): Promise<void> => {
-  return new Promise(async (resolve, reject) => {
-    try {
-      const settings = await readUserSettings();
-      const configuredThresholdMs = Number(settings?.replayLogMatchThresholdMs);
-      const replayLogMatchThresholdMs = Number.isFinite(configuredThresholdMs)
-        ? Math.max(1_000, configuredThresholdMs)
-        : DEFAULT_REPLAY_LOG_MATCH_THRESHOLD_MS;
+  const settings = await readUserSettings();
+  const configuredThresholdMs = Number(settings?.replayLogMatchThresholdMs);
+  const _replayLogMatchThresholdMs = Number.isFinite(configuredThresholdMs)
+    ? Math.max(1_000, configuredThresholdMs)
+    : DEFAULT_REPLAY_LOG_MATCH_THRESHOLD_MS;
 
-      const data = await getReplayData();
-      const totalReplayCount = data.length;
-      let processedReplayCount = 0;
+  const data = await getReplayData();
+  const totalReplayCount = data.length;
+  let processedReplayCount = 0;
 
-      const reportProgress = () => {
-        const percentage =
-          totalReplayCount <= 0
-            ? 1
-            : Math.min(1, processedReplayCount / totalReplayCount);
+  const reportProgress = () => {
+    const percentage =
+      totalReplayCount <= 0
+        ? 1
+        : Math.min(1, processedReplayCount / totalReplayCount);
 
-        options?.onProgress?.({
-          processed: processedReplayCount,
-          total: totalReplayCount,
-          percentage,
-        });
-      };
+    options?.onProgress?.({
+      processed: processedReplayCount,
+      total: totalReplayCount,
+      percentage,
+    });
+  };
 
-      reportProgress();
+  reportProgress();
 
-      const replayStore = getReplayStore();
-      const storedReplay = options?.forceReplayCacheReset
-        ? {}
-        : (replayStore.get('replays') as Record<string, ReplayCacheEntry>) ||
-          {};
-      const storedReplayEntries = Object.values(storedReplay);
-      const storedReplayByIdentity = new Map<string, ReplayCacheEntry>();
+  const replayStore = getReplayStore();
+  const storedReplay = options?.forceReplayCacheReset
+    ? {}
+    : (replayStore.get('replays') as Record<string, ReplayCacheEntry>) || {};
+  const storedReplayEntries = Object.values(storedReplay);
+  const storedReplayByIdentity = new Map<string, ReplayCacheEntry>();
 
-      storedReplayEntries.forEach((existingReplay) => {
-        const identityKey = buildReplayCacheIdentityKey(existingReplay);
-        if (identityKey.replace(/\|/g, '').length > 0) {
-          storedReplayByIdentity.set(identityKey, existingReplay);
-        }
-      });
-
-      // Add hash to each replay and store in electron-store
-      for (const replay of data) {
-        const hash = generateReplayHash(replay);
-        const identityKey = buildReplayCacheIdentityKey(replay);
-
-        const markReplayProcessed = () => {
-          processedReplayCount += 1;
-          reportProgress();
-        };
-
-        (replay as LMUReplay).hash = hash;
-        (replay as LMUReplay).multiplayer = false;
-        delete replay.id; // Remove the original ID as it's no longer needed
-
-        const existingReplayByHash = storedReplay[hash];
-        if (existingReplayByHash) {
-          if (typeof existingReplayByHash.multiplayer !== 'boolean') {
-            storedReplay[hash] = {
-              ...existingReplayByHash,
-              multiplayer: getReplayMultiplayerFromLogData(
-                existingReplayByHash.logData,
-              ),
-            };
-          }
-          markReplayProcessed();
-          await yieldToEventLoop();
-          continue;
-        }
-
-        const existingReplayByIdentity =
-          storedReplayByIdentity.get(identityKey);
-        if (existingReplayByIdentity) {
-          const mergedReplayByIdentity: ReplayCacheEntry = {
-            ...existingReplayByIdentity,
-            ...replay,
-            hash,
-          };
-          storedReplay[hash] = {
-            ...mergedReplayByIdentity,
-            multiplayer:
-              typeof mergedReplayByIdentity.multiplayer === 'boolean'
-                ? mergedReplayByIdentity.multiplayer
-                : getReplayMultiplayerFromLogData(
-                    mergedReplayByIdentity.logData,
-                  ),
-          };
-          markReplayProcessed();
-          await yieldToEventLoop();
-          continue;
-        }
-
-        if (!storedReplay[hash]) {
-          const logMetaData = await getReplayLogData(replay);
-
-          if (logMetaData) {
-            replay.logData = logMetaData.logData;
-            replay.logDataDirectory = logMetaData.logDataDirectory;
-            replay.logDataFileName = logMetaData.logDataFileName;
-            replay.multiplayer = getReplayMultiplayerFromLogData(
-              logMetaData.logData,
-            );
-            replay.logDataLoaded = false;
-            storedReplay[hash] = replay;
-            storedReplayByIdentity.set(identityKey, replay);
-          }
-        }
-
-        markReplayProcessed();
-
-        await yieldToEventLoop();
-      }
-
-      replayStore.set('replays', storedReplay);
-      resolve();
-    } catch (error) {
-      reject(error);
+  storedReplayEntries.forEach((existingReplay) => {
+    const identityKey = buildReplayCacheIdentityKey(existingReplay);
+    if (identityKey.replace(/\|/g, '').length > 0) {
+      storedReplayByIdentity.set(identityKey, existingReplay);
     }
   });
+
+  const markReplayProcessed = () => {
+    processedReplayCount += 1;
+    reportProgress();
+  };
+
+  // Add hash to each replay and store in electron-store
+  for (const replay of data) {
+    const hash = generateReplayHash(replay);
+    const identityKey = buildReplayCacheIdentityKey(replay);
+
+    (replay as LMUReplay).hash = hash;
+    (replay as LMUReplay).multiplayer = false;
+    delete replay.id; // Remove the original ID as it's no longer needed
+
+    const existingReplayByHash = storedReplay[hash];
+    if (existingReplayByHash) {
+      if (typeof existingReplayByHash.multiplayer !== 'boolean') {
+        storedReplay[hash] = {
+          ...existingReplayByHash,
+          multiplayer: getReplayMultiplayerFromLogData(
+            existingReplayByHash.logData,
+          ),
+        };
+      }
+      markReplayProcessed();
+      await yieldToEventLoop();
+      continue;
+    }
+
+    const existingReplayByIdentity = storedReplayByIdentity.get(identityKey);
+    if (existingReplayByIdentity) {
+      const mergedReplayByIdentity: ReplayCacheEntry = {
+        ...existingReplayByIdentity,
+        ...replay,
+        hash,
+      };
+      storedReplay[hash] = {
+        ...mergedReplayByIdentity,
+        multiplayer:
+          typeof mergedReplayByIdentity.multiplayer === 'boolean'
+            ? mergedReplayByIdentity.multiplayer
+            : getReplayMultiplayerFromLogData(mergedReplayByIdentity.logData),
+      };
+      markReplayProcessed();
+      await yieldToEventLoop();
+      continue;
+    }
+
+    if (!storedReplay[hash]) {
+      const logMetaData = await getReplayLogData(replay);
+
+      if (logMetaData) {
+        replay.logData = logMetaData.logData;
+        replay.logDataDirectory = logMetaData.logDataDirectory;
+        replay.logDataFileName = logMetaData.logDataFileName;
+        replay.multiplayer = getReplayMultiplayerFromLogData(
+          logMetaData.logData,
+        );
+        replay.logDataLoaded = false;
+        storedReplay[hash] = replay;
+        storedReplayByIdentity.set(identityKey, replay);
+      }
+    }
+
+    markReplayProcessed();
+
+    await yieldToEventLoop();
+  }
+
+  replayStore.set('replays', storedReplay);
 };
 
 /**
@@ -1295,8 +1316,7 @@ export const getReplays = async (
     const filteredReplays = filterReplaysByGameType(
       Object.values(storedReplay),
       request?.gameType,
-    )
-      .sort((a, b) => Number(b.timestamp ?? 0) - Number(a.timestamp ?? 0));
+    ).sort((a, b) => Number(b.timestamp ?? 0) - Number(a.timestamp ?? 0));
 
     event.reply(CONSTANTS.API.GET_REPLAYS, {
       status: 'success',
@@ -1330,7 +1350,7 @@ export const postWatchReplay = async (
   try {
     const currentReplays = await getReplayData();
     const replay = currentReplays.find(
-      (replay) => generateReplayHash(replay) === hash,
+      (candidateReplay) => generateReplayHash(candidateReplay) === hash,
     );
     const replayStore = getReplayStore();
     const storedReplay =
