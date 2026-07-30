@@ -129,7 +129,18 @@ const getReplayRequest = (filters: Filters): GetReplaysRequest | undefined => {
   return { gameType: filters.gameType };
 };
 
-const matchesFilters = (replay: LMUReplay, filters: Filters): boolean => {
+const matchesFilters = (
+  replay: LMUReplay,
+  filters: Filters,
+  showArchived: boolean,
+): boolean => {
+  // Active and archived are mutually exclusive views. Every replay is already
+  // in memory with its archive state attached, so switching between them costs
+  // nothing — no request, no sync.
+  if (Boolean(replay.archived) !== showArchived) {
+    return false;
+  }
+
   const [startDate, endDate] = filters.dateRange;
   const replayTimestamp = Number(replay.timestamp) * 1000;
 
@@ -230,8 +241,14 @@ export const useDashboardReplays = () => {
     persistedDashboardView,
     replays,
     requestReplays,
+    archiveReplays,
+    restoreReplays,
+    setArchiveNote,
   } = useApi();
 
+  // Deliberately not persisted across restarts: archived is somewhere you go on
+  // purpose, and reopening the app into it would read as missing replays.
+  const [showArchived, setShowArchived] = useState(false);
   const [hasCalledForReplays, setHasCalledForReplays] = useState(false);
   const [hasReplaysResponded, setHasReplaysResponded] = useState(false);
   const [hasHydratedView, setHasHydratedView] = useState(false);
@@ -362,7 +379,7 @@ export const useDashboardReplays = () => {
     }
 
     const filteredReplays = replays.data.filter((replay) =>
-      matchesFilters(replay, filters),
+      matchesFilters(replay, filters, showArchived),
     );
 
     const groupedReplays = Object.groupBy(
@@ -375,24 +392,35 @@ export const useDashboardReplays = () => {
     );
 
     return sortReplays(groupsArray, sortBy, sortDirection);
-  }, [replays, filters, sortBy, sortDirection]);
+  }, [replays, filters, sortBy, sortDirection, showArchived]);
 
-  const totalReplayCount = replays?.data?.length ?? 0;
+  // Totals describe the view the user is in, so the archived count doesn't make
+  // the active dashboard look like it is hiding replays.
+  const viewReplays = useMemo(
+    () =>
+      (replays?.data ?? []).filter(
+        (replay) => Boolean(replay.archived) === showArchived,
+      ),
+    [replays, showArchived],
+  );
+
+  const archivedCount = useMemo(
+    () => (replays?.data ?? []).filter((replay) => replay.archived).length,
+    [replays],
+  );
+
+  const totalReplayCount = viewReplays.length;
 
   const totalSessionCount = useMemo(() => {
-    if (!replays?.data) {
-      return 0;
-    }
-
     const groupedReplays = Object.groupBy(
-      replays.data,
+      viewReplays,
       (replay: LMUReplay) => replay.timestamp,
     );
 
     return Object.values(groupedReplays).filter(
       (group): group is LMUReplay[] => group !== undefined,
     ).length;
-  }, [replays]);
+  }, [viewReplays]);
 
   const totalPages = useMemo(
     () => Math.max(1, Math.ceil(replayGroups.length / REPLAYS_PER_PAGE)),
@@ -426,6 +454,39 @@ export const useDashboardReplays = () => {
       setPage(totalPages);
     }
   }, [page, totalPages]);
+
+  // Bulk actions target the whole filtered set rather than the current page —
+  // "archive these 12 sessions" means the 12 the filters matched.
+  const filteredReplayHashes = useMemo(
+    () => replayGroups.flatMap((group) => group.map((replay) => replay.hash)),
+    [replayGroups],
+  );
+
+  const handleToggleArchivedView = useCallback((nextShowArchived: boolean) => {
+    setShowArchived(nextShowArchived);
+    setPage(1);
+  }, []);
+
+  const handleArchiveReplays = useCallback(
+    (hashes: string[], note?: string) => {
+      archiveReplays(hashes, note);
+    },
+    [archiveReplays],
+  );
+
+  const handleRestoreReplays = useCallback(
+    (hashes: string[]) => {
+      restoreReplays(hashes);
+    },
+    [restoreReplays],
+  );
+
+  const handleSetArchiveNote = useCallback(
+    (hashes: string[], note: string) => {
+      setArchiveNote(hashes, note);
+    },
+    [setArchiveNote],
+  );
 
   const currentReplays = useMemo(() => {
     const safePage = Math.min(page, totalPages);
@@ -471,10 +532,17 @@ export const useDashboardReplays = () => {
     sortBy,
     sortDirection,
     filters,
+    showArchived,
+    archivedCount,
+    filteredReplayHashes,
     setPage,
     setSortBy,
     setSortDirection,
     handleApplyFilters,
     handleRefreshReplays,
+    handleToggleArchivedView,
+    handleArchiveReplays,
+    handleRestoreReplays,
+    handleSetArchiveNote,
   };
 };

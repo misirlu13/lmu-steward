@@ -16,19 +16,27 @@ interface DashboardControlsProps {
   sortBy: DashboardSortByOptions;
   sortDirection: 'asc' | 'desc';
   filters: Filters;
+  showArchived: boolean;
+  archivedCount: number;
   onSortByChange: (sortBy: DashboardSortByOptions) => void;
   onSortDirectionChange: (sortDirection: 'asc' | 'desc') => void;
   onApplyFilters: (filters: Filters) => void;
   onRefresh: () => void;
+  onShowArchivedChange: (showArchived: boolean) => void;
 }
+
+type ArchiveViewValue = 'active' | 'archived';
 
 export const DashboardControls: React.FC<DashboardControlsProps> = ({
   sortBy,
   sortDirection,
   filters,
+  showArchived,
+  archivedCount,
   onSortByChange,
   onSortDirectionChange,
   onApplyFilters,
+  onShowArchivedChange,
 }) => {
   const handleSortChange = (event: SelectChangeEvent) => {
     onSortByChange(event.target.value as DashboardSortByOptions);
@@ -44,6 +52,19 @@ export const DashboardControls: React.FC<DashboardControlsProps> = ({
         flexDirection: 'row',
       }}
     >
+      <SegmentedButtonGroup<ArchiveViewValue>
+        ariaLabel="replay archive view button group"
+        value={showArchived ? 'archived' : 'active'}
+        onChange={(value) => onShowArchivedChange(value === 'archived')}
+        options={[
+          { value: 'active', label: 'Active' },
+          {
+            value: 'archived',
+            label:
+              archivedCount > 0 ? `Archived (${archivedCount})` : 'Archived',
+          },
+        ]}
+      />
       <FormControl sx={{ minWidth: 180 }} size="small">
         <InputLabel id="sort-by-label">Sort By</InputLabel>
         <Select

@@ -20,6 +20,16 @@ import ToolTip from '@mui/material/Tooltip';
 import TireRepair from '@mui/icons-material/TireRepair';
 import LocalFireDepartmentIcon from '@mui/icons-material/LocalFireDepartment';
 import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
+import MoreVertIcon from '@mui/icons-material/MoreVert';
+import ArchiveIcon from '@mui/icons-material/Archive';
+import UnarchiveIcon from '@mui/icons-material/Unarchive';
+import EditNoteIcon from '@mui/icons-material/EditNote';
+import StickyNote2Icon from '@mui/icons-material/StickyNote2';
+import IconButton from '@mui/material/IconButton';
+import Menu from '@mui/material/Menu';
+import MenuItem from '@mui/material/MenuItem';
+import ListItemIcon from '@mui/material/ListItemIcon';
+import ListItemText from '@mui/material/ListItemText';
 import { useNavigate } from 'react-router-dom';
 import { getSessionIncidentScore } from '@/renderer/utils/incidentScore';
 import { SessionIncidentSeverityLabel } from '../IncidentSeverityLabels/SessionIncidentSeverityLabel';
@@ -34,6 +44,10 @@ import { ReplaySubtitle } from '../Common/ReplaySubtitle';
 
 interface DashboardReplayProps {
   replayGroup: LMUReplay[];
+  showArchived: boolean;
+  onArchive: (hashes: string[], targetLabel: string) => void;
+  onRestore: (hashes: string[]) => void;
+  onEditNote: (hash: string, note: string) => void;
 }
 
 interface DashboardReplayTableRow {
@@ -42,6 +56,7 @@ interface DashboardReplayTableRow {
   incidents: SessionIncidents;
   duration: string;
   sessionMetaData: SessionMetaData;
+  archiveNote: string;
 }
 
 const sessionOrder: Record<string, number> = {
@@ -67,6 +82,10 @@ const sessionColorMap: Record<string, string> = {
 
 export const DashboardReplay: React.FC<DashboardReplayProps> = ({
   replayGroup,
+  showArchived,
+  onArchive,
+  onRestore,
+  onEditNote,
 }) => {
   const replay = replayGroup[0];
   const metaData =
@@ -78,7 +97,14 @@ export const DashboardReplay: React.FC<DashboardReplayProps> = ({
   const backgroundImage = metaData?.background;
   const [isActive, setIsActive] = useState<boolean>(false);
   const [tableRows, setTableRows] = useState<DashboardReplayTableRow[]>([]);
+  const [weekendMenuAnchor, setWeekendMenuAnchor] =
+    useState<HTMLElement | null>(null);
+  const [rowMenu, setRowMenu] = useState<{
+    anchor: HTMLElement;
+    row: DashboardReplayTableRow;
+  } | null>(null);
   const navigate = useNavigate();
+  const groupHashes = replayGroup.map((groupReplay) => groupReplay.hash);
 
   useEffect(() => {
     const rows = [...replayGroup]
@@ -96,6 +122,7 @@ export const DashboardReplay: React.FC<DashboardReplayProps> = ({
         incidents: getSessionIncidents(groupReplay),
         duration: getSessionDuration(groupReplay),
         sessionMetaData: getSessionMetaData(groupReplay),
+        archiveNote: groupReplay.archiveNote ?? '',
       }));
 
     setTableRows(rows);
@@ -104,6 +131,8 @@ export const DashboardReplay: React.FC<DashboardReplayProps> = ({
   const onViewReplay = (replayHash: string) => {
     navigate(`/replay/${replayHash}`);
   };
+
+  const closeRowMenu = () => setRowMenu(null);
 
   return (
     <Box sx={{ width: '100%', mb: 2 }}>
@@ -333,9 +362,60 @@ export const DashboardReplay: React.FC<DashboardReplayProps> = ({
                   }, 0)}
                 />
               </Box>
+              <IconButton
+                aria-label={
+                  showArchived ? 'Weekend restore menu' : 'Weekend archive menu'
+                }
+                size="small"
+                // The button sits inside the accordion header, so the click has
+                // to be kept from toggling the panel open.
+                onClick={(event) => {
+                  event.stopPropagation();
+                  setWeekendMenuAnchor(event.currentTarget);
+                }}
+                onFocus={(event) => event.stopPropagation()}
+                sx={{ alignSelf: 'center', color: 'text.secondary' }}
+              >
+                <MoreVertIcon fontSize="small" />
+              </IconButton>
             </Box>
           </Box>
         </AccordionSummary>
+        <Menu
+          anchorEl={weekendMenuAnchor}
+          open={Boolean(weekendMenuAnchor)}
+          onClose={() => setWeekendMenuAnchor(null)}
+        >
+          {showArchived ? (
+            <MenuItem
+              onClick={() => {
+                setWeekendMenuAnchor(null);
+                onRestore(groupHashes);
+              }}
+            >
+              <ListItemIcon>
+                <UnarchiveIcon fontSize="small" />
+              </ListItemIcon>
+              <ListItemText>
+                Restore weekend ({groupHashes.length})
+              </ListItemText>
+            </MenuItem>
+          ) : (
+            <MenuItem
+              onClick={() => {
+                setWeekendMenuAnchor(null);
+                onArchive(groupHashes, 'this weekend');
+              }}
+            >
+              <ListItemIcon>
+                <ArchiveIcon fontSize="small" />
+              </ListItemIcon>
+              <ListItemText>
+                Archive weekend ({groupHashes.length})
+              </ListItemText>
+            </MenuItem>
+          )}
+        </Menu>
         <AccordionDetails sx={{ m: 0, p: 0 }}>
           <TableContainer>
             <Table>
@@ -545,13 +625,44 @@ export const DashboardReplay: React.FC<DashboardReplayProps> = ({
                         : '-'}
                     </TableCell>
                     <TableCell align="right">
-                      <Button
-                        onClick={() => onViewReplay(row.hash)}
-                        size="small"
-                        variant="contained"
+                      <Box
+                        sx={{
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'flex-end',
+                          gap: 1,
+                        }}
                       >
-                        View Replay
-                      </Button>
+                        {row.archiveNote ? (
+                          <ToolTip title={row.archiveNote}>
+                            <StickyNote2Icon
+                              aria-label={`Archive note: ${row.archiveNote}`}
+                              sx={{
+                                width: '18px',
+                                height: '18px',
+                                color: 'text.secondary',
+                              }}
+                            />
+                          </ToolTip>
+                        ) : null}
+                        <Button
+                          onClick={() => onViewReplay(row.hash)}
+                          size="small"
+                          variant="contained"
+                        >
+                          View Replay
+                        </Button>
+                        <IconButton
+                          aria-label={`Actions for ${row.sessionType}`}
+                          size="small"
+                          onClick={(event) =>
+                            setRowMenu({ anchor: event.currentTarget, row })
+                          }
+                          sx={{ color: 'text.secondary' }}
+                        >
+                          <MoreVertIcon fontSize="small" />
+                        </IconButton>
+                      </Box>
                     </TableCell>
                   </TableRow>
                 ))}
@@ -560,6 +671,64 @@ export const DashboardReplay: React.FC<DashboardReplayProps> = ({
           </TableContainer>
         </AccordionDetails>
       </Accordion>
+      <Menu
+        anchorEl={rowMenu?.anchor ?? null}
+        open={Boolean(rowMenu)}
+        onClose={closeRowMenu}
+      >
+        {showArchived
+          ? [
+              <MenuItem
+                key="restore"
+                onClick={() => {
+                  closeRowMenu();
+                  if (rowMenu) {
+                    onRestore([rowMenu.row.hash]);
+                  }
+                }}
+              >
+                <ListItemIcon>
+                  <UnarchiveIcon fontSize="small" />
+                </ListItemIcon>
+                <ListItemText>Restore session</ListItemText>
+              </MenuItem>,
+              <MenuItem
+                key="note"
+                onClick={() => {
+                  closeRowMenu();
+                  if (rowMenu) {
+                    onEditNote(rowMenu.row.hash, rowMenu.row.archiveNote);
+                  }
+                }}
+              >
+                <ListItemIcon>
+                  <EditNoteIcon fontSize="small" />
+                </ListItemIcon>
+                <ListItemText>
+                  {rowMenu?.row.archiveNote ? 'Edit note' : 'Add note'}
+                </ListItemText>
+              </MenuItem>,
+            ]
+          : [
+              <MenuItem
+                key="archive"
+                onClick={() => {
+                  closeRowMenu();
+                  if (rowMenu) {
+                    onArchive(
+                      [rowMenu.row.hash],
+                      `this ${rowMenu.row.sessionType}`,
+                    );
+                  }
+                }}
+              >
+                <ListItemIcon>
+                  <ArchiveIcon fontSize="small" />
+                </ListItemIcon>
+                <ListItemText>Archive session</ListItemText>
+              </MenuItem>,
+            ]}
+      </Menu>
     </Box>
   );
 };

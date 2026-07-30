@@ -1,5 +1,12 @@
 import { CONSTANTS } from '@constants';
-import { GetReplaysRequest, LMUReplay, SessionType } from '@types';
+import {
+  ArchivedReplayRecord,
+  ArchivedReplayStore,
+  ArchiveReplaysRequest,
+  GetReplaysRequest,
+  LMUReplay,
+  SessionType,
+} from '@types';
 import { createReadStream } from 'fs';
 import { readdir, readFile } from 'fs/promises';
 import { resolve as resolvePath, join } from 'path';
@@ -38,6 +45,9 @@ interface ReplayCacheEntry {
   multiplayer?: boolean;
   logData?: ParsedRaceResults | null;
   logDataLoaded?: boolean;
+  archived?: boolean;
+  archivedAt?: number;
+  archiveNote?: string;
 }
 
 interface ReplayStore {
@@ -170,6 +180,145 @@ const enforceReplayCacheSchemaVersion = (replayStore: ReplayStore) => {
 };
 
 enforceReplayCacheSchemaVersion(store);
+
+const ARCHIVED_REPLAYS_STORE_KEY = 'archivedReplays';
+
+const readArchivedReplays = (): ArchivedReplayStore => {
+  const stored = getReplayStore().get(ARCHIVED_REPLAYS_STORE_KEY);
+
+  if (!stored || typeof stored !== 'object' || Array.isArray(stored)) {
+    return {};
+  }
+
+  return stored as ArchivedReplayStore;
+};
+
+const writeArchivedReplays = (archived: ArchivedReplayStore): void => {
+  getReplayStore().set(ARCHIVED_REPLAYS_STORE_KEY, archived);
+};
+
+const hasUsableIdentityKey = (identityKey: string): boolean =>
+  identityKey.replace(/\|/g, '').length > 0;
+
+const buildArchivedIdentityIndex = (
+  archived: ArchivedReplayStore,
+): Map<string, string> => {
+  const index = new Map<string, string>();
+
+  Object.entries(archived).forEach(([key, record]) => {
+    if (record?.identityKey && hasUsableIdentityKey(record.identityKey)) {
+      index.set(record.identityKey, key);
+    }
+  });
+
+  return index;
+};
+
+/**
+ * Resolves the archive record for a replay, falling back to the identity key
+ * when the hash misses. Sync itself uses the same two-tier lookup, so a replay
+ * whose hash shifts stays archived rather than quietly reappearing.
+ */
+const findArchivedRecord = (
+  replay: ReplayCacheEntry,
+  archived: ArchivedReplayStore,
+  identityIndex: Map<string, string>,
+): ArchivedReplayRecord | undefined => {
+  if (replay.hash && archived[replay.hash]) {
+    return archived[replay.hash];
+  }
+
+  const identityKey = buildReplayCacheIdentityKey(replay);
+  if (!hasUsableIdentityKey(identityKey)) {
+    return undefined;
+  }
+
+  const matchedKey = identityIndex.get(identityKey);
+  return matchedKey ? archived[matchedKey] : undefined;
+};
+
+/**
+ * Decorates cached replays with their archive state. The dashboard receives
+ * every replay and decides which view to show, so switching between active and
+ * archived costs nothing — no sync, no round trip to the game.
+ */
+export const applyArchiveState = (
+  replays: ReplayCacheEntry[],
+  archived: ArchivedReplayStore,
+): ReplayCacheEntry[] => {
+  const identityIndex = buildArchivedIdentityIndex(archived);
+
+  return replays.map((replay) => {
+    const record = findArchivedRecord(replay, archived, identityIndex);
+
+    return {
+      ...replay,
+      archived: Boolean(record),
+      archivedAt: record?.archivedAt,
+      archiveNote: record?.note,
+    };
+  });
+};
+
+const readStoredReplays = (): Record<string, ReplayCacheEntry> =>
+  (getReplayStore().get('replays') as Record<string, ReplayCacheEntry>) || {};
+
+/**
+ * Builds the dashboard's replay list straight from the cache. Deliberately does
+ * not sync: the archive actions operate on data that was already synced, and
+ * getReplays' full fetch-and-parse pass is far too expensive to run every time
+ * a user archives a row.
+ */
+const readDecoratedReplays = (
+  gameType?: GetReplaysRequest['gameType'],
+): ReplayCacheEntry[] =>
+  applyArchiveState(
+    filterReplaysByGameType(Object.values(readStoredReplays()), gameType),
+    readArchivedReplays(),
+  ).sort((a, b) => Number(b.timestamp ?? 0) - Number(a.timestamp ?? 0));
+
+const normalizeHashes = (hashes: unknown): string[] => {
+  if (!Array.isArray(hashes)) {
+    return [];
+  }
+
+  return [
+    ...new Set(
+      hashes
+        .map((hash) => String(hash ?? '').trim())
+        .filter((hash) => hash.length > 0),
+    ),
+  ];
+};
+
+const normalizeNote = (note: unknown): string => String(note ?? '').trim();
+
+/**
+ * Finds the archive store key holding a replay's record, by hash first and
+ * identity key second.
+ */
+const resolveArchivedKey = (
+  hash: string,
+  storedReplays: Record<string, ReplayCacheEntry>,
+  archived: ArchivedReplayStore,
+  identityIndex: Map<string, string>,
+): string | null => {
+  if (archived[hash]) {
+    return hash;
+  }
+
+  const replay = storedReplays[hash];
+  if (!replay) {
+    return null;
+  }
+
+  const identityKey = buildReplayCacheIdentityKey(replay);
+  if (!hasUsableIdentityKey(identityKey)) {
+    return null;
+  }
+
+  return identityIndex.get(identityKey) ?? null;
+};
 
 /**
  * Log Directory - C:\Program Files (x86)\Steam\steamapps\common\Le Mans Ultimate\UserData\Log\Results
@@ -1310,17 +1459,9 @@ export const getReplays = async (
       console.error('Unable to persist replay sync timestamp:', settingsError);
     }
 
-    const replayStore = getReplayStore();
-    const storedReplay =
-      (replayStore.get('replays') as Record<string, ReplayCacheEntry>) || {};
-    const filteredReplays = filterReplaysByGameType(
-      Object.values(storedReplay),
-      request?.gameType,
-    ).sort((a, b) => Number(b.timestamp ?? 0) - Number(a.timestamp ?? 0));
-
     event.reply(CONSTANTS.API.GET_REPLAYS, {
       status: 'success',
-      data: filteredReplays,
+      data: readDecoratedReplays(request?.gameType),
     });
   } catch (error: unknown) {
     event.reply(CONSTANTS.API.PUSH_REPLAY_SYNC_STATUS, {
@@ -1332,6 +1473,161 @@ export const getReplays = async (
     });
 
     event.reply(CONSTANTS.API.GET_REPLAYS, {
+      status: 'error',
+      message: toErrorMessage(error),
+    });
+  }
+};
+
+/**
+ * Removes replays from the dashboard. Nothing on disk is touched — no replay
+ * file, no result log — and the cache entry is left intact. Archiving is purely
+ * a record in the archive store saying "the user has cleared this".
+ */
+export const postArchiveReplays = async (
+  event: Electron.IpcMainEvent,
+  request?: ArchiveReplaysRequest,
+) => {
+  try {
+    const hashes = normalizeHashes(request?.hashes);
+
+    if (hashes.length === 0) {
+      throw new Error('No replays were provided to archive');
+    }
+
+    const storedReplays = readStoredReplays();
+    const archived = readArchivedReplays();
+    const note = normalizeNote(request?.note);
+    const archivedAt = Date.now();
+
+    hashes.forEach((hash) => {
+      const replay = storedReplays[hash];
+
+      archived[hash] = {
+        hash,
+        identityKey: replay ? buildReplayCacheIdentityKey(replay) : '',
+        archivedAt,
+        ...(note ? { note } : {}),
+      };
+    });
+
+    writeArchivedReplays(archived);
+
+    event.reply(CONSTANTS.API.POST_ARCHIVE_REPLAYS, {
+      status: 'success',
+      data: readDecoratedReplays(request?.gameType),
+    });
+  } catch (error: unknown) {
+    event.reply(CONSTANTS.API.POST_ARCHIVE_REPLAYS, {
+      status: 'error',
+      message: toErrorMessage(error),
+    });
+  }
+};
+
+/**
+ * Returns archived replays to the dashboard. Drops records matched by hash and
+ * by identity key so a replay archived under an older hash is fully released.
+ */
+export const postRestoreReplays = async (
+  event: Electron.IpcMainEvent,
+  request?: ArchiveReplaysRequest,
+) => {
+  try {
+    const hashes = normalizeHashes(request?.hashes);
+
+    if (hashes.length === 0) {
+      throw new Error('No replays were provided to restore');
+    }
+
+    const storedReplays = readStoredReplays();
+    const archived = readArchivedReplays();
+    const identityIndex = buildArchivedIdentityIndex(archived);
+    const keysToRemove = new Set<string>();
+
+    hashes.forEach((hash) => {
+      const resolvedKey = resolveArchivedKey(
+        hash,
+        storedReplays,
+        archived,
+        identityIndex,
+      );
+
+      if (resolvedKey) {
+        keysToRemove.add(resolvedKey);
+      }
+    });
+
+    keysToRemove.forEach((key) => {
+      delete archived[key];
+    });
+
+    writeArchivedReplays(archived);
+
+    event.reply(CONSTANTS.API.POST_RESTORE_REPLAYS, {
+      status: 'success',
+      data: readDecoratedReplays(request?.gameType),
+    });
+  } catch (error: unknown) {
+    event.reply(CONSTANTS.API.POST_RESTORE_REPLAYS, {
+      status: 'error',
+      message: toErrorMessage(error),
+    });
+  }
+};
+
+/**
+ * Sets, replaces, or clears the note on already-archived replays. An empty note
+ * clears it. Hashes that are not archived are ignored rather than treated as an
+ * error, so a stale selection cannot fail the whole action.
+ */
+export const postArchiveNote = async (
+  event: Electron.IpcMainEvent,
+  request?: ArchiveReplaysRequest,
+) => {
+  try {
+    const hashes = normalizeHashes(request?.hashes);
+
+    if (hashes.length === 0) {
+      throw new Error('No replays were provided');
+    }
+
+    const storedReplays = readStoredReplays();
+    const archived = readArchivedReplays();
+    const identityIndex = buildArchivedIdentityIndex(archived);
+    const note = normalizeNote(request?.note);
+
+    hashes.forEach((hash) => {
+      const resolvedKey = resolveArchivedKey(
+        hash,
+        storedReplays,
+        archived,
+        identityIndex,
+      );
+
+      if (!resolvedKey) {
+        return;
+      }
+
+      const record = archived[resolvedKey];
+
+      if (note) {
+        archived[resolvedKey] = { ...record, note };
+        return;
+      }
+
+      const { note: _removedNote, ...withoutNote } = record;
+      archived[resolvedKey] = withoutNote;
+    });
+
+    writeArchivedReplays(archived);
+
+    event.reply(CONSTANTS.API.POST_ARCHIVE_NOTE, {
+      status: 'success',
+      data: readDecoratedReplays(request?.gameType),
+    });
+  } catch (error: unknown) {
+    event.reply(CONSTANTS.API.POST_ARCHIVE_NOTE, {
       status: 'error',
       message: toErrorMessage(error),
     });
