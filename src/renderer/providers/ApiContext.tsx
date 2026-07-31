@@ -52,6 +52,36 @@ export interface ExportReplayPayload {
   timestamp: number;
 }
 
+export interface ImportFileSelection {
+  kind: 'replay' | 'log';
+  filePath: string;
+  fileName: string;
+  size?: number;
+  session?: string;
+  driverCount?: number;
+  trackVenue?: string;
+  trackFolder?: string;
+  eventDateTime?: number | null;
+  originInstallPath?: string;
+}
+
+export interface ImportPairIssueState {
+  severity: 'error' | 'warning';
+  code: string;
+  message: string;
+}
+
+export interface ImportPairValidationState {
+  issues: ImportPairIssueState[];
+  confidence: number | null;
+  rosterOverlap: {
+    intersection: number;
+    vcrCount: number;
+    logCount: number;
+  } | null;
+  canImport: boolean;
+}
+
 export interface ImportPreviewState {
   sourceDirectory: string;
   rows: unknown[];
@@ -90,6 +120,14 @@ interface ApiContextType {
   setArchiveNote: (hashes: string[], note: string) => void;
   requestImportedReplays: () => void;
   selectImportSource: () => void;
+  importReplayFile: ImportFileSelection | null;
+  importLogFile: ImportFileSelection | null;
+  importPairValidation: ImportPairValidationState | null;
+  importPairError: string;
+  isImportingPair: boolean;
+  selectImportFile: (kind: 'replay' | 'log') => void;
+  importReplayPair: () => void;
+  resetImportPair: () => void;
   clearImportPreview: () => void;
   importSelectedReplays: (
     rows: unknown[],
@@ -132,6 +170,14 @@ const ApiContext = createContext<ApiContextType>({
   archiveReplays: () => {},
   requestImportedReplays: () => {},
   selectImportSource: () => {},
+  importReplayFile: null,
+  importLogFile: null,
+  importPairValidation: null,
+  importPairError: '',
+  isImportingPair: false,
+  selectImportFile: () => {},
+  importReplayPair: () => {},
+  resetImportPair: () => {},
   clearImportPreview: () => {},
   importSelectedReplays: () => {},
   deleteImportedReplays: () => {},
@@ -178,6 +224,14 @@ export const ApiProvider: React.FC<{ children: React.ReactNode }> = ({
   );
   const [importProgress, setImportProgress] =
     useState<ImportProgressState | null>(null);
+  const [importReplayFile, setImportReplayFile] =
+    useState<ImportFileSelection | null>(null);
+  const [importLogFile, setImportLogFile] =
+    useState<ImportFileSelection | null>(null);
+  const [importPairValidation, setImportPairValidation] =
+    useState<ImportPairValidationState | null>(null);
+  const [importPairError, setImportPairError] = useState('');
+  const [isImportingPair, setIsImportingPair] = useState(false);
   const [currentReplay, setCurrentReplay] = useState<LMUReplay | null>(null);
   const [loadingState, setLoadingState] = useState<LoadingState>({
     loading: false,
@@ -327,6 +381,23 @@ export const ApiProvider: React.FC<{ children: React.ReactNode }> = ({
     [sendArchiveMessage],
   );
 
+  /*
+   * Validation is asked for as soon as both files are known rather than at
+   * confirm time, so a mismatched pairing is visible before the user commits
+   * to it.
+   */
+  useEffect(() => {
+    if (!importReplayFile || !importLogFile) {
+      setImportPairValidation(null);
+      return;
+    }
+
+    sendMessage(CONSTANTS.API.POST_VALIDATE_IMPORT_PAIR, {
+      vcrPath: importReplayFile.filePath,
+      logPath: importLogFile.filePath,
+    });
+  }, [importReplayFile, importLogFile]);
+
   const requestImportedReplays = useCallback(() => {
     sendMessage(CONSTANTS.API.GET_IMPORTED_REPLAYS);
   }, []);
@@ -355,6 +426,32 @@ export const ApiProvider: React.FC<{ children: React.ReactNode }> = ({
     },
     [],
   );
+
+  const selectImportFile = useCallback((kind: 'replay' | 'log') => {
+    setImportPairError('');
+    sendMessage(CONSTANTS.API.POST_SELECT_IMPORT_FILE, { kind });
+  }, []);
+
+  const importReplayPair = useCallback(() => {
+    if (!importReplayFile || !importLogFile) {
+      return;
+    }
+
+    setIsImportingPair(true);
+    setImportPairError('');
+    sendMessage(CONSTANTS.API.POST_IMPORT_REPLAY_PAIR, {
+      vcrPath: importReplayFile.filePath,
+      logPath: importLogFile.filePath,
+    });
+  }, [importReplayFile, importLogFile]);
+
+  const resetImportPair = useCallback(() => {
+    setImportReplayFile(null);
+    setImportLogFile(null);
+    setImportPairValidation(null);
+    setImportPairError('');
+    setIsImportingPair(false);
+  }, []);
 
   const deleteImportedReplays = useCallback((hashes: string[]) => {
     if (hashes.length === 0) {
@@ -429,6 +526,75 @@ export const ApiProvider: React.FC<{ children: React.ReactNode }> = ({
           }
 
           console.error('Failed to fetch track map:', payload?.message || data);
+        },
+      ),
+      [CONSTANTS.API.POST_SELECT_IMPORT_FILE]: createHandler(
+        CONSTANTS.API.POST_SELECT_IMPORT_FILE,
+        (data: unknown) => {
+          const payload = data as {
+            status?: string;
+            data?: ImportFileSelection & { canceled?: boolean };
+            message?: string;
+          };
+
+          if (payload?.status !== 'success') {
+            setImportPairError(payload?.message ?? 'Unable to read that file.');
+            return;
+          }
+
+          if (payload.data?.canceled) {
+            return;
+          }
+
+          if (payload.data?.kind === 'log') {
+            setImportLogFile(payload.data);
+            return;
+          }
+
+          setImportReplayFile(payload.data ?? null);
+        },
+      ),
+      [CONSTANTS.API.POST_VALIDATE_IMPORT_PAIR]: createHandler(
+        CONSTANTS.API.POST_VALIDATE_IMPORT_PAIR,
+        (data: unknown) => {
+          const payload = data as {
+            status?: string;
+            data?: ImportPairValidationState;
+            message?: string;
+          };
+
+          if (payload?.status === 'success') {
+            setImportPairValidation(payload.data ?? null);
+            return;
+          }
+
+          setImportPairError(
+            payload?.message ?? 'Unable to check these files together.',
+          );
+        },
+      ),
+      [CONSTANTS.API.POST_IMPORT_REPLAY_PAIR]: createHandler(
+        CONSTANTS.API.POST_IMPORT_REPLAY_PAIR,
+        (data: unknown) => {
+          const payload = data as {
+            status?: string;
+            data?: { replays?: ImportedReplayRecord[] };
+            message?: string;
+          };
+
+          setIsImportingPair(false);
+
+          if (payload?.status === 'success') {
+            setImportedReplays(payload.data?.replays ?? []);
+            setImportReplayFile(null);
+            setImportLogFile(null);
+            setImportPairValidation(null);
+            return;
+          }
+
+          setImportPairError(
+            payload?.message ?? 'The replay could not be imported.',
+          );
         },
       ),
       [CONSTANTS.API.GET_IMPORTED_REPLAYS]: createHandler(
@@ -695,6 +861,14 @@ export const ApiProvider: React.FC<{ children: React.ReactNode }> = ({
       setArchiveNote,
       requestImportedReplays,
       selectImportSource,
+      importReplayFile,
+      importLogFile,
+      importPairValidation,
+      importPairError,
+      isImportingPair,
+      selectImportFile,
+      importReplayPair,
+      resetImportPair,
       clearImportPreview,
       importSelectedReplays,
       deleteImportedReplays,
@@ -727,6 +901,14 @@ export const ApiProvider: React.FC<{ children: React.ReactNode }> = ({
       setArchiveNote,
       requestImportedReplays,
       selectImportSource,
+      importReplayFile,
+      importLogFile,
+      importPairValidation,
+      importPairError,
+      isImportingPair,
+      selectImportFile,
+      importReplayPair,
+      resetImportPair,
       clearImportPreview,
       importSelectedReplays,
       deleteImportedReplays,

@@ -1,6 +1,10 @@
 import { SessionType } from '@types';
 import { VcrTrailer, VcrDriver } from './vcr-metadata';
-import { LogCandidate, scoreLogCandidates } from './replay-import-match';
+import {
+  LogCandidate,
+  scoreLogCandidates,
+  validateImportPair,
+} from './replay-import-match';
 
 /**
  * Two Monza events on the evening of 18 July 2026, taken from a real hand-off.
@@ -200,5 +204,98 @@ describe('main/replay import pairing', () => {
 
     expect(result.proposed).toBeNull();
     expect(result.reason).toBe('no-candidates');
+  });
+});
+
+describe('main/replay import pair validation', () => {
+  const MONZA_ALIASES = ['autodromo nazionale monza'];
+
+  it('accepts a correct pairing with no issues', () => {
+    const result = validateImportPair(
+      buildTrailer([...EVENT_TWO_GRID, 'Pedro Couceiro']),
+      buildCandidate('race.xml', EVENT_TWO_GRID),
+      MONZA_ALIASES,
+    );
+
+    expect(result.issues).toEqual([]);
+    expect(result.canImport).toBe(true);
+    expect(result.confidence).toBeGreaterThan(0.8);
+  });
+
+  /**
+   * The mistake this validator exists for: a steward handed a weekend has
+   * several logs from one track on one evening, and the neighbouring event's
+   * log is the easiest wrong pick there is.
+   */
+  it('warns when the grids do not line up', () => {
+    const result = validateImportPair(
+      buildTrailer(EVENT_TWO_GRID),
+      buildCandidate('wrong-race.xml', EVENT_ONE_GRID),
+      MONZA_ALIASES,
+    );
+
+    expect(result.issues.map((issue) => issue.code)).toContain(
+      'roster-mismatch',
+    );
+    // A warning, not a block — the steward may know something we do not.
+    expect(result.canImport).toBe(true);
+  });
+
+  it('blocks a session type mismatch', () => {
+    const result = validateImportPair(
+      buildTrailer(EVENT_TWO_GRID),
+      buildCandidate('quali.xml', EVENT_TWO_GRID, 'QUALIFY'),
+      MONZA_ALIASES,
+    );
+
+    expect(result.issues[0]).toMatchObject({
+      severity: 'error',
+      code: 'session-mismatch',
+    });
+    expect(result.canImport).toBe(false);
+  });
+
+  it('blocks a log with no event date, since there is nothing to stamp', () => {
+    const result = validateImportPair(
+      buildTrailer(EVENT_TWO_GRID),
+      { ...buildCandidate('race.xml', EVENT_TWO_GRID), eventDateTime: null },
+      MONZA_ALIASES,
+    );
+
+    expect(result.issues.map((issue) => issue.code)).toContain('no-event-date');
+    expect(result.canImport).toBe(false);
+  });
+
+  it('warns on a track mismatch without blocking', () => {
+    const result = validateImportPair(
+      buildTrailer(EVENT_TWO_GRID),
+      {
+        ...buildCandidate('race.xml', EVENT_TWO_GRID),
+        trackVenue: 'Circuit de Spa-Francorchamps',
+        trackCourse: 'Circuit de Spa-Francorchamps',
+        trackEvent: 'Circuit de Spa-Francorchamps',
+      },
+      MONZA_ALIASES,
+    );
+
+    expect(result.issues.map((issue) => issue.code)).toContain(
+      'track-mismatch',
+    );
+    expect(result.canImport).toBe(true);
+  });
+
+  it('says so plainly when the grid is too small to check', () => {
+    const result = validateImportPair(
+      buildTrailer(['Artem Kozachun', 'Pedro Couceiro']),
+      buildCandidate('practice.xml', ['Artem Kozachun'], 'RACE'),
+      MONZA_ALIASES,
+    );
+
+    expect(result.issues.map((issue) => issue.code)).toContain(
+      'roster-too-small',
+    );
+    // Reporting a confidence from a two-name grid would be meaningless.
+    expect(result.confidence).toBeNull();
+    expect(result.canImport).toBe(true);
   });
 });

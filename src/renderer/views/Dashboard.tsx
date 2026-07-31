@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Box, Button, Snackbar, Typography } from '@mui/material';
 import FolderOffIcon from '@mui/icons-material/FolderOff';
 import ArchiveIcon from '@mui/icons-material/Archive';
@@ -13,6 +13,7 @@ import { ArchiveNoteDialog } from '../components/Dashboard/ArchiveNoteDialog';
 import { useDashboardReplays } from '../hooks/useDashboardReplays';
 import { useApi } from '../providers/ApiContext';
 import { DeleteImportedConfirmDialog } from '../components/Dashboard/DeleteImportedConfirmDialog';
+import { ImportReplayDialog } from '../components/Dashboard/ImportReplayDialog';
 
 interface PendingDelete {
   hashes: string[];
@@ -60,7 +61,34 @@ export const DashboardView: React.FC = () => {
     handleDeleteImportedReplays,
   } = useDashboardReplays();
 
-  const { experimentalFeaturesEnabled, selectImportSource } = useApi();
+  const {
+    experimentalFeaturesEnabled,
+    importReplayFile,
+    importLogFile,
+    importPairValidation,
+    importPairError,
+    isImportingPair,
+    selectImportFile,
+    importReplayPair,
+    resetImportPair,
+  } = useApi();
+  const [isImportDialogOpen, setIsImportDialogOpen] = useState(false);
+  const [lastImportedName, setLastImportedName] = useState('');
+  const wasImportingRef = useRef(false);
+
+  /*
+   * Close on success only. A failed import leaves the dialog open with its
+   * error, so the user can correct the pairing rather than start over.
+   */
+  useEffect(() => {
+    const finished = wasImportingRef.current && !isImportingPair;
+    wasImportingRef.current = isImportingPair;
+
+    if (finished && !importPairError && !importReplayFile && !importLogFile) {
+      setIsImportDialogOpen(false);
+      setLastImportedName('Replay imported');
+    }
+  }, [isImportingPair, importPairError, importReplayFile, importLogFile]);
   const [pendingArchive, setPendingArchive] = useState<PendingArchive | null>(
     null,
   );
@@ -136,7 +164,7 @@ export const DashboardView: React.FC = () => {
             onApplyFilters={handleApplyFilters}
             onRefresh={handleRefreshReplays}
             onDashboardViewChange={handleChangeDashboardView}
-            onImportReplays={selectImportSource}
+            onImportReplays={() => setIsImportDialogOpen(true)}
           />
         }
       />
@@ -299,6 +327,21 @@ export const DashboardView: React.FC = () => {
         onCancel={() => setPendingNote(null)}
         onSave={saveNote}
       />
+      <ImportReplayDialog
+        open={isImportDialogOpen}
+        replayFile={importReplayFile}
+        logFile={importLogFile}
+        validation={importPairValidation}
+        isImporting={isImportingPair}
+        errorMessage={importPairError}
+        onChooseReplay={() => selectImportFile('replay')}
+        onChooseLog={() => selectImportFile('log')}
+        onCancel={() => {
+          setIsImportDialogOpen(false);
+          resetImportPair();
+        }}
+        onConfirm={importReplayPair}
+      />
       <DeleteImportedConfirmDialog
         open={Boolean(pendingDelete)}
         targetLabel={pendingDelete?.targetLabel ?? 'this replay'}
@@ -316,6 +359,12 @@ export const DashboardView: React.FC = () => {
           }
           setPendingDelete(null);
         }}
+      />
+      <Snackbar
+        open={Boolean(lastImportedName)}
+        autoHideDuration={6000}
+        onClose={() => setLastImportedName('')}
+        message="Replay imported. It is in the Imported view."
       />
       <Snackbar
         open={lastArchivedHashes.length > 0}

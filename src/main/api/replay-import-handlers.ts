@@ -12,13 +12,20 @@ import {
   ImportPreviewRow,
   ImportSelection,
   importReplays,
+  readLogCandidate,
   scanImportSource,
 } from './replay-import';
+import { readVcrTrailer } from './vcr-metadata';
+import { validateImportPair } from './replay-import-match';
+import { getTrackAliases } from './track-matching';
 
 const IMPORTED_REPLAYS_STORE_KEY = 'importedReplays';
 
 /** Written into every export so the far side can skip pairing entirely. */
 const EXPORT_MANIFEST_NAME = 'lmu-steward-export.json';
+
+const stripVcrExtension = (fileName: string): string =>
+  fileName.replace(/\.vcr$/i, '');
 
 const toErrorMessage = (error: unknown): string => {
   if (error instanceof Error) {
@@ -370,4 +377,230 @@ export const summariseImportedFiles = async (
   }
 
   return { count: records.length, totalBytes };
+};
+
+/**
+ * The two-file import flow: the user picks a .Vcr and its result log
+ * themselves, so nothing has to be proposed. The pairing is still checked
+ * before anything is written — picking the wrong XML is easy when a hand-off
+ * holds several logs from one track on one evening.
+ */
+
+export interface SelectImportFileRequest {
+  kind: 'replay' | 'log';
+}
+
+export const postSelectImportFile = async (
+  event: Electron.IpcMainEvent,
+  request?: SelectImportFileRequest,
+) => {
+  const isReplay = request?.kind !== 'log';
+
+  try {
+    const response = await dialog.showOpenDialog({
+      title: isReplay
+        ? 'Choose a replay file'
+        : 'Choose the matching result log',
+      properties: ['openFile'],
+      filters: isReplay
+        ? [{ name: 'LMU replay', extensions: ['Vcr'] }]
+        : [{ name: 'Result log', extensions: ['xml'] }],
+    });
+
+    if (response.canceled || response.filePaths.length === 0) {
+      event.reply(CONSTANTS.API.POST_SELECT_IMPORT_FILE, {
+        status: 'success',
+        data: { canceled: true, kind: request?.kind ?? 'replay' },
+      });
+      return;
+    }
+
+    const filePath = response.filePaths[0];
+
+    if (isReplay) {
+      const trailer = await readVcrTrailer(filePath);
+
+      if (!trailer) {
+        throw new Error(
+          'That file is not a readable LMU replay. An in-progress recording cannot be imported.',
+        );
+      }
+
+      const { size } = await stat(filePath);
+
+      event.reply(CONSTANTS.API.POST_SELECT_IMPORT_FILE, {
+        status: 'success',
+        data: {
+          canceled: false,
+          kind: 'replay',
+          filePath,
+          fileName: basename(filePath),
+          size,
+          sceneDesc: trailer.sceneDesc,
+          session: trailer.session,
+          driverCount: trailer.drivers.length,
+          trackFolder: trailer.trackFolder,
+          trackVersion: trailer.trackVersion,
+          originInstallPath: trailer.originInstallPath,
+        },
+      });
+      return;
+    }
+
+    const candidate = await readLogCandidate(filePath);
+
+    if (!candidate) {
+      throw new Error('That file is not a readable LMU result log.');
+    }
+
+    event.reply(CONSTANTS.API.POST_SELECT_IMPORT_FILE, {
+      status: 'success',
+      data: {
+        canceled: false,
+        kind: 'log',
+        filePath,
+        fileName: basename(filePath),
+        session: candidate.session,
+        eventDateTime: candidate.eventDateTime,
+        trackVenue: candidate.trackVenue,
+        driverCount: candidate.driverNames.length,
+      },
+    });
+  } catch (error: unknown) {
+    event.reply(CONSTANTS.API.POST_SELECT_IMPORT_FILE, {
+      status: 'error',
+      message: toErrorMessage(error),
+    });
+  }
+};
+
+export interface ImportPairRequest {
+  vcrPath: string;
+  logPath: string;
+}
+
+const buildPairValidation = async ({ vcrPath, logPath }: ImportPairRequest) => {
+  const trailer = await readVcrTrailer(vcrPath);
+
+  if (!trailer) {
+    throw new Error('That replay file could not be read.');
+  }
+
+  const candidate = await readLogCandidate(logPath);
+
+  if (!candidate) {
+    throw new Error('That result log could not be read.');
+  }
+
+  const validation = validateImportPair(
+    trailer,
+    candidate,
+    getTrackAliases(trailer.sceneDesc, stripVcrExtension(basename(vcrPath))),
+  );
+
+  return { trailer, candidate, validation };
+};
+
+export const postValidateImportPair = async (
+  event: Electron.IpcMainEvent,
+  request?: ImportPairRequest,
+) => {
+  try {
+    if (!request?.vcrPath || !request?.logPath) {
+      throw new Error('Both a replay file and a result log are required.');
+    }
+
+    const { validation } = await buildPairValidation(request);
+
+    event.reply(CONSTANTS.API.POST_VALIDATE_IMPORT_PAIR, {
+      status: 'success',
+      data: validation,
+    });
+  } catch (error: unknown) {
+    event.reply(CONSTANTS.API.POST_VALIDATE_IMPORT_PAIR, {
+      status: 'error',
+      message: toErrorMessage(error),
+    });
+  }
+};
+
+export const postImportReplayPair = async (
+  event: Electron.IpcMainEvent,
+  request?: ImportPairRequest,
+) => {
+  try {
+    if (!request?.vcrPath || !request?.logPath) {
+      throw new Error('Both a replay file and a result log are required.');
+    }
+
+    const { trailer, candidate, validation } =
+      await buildPairValidation(request);
+
+    /*
+     * Re-checked here rather than trusting the renderer's copy. The files may
+     * have changed since the dialog validated them, and an error-level issue
+     * means the import cannot produce a correct result.
+     */
+    if (!validation.canImport) {
+      throw new Error(
+        validation.issues.find((issue) => issue.severity === 'error')
+          ?.message ?? 'This replay and log cannot be imported together.',
+      );
+    }
+
+    const { replayDirectory, logDirectory } = await resolveImportDirectories();
+    const { size } = await stat(request.vcrPath);
+    const vcrFileName = basename(request.vcrPath);
+
+    const row: ImportPreviewRow = {
+      id: request.vcrPath,
+      vcrPath: request.vcrPath,
+      vcrFileName,
+      replayName: stripVcrExtension(vcrFileName),
+      sceneDesc: trailer.sceneDesc,
+      session: trailer.session,
+      size,
+      trailer,
+      pairing: { ranked: [], proposed: null, reason: 'only-candidate' },
+      alreadyImportedHash: null,
+    };
+
+    const { outcomes, imported } = await importReplays({
+      rows: [row],
+      selections: [
+        {
+          id: row.id,
+          logPath: candidate.filePath,
+          method: 'manual',
+          confidence: validation.confidence,
+        },
+      ],
+      replayDirectory,
+      logDirectory,
+      imported: readImportedStore(),
+    });
+
+    const outcome = outcomes[0];
+
+    if (outcome?.status !== 'imported') {
+      throw new Error(outcome?.message ?? 'The replay could not be imported.');
+    }
+
+    writeImportedStore(imported);
+
+    event.reply(CONSTANTS.API.POST_IMPORT_REPLAY_PAIR, {
+      status: 'success',
+      data: {
+        outcome,
+        replays: Object.values(imported).sort(
+          (a, b) => Number(b.timestamp ?? 0) - Number(a.timestamp ?? 0),
+        ),
+      },
+    });
+  } catch (error: unknown) {
+    event.reply(CONSTANTS.API.POST_IMPORT_REPLAY_PAIR, {
+      status: 'error',
+      message: toErrorMessage(error),
+    });
+  }
 };

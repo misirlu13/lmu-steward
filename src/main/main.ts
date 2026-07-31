@@ -38,11 +38,16 @@ import {
   DeleteImportedReplaysRequest,
   ExportReplayRequest,
   getImportedReplays,
+  ImportPairRequest,
   ImportReplaysRequest,
   postDeleteImportedReplays,
   postExportReplay,
+  postImportReplayPair,
   postImportReplays,
+  postSelectImportFile,
   postSelectImportSource,
+  postValidateImportPair,
+  SelectImportFileRequest,
 } from './api/replay-import-handlers';
 import {
   getTrackThumbnail,
@@ -213,6 +218,12 @@ const CHANNEL_CALLBACK_HANDLERS: Partial<
     withEventAndData<DeleteImportedReplaysRequest>(postDeleteImportedReplays),
   [CONSTANTS.API.POST_EXPORT_REPLAY]:
     withEventAndData<ExportReplayRequest>(postExportReplay),
+  [CONSTANTS.API.POST_SELECT_IMPORT_FILE]:
+    withEventAndData<SelectImportFileRequest>(postSelectImportFile),
+  [CONSTANTS.API.POST_VALIDATE_IMPORT_PAIR]:
+    withEventAndData<ImportPairRequest>(postValidateImportPair),
+  [CONSTANTS.API.POST_IMPORT_REPLAY_PAIR]:
+    withEventAndData<ImportPairRequest>(postImportReplayPair),
 };
 
 const devModeEnabled = isDevModeEnabled();

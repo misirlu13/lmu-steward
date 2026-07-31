@@ -309,6 +309,51 @@ describe('main/replay import', () => {
     expect(rescan[0].alreadyImportedHash).toBe(Object.keys(imported)[0]);
   });
 
+  /*
+   * The two-file flow: the user picks both files, so nothing is proposed, but
+   * the pairing is still checked. These assert the end result of that path
+   * through the same import machinery the folder flow uses.
+   */
+  describe('user-supplied pairing', () => {
+    /**
+     * The event-one log scores worse against this replay's grid — roster
+     * pairing would reject it. A user who explicitly picked it must still get
+     * what they picked, dated from the log they chose.
+     */
+    it('honours the chosen log even when another one scores higher', async () => {
+      const rows = await scan();
+
+      expect(rows[0].pairing.proposed?.candidate.fileName).toBe(
+        'event-two-race.xml',
+      );
+
+      const result = await importReplays({
+        rows,
+        selections: [
+          {
+            id: rows[0].id,
+            logPath: join(source, 'event-one-race.xml'),
+            method: 'manual',
+            confidence: null,
+          },
+        ],
+        replayDirectory,
+        logDirectory,
+        imported: {},
+      });
+
+      expect(result.outcomes[0].status).toBe('imported');
+      expect(stampSpy).toHaveBeenCalledWith(
+        join(replayDirectory, 'Autodromo Nazionale Monza R1 2.Vcr'),
+        EVENT_ONE,
+      );
+
+      const record = Object.values(result.imported)[0];
+      expect(record.match.method).toBe('manual');
+      expect(record.logFileName).toBe('event-one-race.xml');
+    });
+  });
+
   describe('delete', () => {
     const importOne = async (): Promise<ImportedReplayStore> => {
       const rows = await scan();

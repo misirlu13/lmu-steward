@@ -1,5 +1,6 @@
 import { SessionType } from '@types';
 import { VcrTrailer } from './vcr-metadata';
+import { tracksLikelyMatch } from './track-matching';
 
 /**
  * Pairs an imported .Vcr with the result log it belongs to.
@@ -166,4 +167,132 @@ export const scoreLogCandidates = (
   }
 
   return { ranked, proposed: best, reason: 'proposed' };
+};
+
+/**
+ * A problem found when checking a replay against the log the user paired it
+ * with. `error` blocks the import; `warning` is shown but overridable, because
+ * these checks are heuristics and a steward may know better than we do.
+ */
+export interface ImportPairIssue {
+  severity: 'error' | 'warning';
+  code:
+    | 'session-mismatch'
+    | 'track-mismatch'
+    | 'no-event-date'
+    | 'roster-mismatch'
+    | 'roster-too-small';
+  message: string;
+}
+
+export interface ImportPairValidation {
+  issues: ImportPairIssue[];
+  /** Roster overlap, or null when the grid is too small to mean anything. */
+  confidence: number | null;
+  rosterOverlap: {
+    intersection: number;
+    vcrCount: number;
+    logCount: number;
+  } | null;
+  canImport: boolean;
+}
+
+/**
+ * Checks a pairing the user made themselves.
+ *
+ * When the user picks both files, there is nothing to propose — but plenty to
+ * verify. Pointing at the wrong XML is easy: a steward handed a weekend has
+ * several logs from one track on one evening, and picking the neighbouring
+ * event produces a replay whose every incident and lap belongs to a different
+ * race. Cheap to catch, expensive to miss.
+ */
+export const validateImportPair = (
+  trailer: VcrTrailer,
+  candidate: LogCandidate,
+  trackAliases: string[],
+  options: ScoreOptions = {},
+): ImportPairValidation => {
+  const confidenceFloor = options.confidenceFloor ?? DEFAULT_CONFIDENCE_FLOOR;
+  const issues: ImportPairIssue[] = [];
+
+  if (candidate.session !== trailer.session) {
+    issues.push({
+      severity: 'error',
+      code: 'session-mismatch',
+      message: `This replay is a ${trailer.session.toLowerCase()} session, but the log is a ${String(
+        candidate.session ?? 'unknown',
+      ).toLowerCase()} session.`,
+    });
+  }
+
+  // Without an event date there is nothing to stamp, so the import cannot work.
+  if (!candidate.eventDateTime) {
+    issues.push({
+      severity: 'error',
+      code: 'no-event-date',
+      message: 'This log has no session date, so the replay cannot be dated.',
+    });
+  }
+
+  if (
+    !tracksLikelyMatch(
+      trackAliases,
+      candidate.trackVenue,
+      candidate.trackCourse,
+      candidate.trackEvent,
+    )
+  ) {
+    issues.push({
+      severity: 'warning',
+      code: 'track-mismatch',
+      message: `The replay is from a different track than the log (${
+        candidate.trackVenue || 'unknown'
+      }).`,
+    });
+  }
+
+  const vcrNames = toNameSet(trailer.drivers.map((driver) => driver.name));
+  const logNames = toNameSet(candidate.driverNames);
+  const { confidence, intersection } = scoreRosterOverlap(vcrNames, logNames);
+
+  const rosterOverlap = {
+    intersection,
+    vcrCount: vcrNames.size,
+    logCount: logNames.size,
+  };
+
+  if (vcrNames.size < MIN_ROSTER_SIZE) {
+    /*
+     * A solo or two-driver session cannot be checked this way, and saying so is
+     * more honest than reporting a confidence that means nothing.
+     */
+    issues.push({
+      severity: 'warning',
+      code: 'roster-too-small',
+      message:
+        'This replay has too few drivers to check against the log. Make sure it is the right one.',
+    });
+
+    return {
+      issues,
+      confidence: null,
+      rosterOverlap,
+      canImport: !issues.some((issue) => issue.severity === 'error'),
+    };
+  }
+
+  if (confidence < confidenceFloor) {
+    issues.push({
+      severity: 'warning',
+      code: 'roster-mismatch',
+      message: `Only ${intersection} of ${vcrNames.size} drivers in this replay appear in the log. This may be a different race.`,
+    });
+  }
+
+  return {
+    issues,
+    confidence,
+    rosterOverlap,
+    canImport: !issues.some((issue) => issue.severity === 'error'),
+  };
 };

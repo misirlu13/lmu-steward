@@ -15,6 +15,7 @@ import { parseStringPromise } from 'xml2js';
 import { generateReplayHash } from '../util';
 import { readUserSettings, writeUserSettings } from './user-settings';
 import { getMainPersistentStore } from '../storage/local-data-store';
+import { getTrackAliases, tracksLikelyMatch } from './track-matching';
 
 const FIRST_RUN_GET_REPLAYS_DELAY_MS = 3000;
 const DEFAULT_REPLAY_LOG_MATCH_THRESHOLD_MS = 120_000;
@@ -1087,28 +1088,6 @@ interface LogFileData {
   logData: ParsedLogXml | null;
 }
 
-const TRACK_ALIAS_REPLACEMENTS: Array<[RegExp, string]> = [
-  [/\bout(er)?\s+circuit\b/g, 'international circuit'],
-  [/\bcurva\s+grande\s+circuit\b/g, 'nazionale monza'],
-  [/\s*-\s*elms\b/g, ''],
-];
-
-const normalizeTrackText = (value: string): string => {
-  let normalized = String(value ?? '')
-    .normalize('NFKD')
-    .replace(/[\u0300-\u036f]/g, '')
-    .toLowerCase()
-    .replace(/[^a-z0-9\s]/g, ' ')
-    .replace(/\s+/g, ' ')
-    .trim();
-
-  TRACK_ALIAS_REPLACEMENTS.forEach(([pattern, replacement]) => {
-    normalized = normalized.replace(pattern, replacement).trim();
-  });
-
-  return normalized.replace(/\s+/g, ' ').trim();
-};
-
 const getSessionCodeFromFileName = (fileName: string): SessionType | null => {
   const match = String(fileName ?? '').match(/([RQP])\d+\.xml$/i);
   if (!match) {
@@ -1126,50 +1105,6 @@ const getSessionCodeFromFileName = (fileName: string): SessionType | null => {
   return 'PRACTICE';
 };
 
-const getReplayTrackAliases = (replay: LMUReplay): string[] => {
-  // Build alias list exactly as in the evaluator script
-  const meta =
-    CONSTANTS.TRACK_META_DATA[
-      replay.metadata.sceneDesc as keyof typeof CONSTANTS.TRACK_META_DATA
-    ];
-  let aliases: string[] = [];
-  if (meta) {
-    if (typeof meta.displayName === 'string') aliases.push(meta.displayName);
-    if (Array.isArray((meta as any).aliases))
-      aliases = aliases.concat((meta as any).aliases);
-  }
-  // Always include the normalized replayName as a fallback
-  const replayTrack = String(replay.replayName ?? '').replace(
-    /\s+[RQP]\d+\s+\d+$/i,
-    '',
-  );
-  if (replayTrack && !aliases.includes(replayTrack)) aliases.push(replayTrack);
-  return aliases
-    .filter((v): v is string => typeof v === 'string' && !!v)
-    .map((v) => normalizeTrackText(v))
-    .filter(Boolean);
-};
-
-const tracksLikelyMatch = (
-  replayTrackAliases: string[],
-  logTrackVenue: string,
-  logTrackCourse?: string,
-  logTrackEvent?: string,
-): boolean => {
-  // Match logic: any alias matches any log field (exact or substring, both ways)
-  const logFields = [logTrackVenue, logTrackCourse, logTrackEvent]
-    .map((v) => normalizeTrackText(String(v ?? '')))
-    .filter(Boolean);
-  for (const alias of replayTrackAliases) {
-    for (const field of logFields) {
-      if (alias === field || alias.includes(field) || field.includes(alias)) {
-        return true;
-      }
-    }
-  }
-  return false;
-};
-
 export const findBestLogFile = async (
   logDir: string,
   replay: LMUReplay,
@@ -1181,7 +1116,10 @@ export const findBestLogFile = async (
     );
     const replayTimestamp = replay.timestamp;
     const replaySessionType = replay.metadata.session;
-    const replayTrackAliases = getReplayTrackAliases(replay);
+    const replayTrackAliases = getTrackAliases(
+      replay.metadata.sceneDesc,
+      replay.replayName,
+    );
 
     const logSummaries = (
       await Promise.allSettled(
