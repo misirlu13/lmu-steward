@@ -11,6 +11,13 @@ import { DashboardFooterSummary } from '../components/Dashboard/DashboardFooterS
 import { ArchiveConfirmDialog } from '../components/Dashboard/ArchiveConfirmDialog';
 import { ArchiveNoteDialog } from '../components/Dashboard/ArchiveNoteDialog';
 import { useDashboardReplays } from '../hooks/useDashboardReplays';
+import { useApi } from '../providers/ApiContext';
+import { DeleteImportedConfirmDialog } from '../components/Dashboard/DeleteImportedConfirmDialog';
+
+interface PendingDelete {
+  hashes: string[];
+  targetLabel: string;
+}
 
 interface PendingArchive {
   hashes: string[];
@@ -37,21 +44,27 @@ export const DashboardView: React.FC = () => {
     sortBy,
     sortDirection,
     filters,
-    showArchived,
+    dashboardView,
     archivedCount,
+    importedCount,
     filteredReplayHashes,
     setPage,
     setSortBy,
     setSortDirection,
     handleApplyFilters,
     handleRefreshReplays,
-    handleToggleArchivedView,
+    handleChangeDashboardView,
     handleArchiveReplays,
     handleRestoreReplays,
     handleSetArchiveNote,
+    handleDeleteImportedReplays,
   } = useDashboardReplays();
 
+  const { experimentalFeaturesEnabled, selectImportSource } = useApi();
   const [pendingArchive, setPendingArchive] = useState<PendingArchive | null>(
+    null,
+  );
+  const [pendingDelete, setPendingDelete] = useState<PendingDelete | null>(
     null,
   );
   const [pendingNote, setPendingNote] = useState<PendingNote | null>(null);
@@ -85,17 +98,24 @@ export const DashboardView: React.FC = () => {
     return null;
   }
 
-  const emptyStateCopy = showArchived
-    ? {
-        icon: <Inventory2OutlinedIcon sx={{ fontSize: 60 }} />,
-        title: 'Nothing archived.',
-        body: 'Replays you archive are kept here so you can restore them later. Your replay files are never deleted.',
-      }
-    : {
-        icon: <FolderOffIcon sx={{ fontSize: 60 }} />,
-        title: 'No replays found.',
-        body: 'We couldn’t find any replays to display.',
-      };
+  const emptyStateCopy =
+    dashboardView === 'imported'
+      ? {
+          icon: <Inventory2OutlinedIcon sx={{ fontSize: 60 }} />,
+          title: 'Nothing imported.',
+          body: 'Replays you import from another PC are kept here, separately from your own recordings.',
+        }
+      : dashboardView === 'archived'
+        ? {
+            icon: <Inventory2OutlinedIcon sx={{ fontSize: 60 }} />,
+            title: 'Nothing archived.',
+            body: 'Replays you archive are kept here so you can restore them later. Your replay files are never deleted.',
+          }
+        : {
+            icon: <FolderOffIcon sx={{ fontSize: 60 }} />,
+            title: 'No replays found.',
+            body: 'We couldn’t find any replays to display.',
+          };
 
   return (
     <>
@@ -107,13 +127,16 @@ export const DashboardView: React.FC = () => {
             sortBy={sortBy}
             sortDirection={sortDirection}
             filters={filters}
-            showArchived={showArchived}
+            dashboardView={dashboardView}
             archivedCount={archivedCount}
+            importedCount={importedCount}
+            canImport={experimentalFeaturesEnabled}
             onSortByChange={setSortBy}
             onSortDirectionChange={setSortDirection}
             onApplyFilters={handleApplyFilters}
             onRefresh={handleRefreshReplays}
-            onShowArchivedChange={handleToggleArchivedView}
+            onDashboardViewChange={handleChangeDashboardView}
+            onImportReplays={selectImportSource}
           />
         }
       />
@@ -141,7 +164,8 @@ export const DashboardView: React.FC = () => {
             {filteredReplayCount === 1 ? 'session matches' : 'sessions match'}{' '}
             your filters.
           </Typography>
-          {showArchived ? (
+          {dashboardView === 'imported' ? null : dashboardView ===
+            'archived' ? (
             <Button
               size="small"
               variant="outlined"
@@ -178,12 +202,15 @@ export const DashboardView: React.FC = () => {
             <DashboardReplay
               key={replay[0].hash}
               replayGroup={replay}
-              showArchived={showArchived}
+              dashboardView={dashboardView}
               onArchive={(hashes, targetLabel) =>
                 setPendingArchive({ hashes, targetLabel })
               }
               onRestore={handleRestoreReplays}
               onEditNote={(hash, note) => setPendingNote({ hash, note })}
+              onDeleteImported={(hashes, targetLabel) =>
+                setPendingDelete({ hashes, targetLabel })
+              }
             />
           ))}
         </Box>
@@ -222,7 +249,7 @@ export const DashboardView: React.FC = () => {
           <Typography color="text.secondary" variant="body1" textAlign="center">
             {emptyStateCopy.body}
           </Typography>
-          {showArchived ? null : (
+          {dashboardView === 'active' ? (
             <>
               <Box
                 component="ul"
@@ -245,7 +272,7 @@ export const DashboardView: React.FC = () => {
                 Try adjusting your filters or checking again shortly.
               </Typography>
             </>
-          )}
+          ) : null}
         </Box>
       )}
       <DashboardFooterSummary
@@ -271,6 +298,24 @@ export const DashboardView: React.FC = () => {
         initialNote={pendingNote?.note ?? ''}
         onCancel={() => setPendingNote(null)}
         onSave={saveNote}
+      />
+      <DeleteImportedConfirmDialog
+        open={Boolean(pendingDelete)}
+        targetLabel={pendingDelete?.targetLabel ?? 'this replay'}
+        replays={
+          pendingDelete
+            ? currentReplays
+                .flat()
+                .filter((replay) => pendingDelete.hashes.includes(replay.hash))
+            : []
+        }
+        onCancel={() => setPendingDelete(null)}
+        onConfirm={() => {
+          if (pendingDelete) {
+            handleDeleteImportedReplays(pendingDelete.hashes);
+          }
+          setPendingDelete(null);
+        }}
       />
       <Snackbar
         open={lastArchivedHashes.length > 0}

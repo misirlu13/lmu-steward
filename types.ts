@@ -10,6 +10,19 @@ export interface LMUReplay {
   archived?: boolean;
   archivedAt?: number;
   archiveNote?: string;
+  /**
+   * View-time decoration for replays this app copied into the LMU install.
+   * Sourced from the imported_replays table, never written to the replay cache.
+   */
+  imported?: boolean;
+  importedAt?: number;
+  importMatchConfidence?: number | null;
+  importMatchMethod?: 'roster' | 'manual' | 'manifest';
+  importVcrFileName?: string;
+  importLogFileName?: string;
+  importVcrPath?: string;
+  importLogPath?: string;
+  importOriginInstallPath?: string;
   metadata: {
     sceneDesc: string;
     session: SessionType;
@@ -87,6 +100,8 @@ export interface ImportedReplayRecord {
   timestamp: number;
   vcrFileName: string;
   vcrPath: string;
+  /** Byte size of the copied .Vcr, so the UI can report scale without a stat. */
+  size: number;
   logFileName: string;
   logPath: string;
   /** Guards delete against a file having been replaced since import. */
@@ -118,6 +133,13 @@ export interface ArchiveReplaysRequest {
   note?: string;
   gameType?: ReplayGameType;
 }
+
+/**
+ * The dashboard's three mutually exclusive lists. Imported replays are not
+ * archivable, which this expresses structurally: an imported replay is never in
+ * the active list where the archive action lives.
+ */
+export type DashboardViewMode = 'active' | 'archived' | 'imported';
 
 export type DashboardSortByOptions = 'date' | 'track' | 'incidents';
 

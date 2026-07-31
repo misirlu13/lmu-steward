@@ -53,6 +53,8 @@ export const ReplayView: React.FC = () => {
     isReplayActive,
     quickViewEnabled,
     replays,
+    experimentalFeaturesEnabled,
+    exportReplay,
     subscribeToApiChannel,
   } = useApi();
   const [isChatOpen, setIsChatOpen] = useState(false);
@@ -303,7 +305,29 @@ export const ReplayView: React.FC = () => {
                 View Replay
               </Button>
             ) : null}
-            <ReplayActions onViewChat={onToggleViewChat} />
+            <ReplayActions
+              onViewChat={onToggleViewChat}
+              canExport={experimentalFeaturesEnabled}
+              exportDisabledReason={
+                currentReplay?.logDataFileName
+                  ? null
+                  : 'This replay has no matched result log, so there is nothing to share alongside it.'
+              }
+              onExport={() => {
+                if (!currentReplay?.logDataFileName) {
+                  return;
+                }
+
+                exportReplay({
+                  replayName: currentReplay.replayName,
+                  vcrPath: `${currentReplay.replayDirectory}${currentReplay.replayName}.Vcr`,
+                  logPath: `${currentReplay.logDataDirectory}\${currentReplay.logDataFileName}`,
+                  sceneDesc: currentReplay.metadata.sceneDesc,
+                  session: currentReplay.metadata.session,
+                  timestamp: currentReplay.timestamp,
+                });
+              }}
+            />
           </Stack>
         }
       />

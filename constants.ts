@@ -68,6 +68,12 @@ export const CONSTANTS = {
     PUT_REPLAY_COMMAND_FOCUS_CAR: 'put.replay-command-focus-car',
     POST_REPLAY_COMMAND_UI: 'post.replay-command-ui',
     PUT_FOCUS_CAR: 'put.focus-car',
+    GET_IMPORTED_REPLAYS: 'get.imported-replays',
+    POST_SELECT_IMPORT_SOURCE: 'post.select-import-source',
+    POST_IMPORT_REPLAYS: 'post.import-replays',
+    POST_DELETE_IMPORTED_REPLAYS: 'post.delete-imported-replays',
+    POST_EXPORT_REPLAY: 'post.export-replay',
+    PUSH_IMPORT_PROGRESS: 'push.import-progress',
   },
   TRACK_META_DATA: {
     PORTIMAOELMS: {

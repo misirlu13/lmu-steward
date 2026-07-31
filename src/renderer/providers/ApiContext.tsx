@@ -10,6 +10,7 @@ import React, {
 import { CONSTANTS } from '@constants';
 import {
   GetReplaysRequest,
+  ImportedReplayRecord,
   LMUReplay,
   LoadingState,
   PersistedDashboardView,
@@ -26,6 +27,7 @@ interface UserSettingsResponse {
   status?: string;
   data?: {
     quickViewEnabled?: boolean;
+    experimentalFeaturesEnabled?: boolean;
     persistDashboardFiltersEnabled?: boolean;
     dashboardView?: PersistedDashboardView | null;
   };
@@ -34,11 +36,40 @@ interface UserSettingsResponse {
 type ApiChannel = (typeof CONSTANTS.API)[keyof typeof CONSTANTS.API];
 type ApiChannelCallback = (data: unknown) => void;
 
+export interface ImportSelectionPayload {
+  id: string;
+  logPath: string;
+  method: 'roster' | 'manual' | 'manifest';
+  confidence: number | null;
+}
+
+export interface ExportReplayPayload {
+  replayName: string;
+  vcrPath: string;
+  logPath: string;
+  sceneDesc: string;
+  session: string;
+  timestamp: number;
+}
+
+export interface ImportPreviewState {
+  sourceDirectory: string;
+  rows: unknown[];
+}
+
+export interface ImportProgressState {
+  status: 'in-progress' | 'success' | 'error';
+  processed: number;
+  total: number;
+  message?: string;
+}
+
 interface ApiContextType {
   isConnected: boolean;
   hasApiStatusResponse: boolean;
   hasUserSettingsResponse: boolean;
   quickViewEnabled: boolean;
+  experimentalFeaturesEnabled: boolean;
   persistDashboardFiltersEnabled: boolean;
   persistedDashboardView: PersistedDashboardView | null;
   lastReplaySyncAt: number | null;
@@ -47,6 +78,9 @@ interface ApiContextType {
   isReplayActive: boolean | null;
   currentTrackMap: { data?: unknown } | null;
   replays: ReplayResponse | null;
+  importedReplays: ImportedReplayRecord[];
+  importPreview: ImportPreviewState | null;
+  importProgress: ImportProgressState | null;
   currentReplay: LMUReplay | null;
   loadingState: LoadingState;
   markReplayCacheResetRequired: () => void;
@@ -54,6 +88,15 @@ interface ApiContextType {
   archiveReplays: (hashes: string[], note?: string) => void;
   restoreReplays: (hashes: string[]) => void;
   setArchiveNote: (hashes: string[], note: string) => void;
+  requestImportedReplays: () => void;
+  selectImportSource: () => void;
+  clearImportPreview: () => void;
+  importSelectedReplays: (
+    rows: unknown[],
+    selections: ImportSelectionPayload[],
+  ) => void;
+  deleteImportedReplays: (hashes: string[]) => void;
+  exportReplay: (request: ExportReplayPayload) => void;
   subscribeToApiChannel: (
     channel: ApiChannel,
     callback: ApiChannelCallback,
@@ -65,6 +108,7 @@ const ApiContext = createContext<ApiContextType>({
   hasApiStatusResponse: false,
   hasUserSettingsResponse: false,
   quickViewEnabled: false,
+  experimentalFeaturesEnabled: false,
   persistDashboardFiltersEnabled: false,
   persistedDashboardView: null,
   lastReplaySyncAt: null,
@@ -78,11 +122,20 @@ const ApiContext = createContext<ApiContextType>({
   isReplayActive: null,
   currentTrackMap: null,
   replays: null,
+  importedReplays: [],
+  importPreview: null,
+  importProgress: null,
   currentReplay: null,
   loadingState: { loading: false, percentage: -1 },
   markReplayCacheResetRequired: () => {},
   requestReplays: () => {},
   archiveReplays: () => {},
+  requestImportedReplays: () => {},
+  selectImportSource: () => {},
+  clearImportPreview: () => {},
+  importSelectedReplays: () => {},
+  deleteImportedReplays: () => {},
+  exportReplay: () => {},
   restoreReplays: () => {},
   setArchiveNote: () => {},
   subscribeToApiChannel: () => () => {},
@@ -95,6 +148,8 @@ export const ApiProvider: React.FC<{ children: React.ReactNode }> = ({
   const [hasApiStatusResponse, setHasApiStatusResponse] = useState(false);
   const [hasUserSettingsResponse, setHasUserSettingsResponse] = useState(false);
   const [quickViewEnabled, setQuickViewEnabled] = useState(false);
+  const [experimentalFeaturesEnabled, setExperimentalFeaturesEnabled] =
+    useState(false);
   const [persistDashboardFiltersEnabled, setPersistDashboardFiltersEnabled] =
     useState(false);
   const [persistedDashboardView, setPersistedDashboardView] =
@@ -115,6 +170,14 @@ export const ApiProvider: React.FC<{ children: React.ReactNode }> = ({
     data?: unknown;
   } | null>(null);
   const [replays, setReplays] = useState<ReplayResponse | null>(null);
+  const [importedReplays, setImportedReplays] = useState<
+    ImportedReplayRecord[]
+  >([]);
+  const [importPreview, setImportPreview] = useState<ImportPreviewState | null>(
+    null,
+  );
+  const [importProgress, setImportProgress] =
+    useState<ImportProgressState | null>(null);
   const [currentReplay, setCurrentReplay] = useState<LMUReplay | null>(null);
   const [loadingState, setLoadingState] = useState<LoadingState>({
     loading: false,
@@ -167,6 +230,10 @@ export const ApiProvider: React.FC<{ children: React.ReactNode }> = ({
 
     if (payload?.status !== 'success') {
       return;
+    }
+
+    if (typeof payload?.data?.experimentalFeaturesEnabled === 'boolean') {
+      setExperimentalFeaturesEnabled(payload.data.experimentalFeaturesEnabled);
     }
 
     if (typeof payload?.data?.quickViewEnabled === 'boolean') {
@@ -260,6 +327,47 @@ export const ApiProvider: React.FC<{ children: React.ReactNode }> = ({
     [sendArchiveMessage],
   );
 
+  const requestImportedReplays = useCallback(() => {
+    sendMessage(CONSTANTS.API.GET_IMPORTED_REPLAYS);
+  }, []);
+
+  const selectImportSource = useCallback(() => {
+    sendMessage(CONSTANTS.API.POST_SELECT_IMPORT_SOURCE);
+  }, []);
+
+  const clearImportPreview = useCallback(() => {
+    setImportPreview(null);
+    setImportProgress(null);
+  }, []);
+
+  const importSelectedReplays = useCallback(
+    (rows: unknown[], selections: ImportSelectionPayload[]) => {
+      if (selections.length === 0) {
+        return;
+      }
+
+      setImportProgress({
+        status: 'in-progress',
+        processed: 0,
+        total: selections.length,
+      });
+      sendMessage(CONSTANTS.API.POST_IMPORT_REPLAYS, { rows, selections });
+    },
+    [],
+  );
+
+  const deleteImportedReplays = useCallback((hashes: string[]) => {
+    if (hashes.length === 0) {
+      return;
+    }
+
+    sendMessage(CONSTANTS.API.POST_DELETE_IMPORTED_REPLAYS, { hashes });
+  }, []);
+
+  const exportReplay = useCallback((request: ExportReplayPayload) => {
+    sendMessage(CONSTANTS.API.POST_EXPORT_REPLAY, request);
+  }, []);
+
   const setArchiveNote = useCallback(
     (hashes: string[], note: string) => {
       sendArchiveMessage(CONSTANTS.API.POST_ARCHIVE_NOTE, hashes, note);
@@ -321,6 +429,89 @@ export const ApiProvider: React.FC<{ children: React.ReactNode }> = ({
           }
 
           console.error('Failed to fetch track map:', payload?.message || data);
+        },
+      ),
+      [CONSTANTS.API.GET_IMPORTED_REPLAYS]: createHandler(
+        CONSTANTS.API.GET_IMPORTED_REPLAYS,
+        (data: unknown) => {
+          const payload = data as {
+            status?: string;
+            data?: ImportedReplayRecord[];
+            message?: string;
+          };
+
+          if (payload?.status === 'success') {
+            setImportedReplays(payload.data ?? []);
+            return;
+          }
+
+          console.error('Failed to read imported replays:', payload?.message);
+        },
+      ),
+      [CONSTANTS.API.POST_SELECT_IMPORT_SOURCE]: createHandler(
+        CONSTANTS.API.POST_SELECT_IMPORT_SOURCE,
+        (data: unknown) => {
+          const payload = data as {
+            status?: string;
+            data?: {
+              canceled?: boolean;
+              sourceDirectory?: string;
+              rows?: unknown[];
+            };
+            message?: string;
+          };
+
+          if (payload?.status !== 'success' || payload.data?.canceled) {
+            if (payload?.status === 'error') {
+              console.error('Failed to scan import source:', payload.message);
+            }
+            return;
+          }
+
+          setImportPreview({
+            sourceDirectory: payload.data?.sourceDirectory ?? '',
+            rows: payload.data?.rows ?? [],
+          });
+        },
+      ),
+      [CONSTANTS.API.PUSH_IMPORT_PROGRESS]: createHandler(
+        CONSTANTS.API.PUSH_IMPORT_PROGRESS,
+        (data: unknown) => {
+          setImportProgress(data as ImportProgressState);
+        },
+      ),
+      [CONSTANTS.API.POST_IMPORT_REPLAYS]: createHandler(
+        CONSTANTS.API.POST_IMPORT_REPLAYS,
+        (data: unknown) => {
+          const payload = data as {
+            status?: string;
+            data?: { replays?: ImportedReplayRecord[] };
+            message?: string;
+          };
+
+          if (payload?.status === 'success') {
+            setImportedReplays(payload.data?.replays ?? []);
+            return;
+          }
+
+          console.error('Failed to import replays:', payload?.message);
+        },
+      ),
+      [CONSTANTS.API.POST_DELETE_IMPORTED_REPLAYS]: createHandler(
+        CONSTANTS.API.POST_DELETE_IMPORTED_REPLAYS,
+        (data: unknown) => {
+          const payload = data as {
+            status?: string;
+            data?: { replays?: ImportedReplayRecord[] };
+            message?: string;
+          };
+
+          if (payload?.status === 'success') {
+            setImportedReplays(payload.data?.replays ?? []);
+            return;
+          }
+
+          console.error('Failed to delete imported replays:', payload?.message);
         },
       ),
       [CONSTANTS.API.GET_REPLAYS]: createHandler(
@@ -483,6 +674,7 @@ export const ApiProvider: React.FC<{ children: React.ReactNode }> = ({
       hasApiStatusResponse,
       hasUserSettingsResponse,
       quickViewEnabled,
+      experimentalFeaturesEnabled,
       persistDashboardFiltersEnabled,
       persistedDashboardView,
       lastReplaySyncAt,
@@ -491,6 +683,9 @@ export const ApiProvider: React.FC<{ children: React.ReactNode }> = ({
       isReplayActive,
       currentTrackMap,
       replays,
+      importedReplays,
+      importPreview,
+      importProgress,
       currentReplay,
       loadingState,
       markReplayCacheResetRequired,
@@ -498,6 +693,12 @@ export const ApiProvider: React.FC<{ children: React.ReactNode }> = ({
       archiveReplays,
       restoreReplays,
       setArchiveNote,
+      requestImportedReplays,
+      selectImportSource,
+      clearImportPreview,
+      importSelectedReplays,
+      deleteImportedReplays,
+      exportReplay,
       subscribeToApiChannel,
     }),
     [
@@ -505,6 +706,7 @@ export const ApiProvider: React.FC<{ children: React.ReactNode }> = ({
       hasApiStatusResponse,
       hasUserSettingsResponse,
       quickViewEnabled,
+      experimentalFeaturesEnabled,
       persistDashboardFiltersEnabled,
       persistedDashboardView,
       lastReplaySyncAt,
@@ -513,6 +715,9 @@ export const ApiProvider: React.FC<{ children: React.ReactNode }> = ({
       isReplayActive,
       currentTrackMap,
       replays,
+      importedReplays,
+      importPreview,
+      importProgress,
       currentReplay,
       loadingState,
       markReplayCacheResetRequired,
@@ -520,6 +725,12 @@ export const ApiProvider: React.FC<{ children: React.ReactNode }> = ({
       archiveReplays,
       restoreReplays,
       setArchiveNote,
+      requestImportedReplays,
+      selectImportSource,
+      clearImportPreview,
+      importSelectedReplays,
+      deleteImportedReplays,
+      exportReplay,
       subscribeToApiChannel,
     ],
   );

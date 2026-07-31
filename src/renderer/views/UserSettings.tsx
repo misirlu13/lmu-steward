@@ -85,6 +85,9 @@ export const UserSettingsView: React.FC = () => {
     lastReplaySyncAt,
     requestReplays,
     markReplayCacheResetRequired,
+    importedReplays,
+    requestImportedReplays,
+    deleteImportedReplays,
   } = useApi();
   const [lmuExecutablePath, setLmuExecutablePath] = useState<string>(
     CONSTANTS.LMU_DEFAULT_EXECUTABLE_PATH,
@@ -117,6 +120,14 @@ export const UserSettingsView: React.FC = () => {
     useState(false);
   const [experimentalFeaturesEnabled, setExperimentalFeaturesEnabled] =
     useState(false);
+  /*
+   * Defaults to keeping the files. Clearing a cache should not destroy
+   * multi-GB replays as a side effect — the destructive option is the one the
+   * user actively picks.
+   */
+  const [deleteImportedFilesOnClear, setDeleteImportedFilesOnClear] =
+    useState(false);
+  const [importedReplayBytes, setImportedReplayBytes] = useState(0);
   const [anonymizeDriverData, setAnonymizeDriverData] = useState(false);
   const [telemetryCacheEnabled, setTelemetryCacheEnabled] = useState(true);
   const [clearCacheOnExit, setClearCacheOnExit] = useState(false);
@@ -848,9 +859,37 @@ export const UserSettingsView: React.FC = () => {
     setIsClearLocalStorageDialogOpen(false);
   };
 
+  useEffect(() => {
+    requestImportedReplays();
+  }, [requestImportedReplays]);
+
+  /*
+   * Sizes are not carried on the record, so this is an estimate from the
+   * replay's own size rather than a stat of each file. It is only used to give
+   * the confirmation a sense of scale.
+   */
+  useEffect(() => {
+    setImportedReplayBytes(
+      (importedReplays ?? []).reduce(
+        (total, replay) => total + Number(replay.size ?? 0),
+        0,
+      ),
+    );
+  }, [importedReplays]);
+
   const onConfirmClearLocalStorage = () => {
     setIsClearingLocalStorage(true);
     setStatusMessage('');
+
+    /*
+     * Files first, then storage. Clearing storage destroys the rows holding the
+     * paths, so a failure the other way round would orphan exactly what this
+     * prompt exists to prevent.
+     */
+    if (deleteImportedFilesOnClear && (importedReplays?.length ?? 0) > 0) {
+      deleteImportedReplays(importedReplays.map((replay) => replay.hash));
+    }
+
     sendMessage(CONSTANTS.API.POST_CLEAR_LOCAL_STORAGE);
   };
 
@@ -1596,6 +1635,10 @@ export const UserSettingsView: React.FC = () => {
           <UserSettingsClearStorageDialog
             open={isClearLocalStorageDialogOpen}
             isClearingLocalStorage={isClearingLocalStorage}
+            importedReplayCount={importedReplays?.length ?? 0}
+            importedReplayBytes={importedReplayBytes}
+            deleteImportedFiles={deleteImportedFilesOnClear}
+            onDeleteImportedFilesChange={setDeleteImportedFilesOnClear}
             onClose={onCloseClearLocalStorageDialog}
             onConfirm={onConfirmClearLocalStorage}
           />

@@ -409,6 +409,7 @@ export const importReplays = async ({
         timestamp: logCandidate.eventDateTime,
         vcrFileName: row.vcrFileName,
         vcrPath: destinationVcrPath,
+        size: row.size,
         logFileName,
         logPath: destinationLogPath,
         vcrFingerprint: await fingerprintFile(destinationVcrPath),

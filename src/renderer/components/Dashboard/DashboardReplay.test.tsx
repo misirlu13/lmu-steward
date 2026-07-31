@@ -1,7 +1,7 @@
 import React from 'react';
 import '@testing-library/jest-dom';
 import { fireEvent, render, screen } from '@testing-library/react';
-import { LMUReplay } from '@types';
+import { DashboardViewMode, LMUReplay } from '@types';
 import { DashboardReplay } from './DashboardReplay';
 
 jest.mock('react-router-dom', () => ({
@@ -23,7 +23,7 @@ const buildReplay = (
 
 describe('DashboardReplay archive actions', () => {
   const setup = (
-    showArchived: boolean,
+    dashboardView: DashboardViewMode,
     replayGroup: LMUReplay[] = [
       buildReplay('race-hash', 'RACE'),
       buildReplay('qualify-hash', 'QUALIFY'),
@@ -32,22 +32,24 @@ describe('DashboardReplay archive actions', () => {
     const onArchive = jest.fn();
     const onRestore = jest.fn();
     const onEditNote = jest.fn();
+    const onDeleteImported = jest.fn();
 
     render(
       <DashboardReplay
         replayGroup={replayGroup}
-        showArchived={showArchived}
+        dashboardView={dashboardView}
         onArchive={onArchive}
         onRestore={onRestore}
         onEditNote={onEditNote}
+        onDeleteImported={onDeleteImported}
       />,
     );
 
-    return { onArchive, onRestore, onEditNote };
+    return { onArchive, onRestore, onEditNote, onDeleteImported };
   };
 
   it('archives a single session from its row menu', () => {
-    const { onArchive } = setup(false);
+    const { onArchive } = setup('active');
 
     fireEvent.click(screen.getByLabelText('Actions for Race'));
     fireEvent.click(screen.getByText('Archive session'));
@@ -56,7 +58,7 @@ describe('DashboardReplay archive actions', () => {
   });
 
   it('archives every session in the weekend from the card menu', () => {
-    const { onArchive } = setup(false);
+    const { onArchive } = setup('active');
 
     fireEvent.click(screen.getByLabelText('Weekend archive menu'));
     fireEvent.click(screen.getByText('Archive weekend (2)'));
@@ -68,7 +70,7 @@ describe('DashboardReplay archive actions', () => {
   });
 
   it('offers restore and note actions in the archived view', () => {
-    const { onRestore, onEditNote } = setup(true, [
+    const { onRestore, onEditNote } = setup('archived', [
       buildReplay('race-hash', 'RACE', {
         archived: true,
         archiveNote: 'reviewed',
@@ -85,7 +87,7 @@ describe('DashboardReplay archive actions', () => {
   });
 
   it('offers to add a note when the archived replay has none', () => {
-    setup(true, [buildReplay('race-hash', 'RACE', { archived: true })]);
+    setup('archived', [buildReplay('race-hash', 'RACE', { archived: true })]);
 
     fireEvent.click(screen.getByLabelText('Actions for Race'));
 
@@ -93,7 +95,7 @@ describe('DashboardReplay archive actions', () => {
   });
 
   it('surfaces an existing note on the row', () => {
-    setup(true, [
+    setup('archived', [
       buildReplay('race-hash', 'RACE', {
         archived: true,
         archiveNote: 'reviewed, no action',
@@ -106,7 +108,7 @@ describe('DashboardReplay archive actions', () => {
   });
 
   it('does not offer archive actions for replays in the archived view', () => {
-    setup(true, [buildReplay('race-hash', 'RACE', { archived: true })]);
+    setup('archived', [buildReplay('race-hash', 'RACE', { archived: true })]);
 
     fireEvent.click(screen.getByLabelText('Actions for Race'));
 
@@ -114,7 +116,7 @@ describe('DashboardReplay archive actions', () => {
   });
 
   it('keeps View Replay available for archived replays', () => {
-    setup(true, [buildReplay('race-hash', 'RACE', { archived: true })]);
+    setup('archived', [buildReplay('race-hash', 'RACE', { archived: true })]);
 
     expect(screen.getByText('View Replay')).toBeInTheDocument();
   });

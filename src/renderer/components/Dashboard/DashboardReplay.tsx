@@ -1,5 +1,10 @@
 import { useEffect, useState } from 'react';
-import { LMUReplay, SessionIncidents, SessionMetaData } from '@types';
+import {
+  DashboardViewMode,
+  LMUReplay,
+  SessionIncidents,
+  SessionMetaData,
+} from '@types';
 import Box from '@mui/material/Box';
 import Typography from '@mui/material/Typography';
 import { CONSTANTS } from '@constants';
@@ -32,6 +37,7 @@ import ListItemIcon from '@mui/material/ListItemIcon';
 import ListItemText from '@mui/material/ListItemText';
 import { useNavigate } from 'react-router-dom';
 import { getSessionIncidentScore } from '@/renderer/utils/incidentScore';
+import DeleteForeverIcon from '@mui/icons-material/DeleteForever';
 import { SessionIncidentSeverityLabel } from '../IncidentSeverityLabels/SessionIncidentSeverityLabel';
 import {
   getSessionCarClasses,
@@ -44,10 +50,11 @@ import { ReplaySubtitle } from '../Common/ReplaySubtitle';
 
 interface DashboardReplayProps {
   replayGroup: LMUReplay[];
-  showArchived: boolean;
+  dashboardView: DashboardViewMode;
   onArchive: (hashes: string[], targetLabel: string) => void;
   onRestore: (hashes: string[]) => void;
   onEditNote: (hash: string, note: string) => void;
+  onDeleteImported: (hashes: string[], targetLabel: string) => void;
 }
 
 interface DashboardReplayTableRow {
@@ -82,12 +89,20 @@ const sessionColorMap: Record<string, string> = {
 
 export const DashboardReplay: React.FC<DashboardReplayProps> = ({
   replayGroup,
-  showArchived,
+  dashboardView,
   onArchive,
   onRestore,
   onEditNote,
+  onDeleteImported,
 }) => {
   const replay = replayGroup[0];
+  const isArchivedView = dashboardView === 'archived';
+  const isImportedView = dashboardView === 'imported';
+  const weekendMenuLabel = isImportedView
+    ? 'Weekend delete menu'
+    : isArchivedView
+      ? 'Weekend restore menu'
+      : 'Weekend archive menu';
   const metaData =
     CONSTANTS.TRACK_META_DATA[
       replay.metadata.sceneDesc as keyof typeof CONSTANTS.TRACK_META_DATA
@@ -363,9 +378,7 @@ export const DashboardReplay: React.FC<DashboardReplayProps> = ({
                 />
               </Box>
               <IconButton
-                aria-label={
-                  showArchived ? 'Weekend restore menu' : 'Weekend archive menu'
-                }
+                aria-label={weekendMenuLabel}
                 size="small"
                 // The button sits inside the accordion header, so the click has
                 // to be kept from toggling the panel open.
@@ -386,7 +399,21 @@ export const DashboardReplay: React.FC<DashboardReplayProps> = ({
           open={Boolean(weekendMenuAnchor)}
           onClose={() => setWeekendMenuAnchor(null)}
         >
-          {showArchived ? (
+          {isImportedView ? (
+            <MenuItem
+              onClick={() => {
+                setWeekendMenuAnchor(null);
+                onDeleteImported(groupHashes, title ?? 'this weekend');
+              }}
+            >
+              <ListItemIcon>
+                <DeleteForeverIcon fontSize="small" />
+              </ListItemIcon>
+              <ListItemText>
+                Delete weekend from disk ({groupHashes.length})
+              </ListItemText>
+            </MenuItem>
+          ) : isArchivedView ? (
             <MenuItem
               onClick={() => {
                 setWeekendMenuAnchor(null);
@@ -676,58 +703,78 @@ export const DashboardReplay: React.FC<DashboardReplayProps> = ({
         open={Boolean(rowMenu)}
         onClose={closeRowMenu}
       >
-        {showArchived
+        {isImportedView
           ? [
               <MenuItem
-                key="restore"
+                key="delete-imported"
                 onClick={() => {
                   closeRowMenu();
                   if (rowMenu) {
-                    onRestore([rowMenu.row.hash]);
-                  }
-                }}
-              >
-                <ListItemIcon>
-                  <UnarchiveIcon fontSize="small" />
-                </ListItemIcon>
-                <ListItemText>Restore session</ListItemText>
-              </MenuItem>,
-              <MenuItem
-                key="note"
-                onClick={() => {
-                  closeRowMenu();
-                  if (rowMenu) {
-                    onEditNote(rowMenu.row.hash, rowMenu.row.archiveNote);
-                  }
-                }}
-              >
-                <ListItemIcon>
-                  <EditNoteIcon fontSize="small" />
-                </ListItemIcon>
-                <ListItemText>
-                  {rowMenu?.row.archiveNote ? 'Edit note' : 'Add note'}
-                </ListItemText>
-              </MenuItem>,
-            ]
-          : [
-              <MenuItem
-                key="archive"
-                onClick={() => {
-                  closeRowMenu();
-                  if (rowMenu) {
-                    onArchive(
+                    onDeleteImported(
                       [rowMenu.row.hash],
-                      `this ${rowMenu.row.sessionType}`,
+                      rowMenu.row.sessionType,
                     );
                   }
                 }}
               >
                 <ListItemIcon>
-                  <ArchiveIcon fontSize="small" />
+                  <DeleteForeverIcon fontSize="small" />
                 </ListItemIcon>
-                <ListItemText>Archive session</ListItemText>
+                <ListItemText>Delete from disk</ListItemText>
               </MenuItem>,
-            ]}
+            ]
+          : isArchivedView
+            ? [
+                <MenuItem
+                  key="restore"
+                  onClick={() => {
+                    closeRowMenu();
+                    if (rowMenu) {
+                      onRestore([rowMenu.row.hash]);
+                    }
+                  }}
+                >
+                  <ListItemIcon>
+                    <UnarchiveIcon fontSize="small" />
+                  </ListItemIcon>
+                  <ListItemText>Restore session</ListItemText>
+                </MenuItem>,
+                <MenuItem
+                  key="note"
+                  onClick={() => {
+                    closeRowMenu();
+                    if (rowMenu) {
+                      onEditNote(rowMenu.row.hash, rowMenu.row.archiveNote);
+                    }
+                  }}
+                >
+                  <ListItemIcon>
+                    <EditNoteIcon fontSize="small" />
+                  </ListItemIcon>
+                  <ListItemText>
+                    {rowMenu?.row.archiveNote ? 'Edit note' : 'Add note'}
+                  </ListItemText>
+                </MenuItem>,
+              ]
+            : [
+                <MenuItem
+                  key="archive"
+                  onClick={() => {
+                    closeRowMenu();
+                    if (rowMenu) {
+                      onArchive(
+                        [rowMenu.row.hash],
+                        `this ${rowMenu.row.sessionType}`,
+                      );
+                    }
+                  }}
+                >
+                  <ListItemIcon>
+                    <ArchiveIcon fontSize="small" />
+                  </ListItemIcon>
+                  <ListItemText>Archive session</ListItemText>
+                </MenuItem>,
+              ]}
       </Menu>
     </Box>
   );

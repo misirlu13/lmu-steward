@@ -35,6 +35,16 @@ import {
   syncReplayData,
 } from './api/replay';
 import {
+  DeleteImportedReplaysRequest,
+  ExportReplayRequest,
+  getImportedReplays,
+  ImportReplaysRequest,
+  postDeleteImportedReplays,
+  postExportReplay,
+  postImportReplays,
+  postSelectImportSource,
+} from './api/replay-import-handlers';
+import {
   getTrackThumbnail,
   getStandings,
   getStandingsHistory,
@@ -191,6 +201,18 @@ const CHANNEL_CALLBACK_HANDLERS: Partial<
   [CONSTANTS.API.PUT_REPLAY_COMMAND_FOCUS_CAR]:
     withEventAndData<string>(putFocusCar),
   [CONSTANTS.API.PUT_FOCUS_CAR]: withEventAndData<string>(putFocusCar),
+
+  // REPLAY IMPORT / EXPORT
+  [CONSTANTS.API.GET_IMPORTED_REPLAYS]: withEventOnly(getImportedReplays),
+  [CONSTANTS.API.POST_SELECT_IMPORT_SOURCE]: withEventOnly(
+    postSelectImportSource,
+  ),
+  [CONSTANTS.API.POST_IMPORT_REPLAYS]:
+    withEventAndData<ImportReplaysRequest>(postImportReplays),
+  [CONSTANTS.API.POST_DELETE_IMPORTED_REPLAYS]:
+    withEventAndData<DeleteImportedReplaysRequest>(postDeleteImportedReplays),
+  [CONSTANTS.API.POST_EXPORT_REPLAY]:
+    withEventAndData<ExportReplayRequest>(postExportReplay),
 };
 
 const devModeEnabled = isDevModeEnabled();

@@ -63,6 +63,9 @@ describe('UserSettingsView integration', () => {
       lastReplaySyncAt: null,
       requestReplays: requestReplaysMock,
       markReplayCacheResetRequired: markReplayCacheResetRequiredMock,
+      importedReplays: [],
+      requestImportedReplays: jest.fn(),
+      deleteImportedReplays: jest.fn(),
     } as unknown as ReturnType<typeof useApi>);
   });
 
