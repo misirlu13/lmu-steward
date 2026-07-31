@@ -35,6 +35,7 @@ describe('DashboardReplay archive actions', () => {
     const onEditNote = jest.fn();
     const onDeleteImported = jest.fn();
     const onExportSession = jest.fn();
+    const onExportWeekend = jest.fn();
 
     render(
       <DashboardReplay
@@ -45,6 +46,7 @@ describe('DashboardReplay archive actions', () => {
         onEditNote={onEditNote}
         onDeleteImported={onDeleteImported}
         onExportSession={onExportSession}
+        onExportWeekend={onExportWeekend}
         canExport
       />,
     );
@@ -55,6 +57,7 @@ describe('DashboardReplay archive actions', () => {
       onEditNote,
       onDeleteImported,
       onExportSession,
+      onExportWeekend,
     };
   };
 
@@ -159,5 +162,62 @@ describe('DashboardReplay archive actions', () => {
     expect(
       screen.getByText('Export session (no result log)').closest('li'),
     ).toHaveAttribute('aria-disabled', 'true');
+  });
+
+  it('exports every session in the weekend from the card menu', () => {
+    const { onExportWeekend } = setup('active');
+
+    fireEvent.click(screen.getByLabelText('Weekend archive menu'));
+    fireEvent.click(screen.getByText('Export weekend (2)'));
+
+    expect(onExportWeekend).toHaveBeenCalledTimes(1);
+    expect(
+      onExportWeekend.mock.calls[0][0].map((replay: LMUReplay) => replay.hash),
+    ).toEqual(['race-hash', 'qualify-hash']);
+  });
+
+  /**
+   * A session with no matched log is left out rather than blocking the
+   * weekend. One unmatched practice session is no reason to withhold the rest,
+   * and the count is what will actually be written.
+   */
+  it('counts only the sessions that have a result log', () => {
+    const { onExportWeekend } = setup('active', [
+      buildReplay('race-hash', 'RACE'),
+      buildReplay('qualify-hash', 'QUALIFY', { logDataFileName: '' }),
+    ]);
+
+    fireEvent.click(screen.getByLabelText('Weekend archive menu'));
+    fireEvent.click(screen.getByText('Export weekend (1)'));
+
+    expect(
+      onExportWeekend.mock.calls[0][0].map((replay: LMUReplay) => replay.hash),
+    ).toEqual(['race-hash']);
+  });
+
+  it('disables the weekend export when no session has a result log', () => {
+    setup('active', [
+      buildReplay('race-hash', 'RACE', { logDataFileName: '' }),
+    ]);
+
+    fireEvent.click(screen.getByLabelText('Weekend archive menu'));
+
+    expect(
+      screen.getByText('Export weekend (no result logs)').closest('li'),
+    ).toHaveAttribute('aria-disabled', 'true');
+  });
+
+  /**
+   * Export never depended on the flag for replays already on disk, and the
+   * imported view is the one place a steward reaches a hand-off they have
+   * verified — re-exporting propagates the pairing to the next steward.
+   */
+  it('offers weekend export in the imported view', () => {
+    const { onExportWeekend } = setup('imported');
+
+    fireEvent.click(screen.getByLabelText('Weekend delete menu'));
+    fireEvent.click(screen.getByText('Export weekend (2)'));
+
+    expect(onExportWeekend).toHaveBeenCalledTimes(1);
   });
 });

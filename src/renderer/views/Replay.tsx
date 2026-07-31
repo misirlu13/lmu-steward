@@ -3,7 +3,15 @@ import { useNavigate, useParams } from 'react-router-dom';
 import { CONSTANTS } from '@constants';
 import InfoOutlinedIcon from '@mui/icons-material/InfoOutlined';
 import Drawer from '@mui/material/Drawer';
-import { Box, Button, Paper, Stack, Tooltip, Typography } from '@mui/material';
+import {
+  Box,
+  Button,
+  Paper,
+  Snackbar,
+  Stack,
+  Tooltip,
+  Typography,
+} from '@mui/material';
 import { sendMessage } from '../utils/postMessage';
 import { useApi } from '../providers/ApiContext';
 import { ReplayJumpBar } from '../components/Replay/ReplayJumpBar';
@@ -19,6 +27,7 @@ import {
 } from '../components/Replay/ReplayMasterIncidentTimeline';
 import { ReplayDriverStandings } from '../components/Replay/ReplayDriverStandings';
 import { ReplayIncidentHeatmap } from '../components/Replay/ReplayIncidentHeatmap';
+import { ExportProgressDialog } from '../components/Dashboard/ExportProgressDialog';
 import { getSessionIncidents } from '../utils/sessionUtils';
 import { SESSION_COLOR_MAPPING } from '../utils/sessionColorMapping';
 import { jumpToIncidentInReplay } from '../utils/replayCommands';
@@ -55,6 +64,9 @@ export const ReplayView: React.FC = () => {
     replays,
     experimentalFeaturesEnabled,
     exportReplay,
+    exportProgress,
+    exportResult,
+    clearExportResult,
     subscribeToApiChannel,
   } = useApi();
   const [isChatOpen, setIsChatOpen] = useState(false);
@@ -466,6 +478,19 @@ export const ReplayView: React.FC = () => {
       <Drawer open={isChatOpen} onClose={toggleChatDrawer(false)}>
         <ReplayChat replay={replayForView} />
       </Drawer>
+      {/* A single session can still be 400 MB, so it gets the same feedback
+          the dashboard's weekend export does. */}
+      <ExportProgressDialog progress={exportProgress} />
+      <Snackbar
+        open={Boolean(exportResult && !exportResult.canceled)}
+        autoHideDuration={exportResult?.status === 'error' ? 12000 : 8000}
+        onClose={clearExportResult}
+        message={
+          exportResult?.status === 'error'
+            ? `Export failed. ${exportResult.message}`
+            : `Exported to ${exportResult?.filePath ?? ''}`
+        }
+      />
     </Box>
   );
 };

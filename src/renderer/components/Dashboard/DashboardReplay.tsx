@@ -57,6 +57,7 @@ interface DashboardReplayProps {
   onEditNote: (hash: string, note: string) => void;
   onDeleteImported: (hashes: string[], targetLabel: string) => void;
   onExportSession: (replay: LMUReplay) => void;
+  onExportWeekend: (replays: LMUReplay[], weekendLabel: string) => void;
   canExport: boolean;
 }
 
@@ -103,6 +104,7 @@ export const DashboardReplay: React.FC<DashboardReplayProps> = ({
   onEditNote,
   onDeleteImported,
   onExportSession,
+  onExportWeekend,
   canExport,
 }) => {
   const replay = replayGroup[0];
@@ -130,6 +132,16 @@ export const DashboardReplay: React.FC<DashboardReplayProps> = ({
   } | null>(null);
   const navigate = useNavigate();
   const groupHashes = replayGroup.map((groupReplay) => groupReplay.hash);
+  /*
+   * A session with no matched log is left out of the weekend rather than
+   * blocking it. A .Vcr on its own is half a hand-off, but one unmatched
+   * practice session is no reason to withhold the other four — so the count
+   * here is what will actually be written, and the item only disappears when
+   * that is nothing.
+   */
+  const exportableSessions = replayGroup.filter(
+    (groupReplay) => groupReplay.logDataFileName,
+  );
 
   useEffect(() => {
     const rows = [...replayGroup]
@@ -412,6 +424,7 @@ export const DashboardReplay: React.FC<DashboardReplayProps> = ({
         >
           {isImportedView ? (
             <MenuItem
+              key="delete-weekend"
               onClick={() => {
                 setWeekendMenuAnchor(null);
                 onDeleteImported(groupHashes, title ?? 'this weekend');
@@ -426,6 +439,7 @@ export const DashboardReplay: React.FC<DashboardReplayProps> = ({
             </MenuItem>
           ) : isArchivedView ? (
             <MenuItem
+              key="restore-weekend"
               onClick={() => {
                 setWeekendMenuAnchor(null);
                 onRestore(groupHashes);
@@ -440,6 +454,7 @@ export const DashboardReplay: React.FC<DashboardReplayProps> = ({
             </MenuItem>
           ) : (
             <MenuItem
+              key="archive-weekend"
               onClick={() => {
                 setWeekendMenuAnchor(null);
                 onArchive(groupHashes, 'this weekend');
@@ -453,6 +468,31 @@ export const DashboardReplay: React.FC<DashboardReplayProps> = ({
               </ListItemText>
             </MenuItem>
           )}
+          {/*
+            One archive holding every session of the weekend, a directory each.
+            Offered alongside per-session export rather than instead of it: a
+            steward reviewing one incident wants the one session, and a steward
+            handing a protest to another league wants the lot.
+          */}
+          {canExport ? (
+            <MenuItem
+              key="export-weekend"
+              disabled={exportableSessions.length === 0}
+              onClick={() => {
+                setWeekendMenuAnchor(null);
+                onExportWeekend(exportableSessions, title ?? 'Race weekend');
+              }}
+            >
+              <ListItemIcon>
+                <FileUploadIcon fontSize="small" />
+              </ListItemIcon>
+              <ListItemText>
+                {exportableSessions.length === 0
+                  ? 'Export weekend (no result logs)'
+                  : `Export weekend (${exportableSessions.length})`}
+              </ListItemText>
+            </MenuItem>
+          ) : null}
         </Menu>
         <AccordionDetails sx={{ m: 0, p: 0 }}>
           <TableContainer>

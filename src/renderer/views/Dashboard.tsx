@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { Box, Button, Snackbar, Typography } from '@mui/material';
+import { LMUReplay } from '@types';
 import FolderOffIcon from '@mui/icons-material/FolderOff';
 import ArchiveIcon from '@mui/icons-material/Archive';
 import UnarchiveIcon from '@mui/icons-material/Unarchive';
@@ -11,9 +12,10 @@ import { DashboardFooterSummary } from '../components/Dashboard/DashboardFooterS
 import { ArchiveConfirmDialog } from '../components/Dashboard/ArchiveConfirmDialog';
 import { ArchiveNoteDialog } from '../components/Dashboard/ArchiveNoteDialog';
 import { useDashboardReplays } from '../hooks/useDashboardReplays';
-import { useApi } from '../providers/ApiContext';
+import { ExportReplayPayload, useApi } from '../providers/ApiContext';
 import { DeleteImportedConfirmDialog } from '../components/Dashboard/DeleteImportedConfirmDialog';
 import { ImportReplayDialog } from '../components/Dashboard/ImportReplayDialog';
+import { ExportProgressDialog } from '../components/Dashboard/ExportProgressDialog';
 
 interface PendingDelete {
   hashes: string[];
@@ -29,6 +31,19 @@ interface PendingNote {
   hash: string;
   note: string;
 }
+
+/**
+ * Identifiers only. The main process resolves every path — a renderer building
+ * one by string concatenation is how an escaping slip once broke every export.
+ */
+const toExportPayload = (replay: LMUReplay): ExportReplayPayload => ({
+  hash: replay.hash,
+  replayName: replay.replayName,
+  sceneDesc: replay.metadata.sceneDesc,
+  session: replay.metadata.session,
+  timestamp: replay.timestamp,
+  logDataFileName: replay.logDataFileName,
+});
 
 export const DashboardView: React.FC = () => {
   const {
@@ -64,6 +79,10 @@ export const DashboardView: React.FC = () => {
   const {
     experimentalFeaturesEnabled,
     exportReplay,
+    exportWeekend,
+    exportProgress,
+    exportResult,
+    clearExportResult,
     importReplayFile,
     importLogFile,
     importPairValidation,
@@ -242,13 +261,13 @@ export const DashboardView: React.FC = () => {
               }
               canExport={experimentalFeaturesEnabled}
               onExportSession={(sessionReplay) =>
-                exportReplay({
-                  hash: sessionReplay.hash,
-                  replayName: sessionReplay.replayName,
-                  sceneDesc: sessionReplay.metadata.sceneDesc,
-                  session: sessionReplay.metadata.session,
-                  timestamp: sessionReplay.timestamp,
-                  logDataFileName: sessionReplay.logDataFileName,
+                exportReplay(toExportPayload(sessionReplay))
+              }
+              onExportWeekend={(sessionReplays, weekendLabel) =>
+                exportWeekend({
+                  weekendLabel,
+                  timestamp: sessionReplays[0]?.timestamp ?? 0,
+                  sessions: sessionReplays.map(toExportPayload),
                 })
               }
             />
@@ -371,6 +390,30 @@ export const DashboardView: React.FC = () => {
           }
           setPendingDelete(null);
         }}
+      />
+      <ExportProgressDialog progress={exportProgress} />
+      {/*
+        A cancelled save dialog is not an outcome worth reporting, so only a
+        finished or failed export raises this. The path is named because a
+        weekend takes minutes and the user will have looked away.
+      */}
+      <Snackbar
+        open={Boolean(exportResult && !exportResult.canceled)}
+        autoHideDuration={exportResult?.status === 'error' ? 12000 : 8000}
+        onClose={clearExportResult}
+        message={
+          exportResult?.status === 'error'
+            ? `Export failed. ${exportResult.message}`
+            : exportResult
+              ? `Exported ${exportResult.exported} ${
+                  exportResult.exported === 1 ? 'session' : 'sessions'
+                } to ${exportResult.filePath}${
+                  exportResult.omitted.length > 0
+                    ? `. ${exportResult.omitted.length} left out for having no result log.`
+                    : ''
+                }`
+              : ''
+        }
       />
       <Snackbar
         open={Boolean(lastImportedName)}

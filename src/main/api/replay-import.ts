@@ -13,6 +13,7 @@ import { basename, join } from 'path';
 import { promisify } from 'util';
 import { ImportedReplayRecord, ImportedReplayStore, SessionType } from '@types';
 import { generateReplayHash } from '../util';
+import { assertFreeSpace } from './disk-space';
 import { readVcrTrailer, VcrTrailer } from './vcr-metadata';
 import {
   LogCandidate,
@@ -438,6 +439,21 @@ export const importReplays = async ({
 
   await mkdir(replayDirectory, { recursive: true });
   await mkdir(logDirectory, { recursive: true });
+
+  /*
+   * Checked once, up front, against the whole selection. A weekend of imports
+   * is several GB, and running out of room half way through leaves truncated
+   * .Vcr files in the LMU install — files the app has no record of and so
+   * cannot offer to remove.
+   */
+  await assertFreeSpace(
+    replayDirectory,
+    selections.reduce(
+      (total, selection) => total + (rowsById.get(selection.id)?.size ?? 0),
+      0,
+    ),
+    'import these replays',
+  );
 
   let processed = 0;
 

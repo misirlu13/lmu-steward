@@ -52,6 +52,35 @@ export interface ExportReplayPayload {
   logDataFileName: string;
 }
 
+export interface ExportWeekendPayload {
+  /** Track display name, used only to name the archive. Never a path. */
+  weekendLabel: string;
+  timestamp: number;
+  sessions: ExportReplayPayload[];
+}
+
+export interface ExportProgressState {
+  status: 'in-progress' | 'success' | 'error';
+  /** Sessions fully written. */
+  processed: number;
+  total: number;
+  bytesWritten: number;
+  totalBytes: number;
+  currentLabel: string;
+  message?: string;
+}
+
+/** Where a finished export landed, so the user can be told rather than guess. */
+export interface ExportResultState {
+  status: 'success' | 'error';
+  canceled: boolean;
+  filePath: string;
+  /** Sessions actually written. One for a session export. */
+  exported: number;
+  omitted: Array<{ replayName: string; session: string; reason: string }>;
+  message: string;
+}
+
 export interface ImportFileSelection {
   kind: 'replay' | 'log';
   filePath: string;
@@ -94,6 +123,49 @@ export interface ImportProgressState {
   message?: string;
 }
 
+/**
+ * Normalises both export replies into one shape.
+ *
+ * A session export and a weekend export differ only in how many sessions they
+ * wrote and whether any were left out, so the UI that reports the outcome does
+ * not need to know which one it was watching.
+ */
+const toExportResult = (
+  data: unknown,
+  defaultExported = 0,
+): ExportResultState => {
+  const payload = data as {
+    status?: string;
+    data?: {
+      canceled?: boolean;
+      filePath?: string;
+      exported?: number;
+      omitted?: ExportResultState['omitted'];
+    };
+    message?: string;
+  };
+
+  if (payload?.status !== 'success') {
+    return {
+      status: 'error',
+      canceled: false,
+      filePath: '',
+      exported: 0,
+      omitted: [],
+      message: payload?.message ?? 'The export could not be completed.',
+    };
+  }
+
+  return {
+    status: 'success',
+    canceled: Boolean(payload.data?.canceled),
+    filePath: payload.data?.filePath ?? '',
+    exported: payload.data?.exported ?? defaultExported,
+    omitted: payload.data?.omitted ?? [],
+    message: '',
+  };
+};
+
 interface ApiContextType {
   isConnected: boolean;
   hasApiStatusResponse: boolean;
@@ -135,6 +207,10 @@ interface ApiContextType {
   ) => void;
   deleteImportedReplays: (hashes: string[]) => void;
   exportReplay: (request: ExportReplayPayload) => void;
+  exportWeekend: (request: ExportWeekendPayload) => void;
+  exportProgress: ExportProgressState | null;
+  exportResult: ExportResultState | null;
+  clearExportResult: () => void;
   subscribeToApiChannel: (
     channel: ApiChannel,
     callback: ApiChannelCallback,
@@ -182,6 +258,10 @@ const ApiContext = createContext<ApiContextType>({
   importSelectedReplays: () => {},
   deleteImportedReplays: () => {},
   exportReplay: () => {},
+  exportWeekend: () => {},
+  exportProgress: null,
+  exportResult: null,
+  clearExportResult: () => {},
   restoreReplays: () => {},
   setArchiveNote: () => {},
   subscribeToApiChannel: () => () => {},
@@ -224,6 +304,11 @@ export const ApiProvider: React.FC<{ children: React.ReactNode }> = ({
   );
   const [importProgress, setImportProgress] =
     useState<ImportProgressState | null>(null);
+  const [exportProgress, setExportProgress] =
+    useState<ExportProgressState | null>(null);
+  const [exportResult, setExportResult] = useState<ExportResultState | null>(
+    null,
+  );
   const [importReplayFile, setImportReplayFile] =
     useState<ImportFileSelection | null>(null);
   const [importLogFile, setImportLogFile] =
@@ -462,7 +547,22 @@ export const ApiProvider: React.FC<{ children: React.ReactNode }> = ({
   }, []);
 
   const exportReplay = useCallback((request: ExportReplayPayload) => {
+    setExportResult(null);
     sendMessage(CONSTANTS.API.POST_EXPORT_REPLAY, request);
+  }, []);
+
+  const exportWeekend = useCallback((request: ExportWeekendPayload) => {
+    if (request.sessions.length === 0) {
+      return;
+    }
+
+    setExportResult(null);
+    sendMessage(CONSTANTS.API.POST_EXPORT_WEEKEND, request);
+  }, []);
+
+  const clearExportResult = useCallback(() => {
+    setExportResult(null);
+    setExportProgress(null);
   }, []);
 
   const setArchiveNote = useCallback(
@@ -644,6 +744,26 @@ export const ApiProvider: React.FC<{ children: React.ReactNode }> = ({
         CONSTANTS.API.PUSH_IMPORT_PROGRESS,
         (data: unknown) => {
           setImportProgress(data as ImportProgressState);
+        },
+      ),
+      [CONSTANTS.API.PUSH_EXPORT_PROGRESS]: createHandler(
+        CONSTANTS.API.PUSH_EXPORT_PROGRESS,
+        (data: unknown) => {
+          setExportProgress(data as ExportProgressState);
+        },
+      ),
+      [CONSTANTS.API.POST_EXPORT_REPLAY]: createHandler(
+        CONSTANTS.API.POST_EXPORT_REPLAY,
+        (data: unknown) => {
+          setExportProgress(null);
+          setExportResult(toExportResult(data, 1));
+        },
+      ),
+      [CONSTANTS.API.POST_EXPORT_WEEKEND]: createHandler(
+        CONSTANTS.API.POST_EXPORT_WEEKEND,
+        (data: unknown) => {
+          setExportProgress(null);
+          setExportResult(toExportResult(data));
         },
       ),
       [CONSTANTS.API.POST_IMPORT_REPLAYS]: createHandler(
@@ -873,6 +993,10 @@ export const ApiProvider: React.FC<{ children: React.ReactNode }> = ({
       importSelectedReplays,
       deleteImportedReplays,
       exportReplay,
+      exportWeekend,
+      exportProgress,
+      exportResult,
+      clearExportResult,
       subscribeToApiChannel,
     }),
     [
@@ -913,6 +1037,10 @@ export const ApiProvider: React.FC<{ children: React.ReactNode }> = ({
       importSelectedReplays,
       deleteImportedReplays,
       exportReplay,
+      exportWeekend,
+      exportProgress,
+      exportResult,
+      clearExportResult,
       subscribeToApiChannel,
     ],
   );

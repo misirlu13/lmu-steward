@@ -1,10 +1,8 @@
 import { CONSTANTS } from '@constants';
 import { ImportedReplayRecord, ImportedReplayStore } from '@types';
 import { dialog } from 'electron';
-import { createWriteStream } from 'fs';
 import { stat } from 'fs/promises';
 import { basename, dirname, join, resolve as resolvePath } from 'path';
-import { ZipFile } from 'yazl';
 import { getMainPersistentStore } from '../storage/local-data-store';
 import { readUserSettings } from './user-settings';
 import {
@@ -19,11 +17,32 @@ import { readVcrTrailerResult } from './vcr-metadata';
 import { parseLogXml } from './replay';
 import { validateImportPair } from './replay-import-match';
 import { getTrackAliases } from './track-matching';
+import { assertFreeSpace } from './disk-space';
+import {
+  ArchiveEntry,
+  buildExportManifest,
+  buildWeekendFileName,
+  buildWeekendLayout,
+  buildWeekendManifest,
+  EXPORT_MANIFEST_NAME,
+  ExportProgress,
+  ExportReplayRequest,
+  ExportWeekendRequest,
+  OmittedSession,
+  ProgressStep,
+  resolveProgressStep,
+  WeekendSessionSource,
+  writeArchive,
+} from './replay-export';
+
+export type {
+  ExportManifest,
+  ExportReplayRequest,
+  ExportWeekendRequest,
+} from './replay-export';
+export { buildExportManifest } from './replay-export';
 
 const IMPORTED_REPLAYS_STORE_KEY = 'importedReplays';
-
-/** Written into every export so the far side can skip pairing entirely. */
-const EXPORT_MANIFEST_NAME = 'lmu-steward-export.json';
 
 const stripVcrExtension = (fileName: string): string =>
   fileName.replace(/\.vcr$/i, '');
@@ -293,49 +312,6 @@ export const postDeleteImportedReplays = async (
 };
 
 /**
- * Identifies the replay to export. Paths are resolved here rather than sent
- * from the renderer, for the same reason delete works that way: the main
- * process already knows where replays live, and a renderer assembling
- * filesystem paths by string concatenation is both fragile and a way for a
- * path to arrive from outside.
- */
-export interface ExportReplayRequest {
-  hash: string;
-  replayName: string;
-  sceneDesc: string;
-  session: string;
-  timestamp: number;
-  logDataFileName: string;
-}
-
-export interface ExportManifest {
-  createdBy: 'lmu-steward';
-  version: 1;
-  replayName: string;
-  sceneDesc: string;
-  session: string;
-  /** The event time to stamp onto the .Vcr on the importing machine. */
-  timestamp: number;
-  vcrFileName: string;
-  logFileName: string;
-}
-
-export const buildExportManifest = (
-  request: ExportReplayRequest,
-  vcrPath: string,
-  logPath: string,
-): ExportManifest => ({
-  createdBy: 'lmu-steward',
-  version: 1,
-  replayName: request.replayName,
-  sceneDesc: request.sceneDesc,
-  session: request.session,
-  timestamp: request.timestamp,
-  vcrFileName: basename(vcrPath),
-  logFileName: basename(logPath),
-});
-
-/**
  * Where a replay's files actually are.
  *
  * An imported replay is taken straight from its record: it may carry an
@@ -367,27 +343,78 @@ export const resolveExportPaths = async (
   };
 };
 
-const writeZip = (zip: ZipFile, destination: string): Promise<void> =>
-  new Promise((resolve, reject) => {
-    const output = createWriteStream(destination);
-
-    zip.outputStream.on('error', reject);
-    output.on('error', reject);
-    output.on('close', () => resolve());
-
-    zip.outputStream.pipe(output);
-    /*
-     * A single .Vcr can approach the 4 GB boundary, past which the classic zip
-     * end-of-central-directory cannot address the archive.
-     */
-    zip.end({ forceZip64Format: true, comment: '' });
+/**
+ * Confirms both files exist and reports their sizes.
+ *
+ * Checked before the save dialog opens. Asking where to save and only then
+ * discovering a missing file wastes the user's time, and the sizes are what
+ * the free-disk check and the progress bar are built from.
+ */
+const measureSessionFiles = async (
+  vcrPath: string,
+  logPath: string,
+): Promise<{ vcrSize: number; logSize: number }> => {
+  const vcrStat = await stat(vcrPath).catch(() => {
+    throw new Error(`The replay file could not be found at ${vcrPath}.`);
   });
+  const logStat = await stat(logPath).catch(() => {
+    throw new Error(`The result log could not be found at ${logPath}.`);
+  });
+
+  return { vcrSize: vcrStat.size, logSize: logStat.size };
+};
+
+/**
+ * Byte-based progress, pushed while the archive is written.
+ *
+ * A weekend is several 400 MB files, so without this the window looks frozen
+ * for minutes. Throttled to whole percent: yazl's output stream fires per
+ * chunk, which is thousands of messages a second on a fast disk, and flooding
+ * the renderer with them would itself be a way to make the UI stutter.
+ */
+const createProgressPusher = (
+  event: Electron.IpcMainEvent,
+  steps: ProgressStep[],
+  totalBytes: number,
+) => {
+  let lastPercent = -1;
+
+  return (bytesWritten: number) => {
+    const percent =
+      totalBytes > 0 ? Math.floor((bytesWritten / totalBytes) * 100) : 0;
+
+    if (percent === lastPercent) {
+      return;
+    }
+    lastPercent = percent;
+
+    const { processed, currentLabel } = resolveProgressStep(
+      steps,
+      bytesWritten,
+    );
+
+    const progress: ExportProgress = {
+      status: 'in-progress',
+      processed,
+      total: steps.length,
+      bytesWritten,
+      totalBytes,
+      currentLabel,
+    };
+
+    event.reply(CONSTANTS.API.PUSH_EXPORT_PROGRESS, progress);
+  };
+};
+
+const pushExportProgress = (
+  event: Electron.IpcMainEvent,
+  progress: ExportProgress,
+) => {
+  event.reply(CONSTANTS.API.PUSH_EXPORT_PROGRESS, progress);
+};
 
 /**
  * Zips a replay with its result log so it can be handed to someone else.
- *
- * Entries are stored rather than deflated: .Vcr data is already packed, so
- * compressing 400 MB would be a long freeze for no meaningful size win.
  *
  * The manifest carries the event timestamp, which lets an importing copy of
  * Steward stamp the exact creation time and skip pairing altogether. Import
@@ -408,16 +435,7 @@ export const postExportReplay = async (
       readImportedStore(),
     );
 
-    /*
-     * Both files are confirmed before the save dialog opens. Asking where to
-     * save and only then discovering a missing file wastes the user's time.
-     */
-    await stat(vcrPath).catch(() => {
-      throw new Error(`The replay file could not be found at ${vcrPath}.`);
-    });
-    await stat(logPath).catch(() => {
-      throw new Error(`The result log could not be found at ${logPath}.`);
-    });
+    const { vcrSize, logSize } = await measureSessionFiles(vcrPath, logPath);
 
     const response = await dialog.showSaveDialog({
       title: 'Export replay',
@@ -433,18 +451,53 @@ export const postExportReplay = async (
       return;
     }
 
-    const zip = new ZipFile();
-    zip.addFile(vcrPath, basename(vcrPath), { compress: false });
-    zip.addFile(logPath, basename(logPath), { compress: false });
-    zip.addBuffer(
-      Buffer.from(
-        JSON.stringify(buildExportManifest(request, vcrPath, logPath), null, 2),
-      ),
-      EXPORT_MANIFEST_NAME,
-      { compress: false },
+    const totalBytes = vcrSize + logSize;
+
+    await assertFreeSpace(
+      dirname(response.filePath),
+      totalBytes,
+      'export this replay',
     );
 
-    await writeZip(zip, response.filePath);
+    const steps: ProgressStep[] = [
+      { label: request.replayName, bytes: totalBytes },
+    ];
+
+    await writeArchive(
+      [
+        {
+          source: { filePath: vcrPath },
+          entryName: basename(vcrPath),
+        },
+        {
+          source: { filePath: logPath },
+          entryName: basename(logPath),
+        },
+        {
+          source: {
+            buffer: Buffer.from(
+              JSON.stringify(
+                buildExportManifest(request, vcrPath, logPath),
+                null,
+                2,
+              ),
+            ),
+          },
+          entryName: EXPORT_MANIFEST_NAME,
+        },
+      ],
+      response.filePath,
+      createProgressPusher(event, steps, totalBytes),
+    );
+
+    pushExportProgress(event, {
+      status: 'success',
+      processed: 1,
+      total: 1,
+      bytesWritten: totalBytes,
+      totalBytes,
+      currentLabel: request.replayName,
+    });
 
     event.reply(CONSTANTS.API.POST_EXPORT_REPLAY, {
       status: 'success',
@@ -455,7 +508,195 @@ export const postExportReplay = async (
       },
     });
   } catch (error: unknown) {
+    pushExportProgress(event, {
+      status: 'error',
+      processed: 0,
+      total: 0,
+      bytesWritten: 0,
+      totalBytes: 0,
+      currentLabel: '',
+      message: toErrorMessage(error),
+    });
+
     event.reply(CONSTANTS.API.POST_EXPORT_REPLAY, {
+      status: 'error',
+      message: toErrorMessage(error),
+    });
+  }
+};
+
+/**
+ * Zips every session in a weekend, one directory per session.
+ *
+ * Built on top of session export rather than replacing it: a single replay and
+ * its log is a pairing with nothing to resolve, while a weekend has to decide
+ * what a directory is called, what happens when sibling sessions resolve to the
+ * same result log, and what to do with a session that has no log at all.
+ *
+ * A session with no matched log is left out rather than failing the export. A
+ * .Vcr on its own is the half-a-hand-off this feature exists to stop, but one
+ * unmatched practice session is no reason to refuse a steward the other four —
+ * the weekend manifest names what was omitted so the far side is not misled.
+ */
+export const postExportWeekend = async (
+  event: Electron.IpcMainEvent,
+  request?: ExportWeekendRequest,
+) => {
+  try {
+    const sessions = request?.sessions ?? [];
+
+    if (sessions.length === 0) {
+      throw new Error('No sessions were provided to export.');
+    }
+
+    const imported = readImportedStore();
+    const sources: WeekendSessionSource[] = [];
+    const omittedSessions: OmittedSession[] = [];
+
+    for (const session of sessions) {
+      try {
+        // eslint-disable-next-line no-await-in-loop
+        const { vcrPath, logPath } = await resolveExportPaths(
+          session,
+          imported,
+        );
+        // eslint-disable-next-line no-await-in-loop
+        const { vcrSize, logSize } = await measureSessionFiles(
+          vcrPath,
+          logPath,
+        );
+
+        sources.push({ request: session, vcrPath, logPath, vcrSize, logSize });
+      } catch (error: unknown) {
+        omittedSessions.push({
+          replayName: session.replayName,
+          session: session.session,
+          reason: toErrorMessage(error),
+        });
+      }
+    }
+
+    if (sources.length === 0) {
+      throw new Error(
+        'None of the sessions in this weekend have both a replay file and a result log.',
+      );
+    }
+
+    const { entries, totalBytes } = buildWeekendLayout(sources);
+
+    const response = await dialog.showSaveDialog({
+      title: 'Export weekend',
+      defaultPath: buildWeekendFileName(
+        request?.weekendLabel ?? '',
+        request?.timestamp ?? 0,
+      ),
+      filters: [{ name: 'Zip archive', extensions: ['zip'] }],
+    });
+
+    if (response.canceled || !response.filePath) {
+      event.reply(CONSTANTS.API.POST_EXPORT_WEEKEND, {
+        status: 'success',
+        data: { canceled: true },
+      });
+      return;
+    }
+
+    await assertFreeSpace(
+      dirname(response.filePath),
+      totalBytes,
+      'export this weekend',
+    );
+
+    const manifest = buildWeekendManifest(
+      {
+        weekendLabel: request?.weekendLabel ?? '',
+        timestamp: request?.timestamp ?? 0,
+        sessions,
+      },
+      entries,
+      omittedSessions,
+    );
+
+    const archiveEntries: ArchiveEntry[] = [
+      {
+        source: {
+          buffer: Buffer.from(JSON.stringify(manifest, null, 2)),
+        },
+        entryName: EXPORT_MANIFEST_NAME,
+      },
+    ];
+
+    for (const entry of entries) {
+      archiveEntries.push(
+        {
+          source: { filePath: entry.vcrPath },
+          entryName: entry.vcrEntryName,
+        },
+        {
+          source: { filePath: entry.logPath },
+          entryName: entry.logEntryName,
+        },
+        {
+          source: {
+            buffer: Buffer.from(
+              JSON.stringify(
+                buildExportManifest(
+                  entry.request,
+                  entry.vcrPath,
+                  entry.logPath,
+                ),
+                null,
+                2,
+              ),
+            ),
+          },
+          entryName: entry.manifestEntryName,
+        },
+      );
+    }
+
+    const steps: ProgressStep[] = entries.map((entry) => ({
+      label: entry.request.replayName,
+      bytes: entry.vcrSize + entry.logSize,
+    }));
+
+    await writeArchive(
+      archiveEntries,
+      response.filePath,
+      createProgressPusher(event, steps, totalBytes),
+    );
+
+    pushExportProgress(event, {
+      status: 'success',
+      processed: entries.length,
+      total: entries.length,
+      bytesWritten: totalBytes,
+      totalBytes,
+      currentLabel: '',
+    });
+
+    event.reply(CONSTANTS.API.POST_EXPORT_WEEKEND, {
+      status: 'success',
+      data: {
+        canceled: false,
+        filePath: response.filePath,
+        directory: dirname(response.filePath),
+        exported: entries.length,
+        omitted: omittedSessions,
+      },
+    });
+  } catch (error: unknown) {
+    pushExportProgress(event, {
+      status: 'error',
+      processed: 0,
+      total: 0,
+      bytesWritten: 0,
+      totalBytes: 0,
+      currentLabel: '',
+      message: toErrorMessage(error),
+    });
+
+    event.reply(CONSTANTS.API.POST_EXPORT_WEEKEND, {
       status: 'error',
       message: toErrorMessage(error),
     });
