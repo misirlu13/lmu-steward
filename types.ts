@@ -93,7 +93,14 @@ export type ArchivedReplayStore = Record<string, ArchivedReplayRecord>;
  */
 export interface ImportedReplayRecord {
   hash: string;
+  /**
+   * Name as written into the LMU install. May differ from the file the user
+   * chose, because a colliding name is given an "(imported)" marker — and this
+   * is the name LMU reports, so it is what the hash is built from.
+   */
   replayName: string;
+  /** Name of the file the user picked, kept for display and provenance. */
+  originalReplayName: string;
   sceneDesc: string;
   session: SessionType;
   /** The stamped creation time, equal to the matched log's root DateTime. */

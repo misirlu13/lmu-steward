@@ -11,6 +11,7 @@
 import {
   mkdirSync,
   mkdtempSync,
+  readFileSync,
   rmSync,
   statSync,
   writeFileSync,
@@ -19,6 +20,7 @@ import {
 import { tmpdir } from 'os';
 import { dirname, join } from 'path';
 import { ImportedReplayStore } from '@types';
+import { generateReplayHash } from '../util';
 import {
   deleteImportedReplays,
   fingerprintFile,
@@ -231,33 +233,129 @@ describe('main/replay import', () => {
     });
   });
 
-  it('never overwrites a replay the user already has', async () => {
-    writeFileSync(
-      join(replayDirectory, 'Autodromo Nazionale Monza R1 2.Vcr'),
-      Buffer.from('the users own recording'),
-    );
+  /*
+   * Collisions are the normal case, not an edge case: LMU counts replay names
+   * per install, so any steward who has raced at a track already holds the
+   * names an incoming league replay from that track arrives with.
+   */
+  describe('name collisions', () => {
+    const importOnce = async () => {
+      const rows = await scan();
+      return importReplays({
+        rows,
+        selections: [
+          {
+            id: rows[0].id,
+            logPath: rows[0].pairing.proposed!.candidate.filePath,
+            method: 'roster',
+            confidence: 0.8,
+          },
+        ],
+        replayDirectory,
+        logDirectory,
+        imported: {},
+      });
+    };
 
-    const rows = await scan();
-    const result = await importReplays({
-      rows,
-      selections: [
-        {
-          id: rows[0].id,
-          logPath: rows[0].pairing.proposed!.candidate.filePath,
-          method: 'roster',
-          confidence: 0.8,
-        },
-      ],
-      replayDirectory,
-      logDirectory,
-      imported: {},
+    it('imports alongside an existing replay rather than overwriting it', async () => {
+      const ownRecording = Buffer.from('the users own recording');
+      writeFileSync(
+        join(replayDirectory, 'Autodromo Nazionale Monza R1 2.Vcr'),
+        ownRecording,
+      );
+
+      const result = await importOnce();
+
+      expect(result.outcomes[0].status).toBe('imported');
+
+      // The user's own file is untouched.
+      expect(
+        readFileSync(
+          join(replayDirectory, 'Autodromo Nazionale Monza R1 2.Vcr'),
+        ),
+      ).toEqual(ownRecording);
+
+      expect(
+        existsSync(
+          join(
+            replayDirectory,
+            'Autodromo Nazionale Monza R1 2 (imported).Vcr',
+          ),
+        ),
+      ).toBe(true);
     });
 
-    expect(result.outcomes[0].status).toBe('failed');
-    expect(result.outcomes[0].message).toMatch(
-      /already in the LMU replay folder/,
-    );
-    expect(result.imported).toEqual({});
+    it('keeps the name the user chose when nothing is in the way', async () => {
+      const result = await importOnce();
+      const record = Object.values(result.imported)[0];
+
+      expect(record.vcrFileName).toBe('Autodromo Nazionale Monza R1 2.Vcr');
+      expect(record.originalReplayName).toBe(record.replayName);
+    });
+
+    it('counts up when the marked name is taken too', async () => {
+      writeFileSync(
+        join(replayDirectory, 'Autodromo Nazionale Monza R1 2.Vcr'),
+        Buffer.from('own'),
+      );
+      writeFileSync(
+        join(replayDirectory, 'Autodromo Nazionale Monza R1 2 (imported).Vcr'),
+        Buffer.from('earlier import'),
+      );
+
+      const result = await importOnce();
+      const record = Object.values(result.imported)[0];
+
+      expect(record.vcrFileName).toBe(
+        'Autodromo Nazionale Monza R1 2 (imported 2).Vcr',
+      );
+    });
+
+    /**
+     * The trap in renaming. LMU reports the destination file name, and the
+     * replay hash is built from it — so a hash derived from the source name
+     * would never match the live API and the replay would import but refuse to
+     * play.
+     */
+    it('hashes the renamed replay by the name LMU will report', async () => {
+      writeFileSync(
+        join(replayDirectory, 'Autodromo Nazionale Monza R1 2.Vcr'),
+        Buffer.from('own'),
+      );
+
+      const result = await importOnce();
+      const record = Object.values(result.imported)[0];
+
+      expect(record.replayName).toBe(
+        'Autodromo Nazionale Monza R1 2 (imported)',
+      );
+      expect(record.originalReplayName).toBe('Autodromo Nazionale Monza R1 2');
+
+      expect(record.hash).toBe(
+        generateReplayHash({
+          metadata: { sceneDesc: record.sceneDesc, session: record.session },
+          replayName: record.replayName,
+          timestamp: record.timestamp,
+          size: record.size,
+        }),
+      );
+    });
+
+    it('stamps the renamed file, not the one already there', async () => {
+      const ownPath = join(
+        replayDirectory,
+        'Autodromo Nazionale Monza R1 2.Vcr',
+      );
+      writeFileSync(ownPath, Buffer.from('own'));
+
+      await importOnce();
+
+      expect(stampSpy).toHaveBeenCalledWith(
+        join(replayDirectory, 'Autodromo Nazionale Monza R1 2 (imported).Vcr'),
+        EVENT_TWO,
+      );
+      expect(stampSpy).not.toHaveBeenCalledWith(ownPath, expect.anything());
+    });
   });
 
   /**

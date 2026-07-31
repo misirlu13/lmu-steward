@@ -325,6 +325,71 @@ const fileExists = async (filePath: string): Promise<boolean> => {
   }
 };
 
+/**
+ * Marker appended to an imported replay whose name is already taken.
+ *
+ * Collisions are the normal case, not an edge case. LMU names replays
+ * `<Track> <SessionCode><N>` where N counts up per install, so any steward who
+ * has raced at a track already holds the names an incoming league replay from
+ * that track will arrive with.
+ *
+ * The marker is deliberately visible rather than a silent counter bump: it
+ * shows up in LMU's own replay browser, so a steward can tell an imported
+ * replay from one they recorded themselves without leaving the game.
+ */
+const IMPORT_NAME_MARKER = 'imported';
+
+/** Bounded so a pathological directory cannot spin here forever. */
+const MAX_NAME_ATTEMPTS = 200;
+
+export interface ImportDestination {
+  fileName: string;
+  replayName: string;
+  filePath: string;
+  /** True when the requested name was taken and a marker was appended. */
+  renamed: boolean;
+}
+
+const buildCandidateName = (baseName: string, attempt: number): string => {
+  if (attempt === 0) {
+    return baseName;
+  }
+
+  return attempt === 1
+    ? `${baseName} (${IMPORT_NAME_MARKER})`
+    : `${baseName} (${IMPORT_NAME_MARKER} ${attempt})`;
+};
+
+/**
+ * Finds a free name in the replay directory.
+ *
+ * This is how "never overwrite" is honoured: rather than refusing an import
+ * because the steward already has a replay by that name — which would destroy
+ * their own recording if we replaced it, and strand the import if we stopped —
+ * the copy lands beside it under a name that is free.
+ */
+export const resolveDestinationName = async (
+  replayDirectory: string,
+  vcrFileName: string,
+): Promise<ImportDestination> => {
+  const baseName = vcrFileName.replace(/\.vcr$/i, '');
+
+  for (let attempt = 0; attempt < MAX_NAME_ATTEMPTS; attempt += 1) {
+    const replayName = buildCandidateName(baseName, attempt);
+    const fileName = `${replayName}.Vcr`;
+    const filePath = join(replayDirectory, fileName);
+
+    // eslint-disable-next-line no-await-in-loop
+    if (!(await fileExists(filePath))) {
+      return { fileName, replayName, filePath, renamed: attempt > 0 };
+    }
+  }
+
+  throw new Error(
+    `Could not find a free name for "${vcrFileName}" in the LMU replay folder.`,
+  );
+};
+
 export interface ImportReplaysArgs {
   rows: ImportPreviewRow[];
   selections: ImportSelection[];
@@ -381,23 +446,26 @@ export const importReplays = async ({
       continue;
     }
 
-    const destinationVcrPath = join(replayDirectory, row.vcrFileName);
     const logFileName = basename(selection.logPath);
     const destinationLogPath = join(logDirectory, logFileName);
+    let destinationVcrPath = '';
     let wroteVcr = false;
     let wroteLog = false;
 
     try {
       /*
-       * Never overwrite. A collision means the steward already has a replay by
-       * that name, and silently replacing it would destroy their own recording.
+       * Resolved before anything else, because the destination name is what LMU
+       * will report and therefore what the replay's hash must be built from.
+       * Deriving the hash from the source name would leave a record that never
+       * matches the live API — the replay would import and then refuse to play.
        */
       // eslint-disable-next-line no-await-in-loop
-      if (await fileExists(destinationVcrPath)) {
-        throw new Error(
-          `A replay named "${row.vcrFileName}" is already in the LMU replay folder.`,
-        );
-      }
+      const destination = await resolveDestinationName(
+        replayDirectory,
+        row.vcrFileName,
+      );
+
+      destinationVcrPath = destination.filePath;
 
       // eslint-disable-next-line no-await-in-loop
       const logCandidate = await readLogCandidate(selection.logPath);
@@ -422,9 +490,10 @@ export const importReplays = async ({
       // eslint-disable-next-line no-await-in-loop
       await setFileCreationTime(destinationVcrPath, logCandidate.eventDateTime);
 
+      // Built from the destination name, which is the one LMU will report.
       const hash = generateReplayHash({
         metadata: { sceneDesc: row.sceneDesc, session: row.session },
-        replayName: row.replayName,
+        replayName: destination.replayName,
         timestamp: logCandidate.eventDateTime,
         size: row.size,
       });
@@ -432,11 +501,12 @@ export const importReplays = async ({
       /* eslint-disable no-await-in-loop */
       const record: ImportedReplayRecord = {
         hash,
-        replayName: row.replayName,
+        replayName: destination.replayName,
+        originalReplayName: row.replayName,
         sceneDesc: row.sceneDesc,
         session: row.session,
         timestamp: logCandidate.eventDateTime,
-        vcrFileName: row.vcrFileName,
+        vcrFileName: destination.fileName,
         vcrPath: destinationVcrPath,
         size: row.size,
         logFileName,

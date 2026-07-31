@@ -65,10 +65,15 @@ export const getTrackAliases = (
     }
   }
 
-  const replayTrack = String(replayName ?? '').replace(
-    /\s+[RQP]\d+\s+\d+$/i,
-    '',
-  );
+  /*
+   * The import marker is stripped before the session suffix, not after. An
+   * imported replay is named "<Track> R1 2 (imported)", and taking the session
+   * suffix off first would leave the marker anchored at the end where the
+   * pattern no longer matches — the track name would then never be recovered.
+   */
+  const replayTrack = String(replayName ?? '')
+    .replace(/\s*\(imported(?:\s+\d+)?\)$/i, '')
+    .replace(/\s+[RQP]\d+\s+\d+$/i, '');
 
   if (replayTrack && !aliases.includes(replayTrack)) {
     aliases.push(replayTrack);
