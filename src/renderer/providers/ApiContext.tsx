@@ -44,12 +44,12 @@ export interface ImportSelectionPayload {
 }
 
 export interface ExportReplayPayload {
+  hash: string;
   replayName: string;
-  vcrPath: string;
-  logPath: string;
   sceneDesc: string;
   session: string;
   timestamp: number;
+  logDataFileName: string;
 }
 
 export interface ImportFileSelection {

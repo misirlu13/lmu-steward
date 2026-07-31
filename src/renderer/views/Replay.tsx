@@ -319,12 +319,12 @@ export const ReplayView: React.FC = () => {
                 }
 
                 exportReplay({
+                  hash: currentReplay.hash,
                   replayName: currentReplay.replayName,
-                  vcrPath: `${currentReplay.replayDirectory}${currentReplay.replayName}.Vcr`,
-                  logPath: `${currentReplay.logDataDirectory}\${currentReplay.logDataFileName}`,
                   sceneDesc: currentReplay.metadata.sceneDesc,
                   session: currentReplay.metadata.session,
                   timestamp: currentReplay.timestamp,
+                  logDataFileName: currentReplay.logDataFileName,
                 });
               }}
             />

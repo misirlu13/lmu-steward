@@ -3,7 +3,7 @@ import { ImportedReplayRecord, ImportedReplayStore } from '@types';
 import { dialog } from 'electron';
 import { createWriteStream } from 'fs';
 import { stat } from 'fs/promises';
-import { basename, dirname, resolve as resolvePath } from 'path';
+import { basename, dirname, join, resolve as resolvePath } from 'path';
 import { ZipFile } from 'yazl';
 import { getMainPersistentStore } from '../storage/local-data-store';
 import { readUserSettings } from './user-settings';
@@ -237,13 +237,20 @@ export const postDeleteImportedReplays = async (
   }
 };
 
+/**
+ * Identifies the replay to export. Paths are resolved here rather than sent
+ * from the renderer, for the same reason delete works that way: the main
+ * process already knows where replays live, and a renderer assembling
+ * filesystem paths by string concatenation is both fragile and a way for a
+ * path to arrive from outside.
+ */
 export interface ExportReplayRequest {
+  hash: string;
   replayName: string;
-  vcrPath: string;
-  logPath: string;
   sceneDesc: string;
   session: string;
   timestamp: number;
+  logDataFileName: string;
 }
 
 export interface ExportManifest {
@@ -260,6 +267,8 @@ export interface ExportManifest {
 
 export const buildExportManifest = (
   request: ExportReplayRequest,
+  vcrPath: string,
+  logPath: string,
 ): ExportManifest => ({
   createdBy: 'lmu-steward',
   version: 1,
@@ -267,9 +276,41 @@ export const buildExportManifest = (
   sceneDesc: request.sceneDesc,
   session: request.session,
   timestamp: request.timestamp,
-  vcrFileName: basename(request.vcrPath),
-  logFileName: basename(request.logPath),
+  vcrFileName: basename(vcrPath),
+  logFileName: basename(logPath),
 });
+
+/**
+ * Where a replay's files actually are.
+ *
+ * An imported replay is taken straight from its record: it may carry an
+ * "(imported)" marker in its name, and its log is wherever the import wrote
+ * it. Anything else is derived from the configured replay folder.
+ */
+export const resolveExportPaths = async (
+  request: ExportReplayRequest,
+  imported: ImportedReplayStore,
+): Promise<{ vcrPath: string; logPath: string }> => {
+  const importedRecord = imported[request.hash];
+
+  if (importedRecord) {
+    return {
+      vcrPath: importedRecord.vcrPath,
+      logPath: importedRecord.logPath,
+    };
+  }
+
+  if (!request.logDataFileName) {
+    throw new Error('This replay has no result log, so it cannot be exported.');
+  }
+
+  const { replayDirectory, logDirectory } = await resolveImportDirectories();
+
+  return {
+    vcrPath: join(replayDirectory, `${request.replayName}.Vcr`),
+    logPath: join(logDirectory, request.logDataFileName),
+  };
+};
 
 const writeZip = (zip: ZipFile, destination: string): Promise<void> =>
   new Promise((resolve, reject) => {
@@ -303,12 +344,25 @@ export const postExportReplay = async (
   request?: ExportReplayRequest,
 ) => {
   try {
-    if (!request?.vcrPath || !request?.logPath) {
-      throw new Error('This replay has no log file, so it cannot be exported.');
+    if (!request?.replayName) {
+      throw new Error('No replay was provided to export.');
     }
 
-    await stat(request.vcrPath);
-    await stat(request.logPath);
+    const { vcrPath, logPath } = await resolveExportPaths(
+      request,
+      readImportedStore(),
+    );
+
+    /*
+     * Both files are confirmed before the save dialog opens. Asking where to
+     * save and only then discovering a missing file wastes the user's time.
+     */
+    await stat(vcrPath).catch(() => {
+      throw new Error(`The replay file could not be found at ${vcrPath}.`);
+    });
+    await stat(logPath).catch(() => {
+      throw new Error(`The result log could not be found at ${logPath}.`);
+    });
 
     const response = await dialog.showSaveDialog({
       title: 'Export replay',
@@ -325,14 +379,12 @@ export const postExportReplay = async (
     }
 
     const zip = new ZipFile();
-    zip.addFile(request.vcrPath, basename(request.vcrPath), {
-      compress: false,
-    });
-    zip.addFile(request.logPath, basename(request.logPath), {
-      compress: false,
-    });
+    zip.addFile(vcrPath, basename(vcrPath), { compress: false });
+    zip.addFile(logPath, basename(logPath), { compress: false });
     zip.addBuffer(
-      Buffer.from(JSON.stringify(buildExportManifest(request), null, 2)),
+      Buffer.from(
+        JSON.stringify(buildExportManifest(request, vcrPath, logPath), null, 2),
+      ),
       EXPORT_MANIFEST_NAME,
       { compress: false },
     );
