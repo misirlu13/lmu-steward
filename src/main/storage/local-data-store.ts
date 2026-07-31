@@ -8,7 +8,7 @@ import {
   writeFileSync,
 } from 'fs';
 import nodePath from 'path';
-import { LMUReplay, ProfileCacheStore } from '@types';
+import { ImportedReplayRecord, LMUReplay, ProfileCacheStore } from '@types';
 
 type SqliteDatabase = import('better-sqlite3').Database;
 
@@ -48,6 +48,13 @@ const META_LEGACY_SYNCED_MTIME_PREFIX = 'legacySyncedMtime:';
  * use it to tell SQLite which keys they actually changed.
  */
 const LEGACY_SYNC_STAMPS_KEY = '__syncStamps__';
+
+/**
+ * Backed by the imported_replays table rather than kv_store. Kept as a store
+ * key so callers use the same get/set interface, and so the legacy JSON backend
+ * carries it without a second code path.
+ */
+const IMPORTED_REPLAYS_KEY = 'importedReplays';
 const RESERVED_LEGACY_KEYS = new Set(['__internal__', LEGACY_SYNC_STAMPS_KEY]);
 
 const SQLITE_OPEN_ATTEMPTS = 3;
@@ -137,6 +144,24 @@ class SqliteNamespaceStore implements PersistentStore {
       return replays;
     }
 
+    if (this.namespace === 'main' && key === IMPORTED_REPLAYS_KEY) {
+      const rows = this.db
+        .prepare(
+          'SELECT hash, payload FROM imported_replays ORDER BY timestamp DESC',
+        )
+        .all() as Array<{ hash: string; payload: string }>;
+      const imported: Record<string, ImportedReplayRecord> = {};
+
+      for (const row of rows) {
+        const record = deserializeValue(row.payload);
+        if (record !== undefined) {
+          imported[row.hash] = record as ImportedReplayRecord;
+        }
+      }
+
+      return imported;
+    }
+
     const row = this.db
       .prepare(
         'SELECT value FROM kv_store WHERE namespace = ? AND key = ? LIMIT 1',
@@ -188,6 +213,57 @@ class SqliteNamespaceStore implements PersistentStore {
       return;
     }
 
+    if (this.namespace === 'main' && key === IMPORTED_REPLAYS_KEY) {
+      const importedEntries = Object.entries(
+        isRecord(value) ? value : {},
+      ) as Array<[string, ImportedReplayRecord]>;
+
+      const replaceImported = this.db.transaction(
+        (entries: Array<[string, ImportedReplayRecord]>) => {
+          this.db.prepare('DELETE FROM imported_replays').run();
+
+          const statement = this.db.prepare(`
+            INSERT INTO imported_replays (
+              hash,
+              replay_name,
+              scene_desc,
+              session,
+              timestamp,
+              vcr_file_name,
+              vcr_path,
+              log_file_name,
+              log_path,
+              imported_at,
+              payload,
+              updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          `);
+
+          const updatedAt = Date.now();
+
+          for (const [hash, record] of entries) {
+            statement.run(
+              hash,
+              record?.replayName ?? null,
+              record?.sceneDesc ?? null,
+              record?.session ?? null,
+              Number(record?.timestamp ?? 0),
+              record?.vcrFileName ?? '',
+              record?.vcrPath ?? '',
+              record?.logFileName ?? null,
+              record?.logPath ?? null,
+              Number(record?.importedAt ?? 0),
+              serializeValue(record),
+              updatedAt,
+            );
+          }
+        },
+      );
+
+      replaceImported(importedEntries);
+      return;
+    }
+
     this.db
       .prepare(
         `
@@ -208,6 +284,7 @@ class SqliteNamespaceStore implements PersistentStore {
 
     if (this.namespace === 'main') {
       this.db.prepare('DELETE FROM replay_cache').run();
+      this.db.prepare('DELETE FROM imported_replays').run();
     }
   }
 }
@@ -304,6 +381,30 @@ const initializeSqliteSchema = (db: SqliteDatabase) => {
     CREATE INDEX IF NOT EXISTS idx_replay_cache_timestamp
       ON replay_cache(timestamp DESC);
 
+    /*
+      Replays LMU Steward copied into the LMU installation. Deliberately not in
+      replay_cache: that table is emptied on every write, on schema bumps and on
+      forced resets, and losing these rows would strand the files on disk with
+      nothing able to find or delete them.
+    */
+    CREATE TABLE IF NOT EXISTS imported_replays (
+      hash TEXT PRIMARY KEY,
+      replay_name TEXT,
+      scene_desc TEXT,
+      session TEXT,
+      timestamp INTEGER NOT NULL DEFAULT 0,
+      vcr_file_name TEXT NOT NULL,
+      vcr_path TEXT NOT NULL,
+      log_file_name TEXT,
+      log_path TEXT,
+      imported_at INTEGER NOT NULL DEFAULT 0,
+      payload TEXT NOT NULL,
+      updated_at INTEGER NOT NULL
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_imported_replays_timestamp
+      ON imported_replays(timestamp DESC);
+
     CREATE TABLE IF NOT EXISTS meta (
       key TEXT PRIMARY KEY,
       value TEXT NOT NULL
@@ -385,6 +486,14 @@ const readReplayStamps = (db: SqliteDatabase): Map<string, number> => {
   return new Map(rows.map((row) => [row.hash, row.updated_at]));
 };
 
+const readImportedStamps = (db: SqliteDatabase): Map<string, number> => {
+  const rows = db
+    .prepare('SELECT hash, updated_at FROM imported_replays')
+    .all() as Array<{ hash: string; updated_at: number }>;
+
+  return new Map(rows.map((row) => [row.hash, row.updated_at]));
+};
+
 /**
  * Merges a legacy main-store snapshot into SQLite, keeping whichever copy of
  * each key was written last. Replays merge per hash rather than replacing the
@@ -397,6 +506,35 @@ const reconcileLegacyMainStore = (
 ) => {
   const kvStamps = readKvStamps(db, 'main');
   const replayStamps = readReplayStamps(db);
+  const importedStamps = readImportedStamps(db);
+  const importedStatement = db.prepare(`
+    INSERT INTO imported_replays (
+      hash,
+      replay_name,
+      scene_desc,
+      session,
+      timestamp,
+      vcr_file_name,
+      vcr_path,
+      log_file_name,
+      log_path,
+      imported_at,
+      payload,
+      updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT(hash) DO UPDATE SET
+      replay_name = excluded.replay_name,
+      scene_desc = excluded.scene_desc,
+      session = excluded.session,
+      timestamp = excluded.timestamp,
+      vcr_file_name = excluded.vcr_file_name,
+      vcr_path = excluded.vcr_path,
+      log_file_name = excluded.log_file_name,
+      log_path = excluded.log_path,
+      imported_at = excluded.imported_at,
+      payload = excluded.payload,
+      updated_at = excluded.updated_at
+  `);
   const kvStatement = db.prepare(
     `
       INSERT INTO kv_store (namespace, key, value, updated_at)
@@ -449,6 +587,41 @@ const reconcileLegacyMainStore = (
           replay?.metadata?.session ?? null,
           Number(replay?.timestamp ?? 0),
           serializeValue(replay),
+          stamp,
+        );
+      }
+
+      continue;
+    }
+
+    /*
+      Imported replays merge per hash for the same reason replays do: a session
+      that fell back to the legacy backend may have seen only some of them, and
+      replacing the collection would drop rows describing files that are still
+      sitting in the LMU installation.
+    */
+    if (key === IMPORTED_REPLAYS_KEY) {
+      const importedEntries = Object.entries(
+        isRecord(value) ? value : {},
+      ) as Array<[string, ImportedReplayRecord]>;
+
+      for (const [hash, record] of importedEntries) {
+        if ((importedStamps.get(hash) ?? -1) >= stamp) {
+          continue;
+        }
+
+        importedStatement.run(
+          hash,
+          record?.replayName ?? null,
+          record?.sceneDesc ?? null,
+          record?.session ?? null,
+          Number(record?.timestamp ?? 0),
+          record?.vcrFileName ?? '',
+          record?.vcrPath ?? '',
+          record?.logFileName ?? null,
+          record?.logPath ?? null,
+          Number(record?.importedAt ?? 0),
+          serializeValue(record),
           stamp,
         );
       }
@@ -552,6 +725,7 @@ const clearSqliteContents = (db: SqliteDatabase) => {
   const clear = db.transaction(() => {
     db.prepare('DELETE FROM kv_store').run();
     db.prepare('DELETE FROM replay_cache').run();
+    db.prepare('DELETE FROM imported_replays').run();
     db.prepare('DELETE FROM meta').run();
   });
 

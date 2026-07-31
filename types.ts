@@ -69,6 +69,50 @@ export interface ArchivedReplayRecord {
 
 export type ArchivedReplayStore = Record<string, ArchivedReplayRecord>;
 
+/**
+ * A replay LMU Steward copied into the LMU installation on the user's behalf.
+ *
+ * These live in their own table rather than in the replay cache. That cache is
+ * wiped wholesale on schema bumps and forced resets, and losing this record
+ * would strand multiple GB of files on disk with nothing in the app able to
+ * find or remove them. It is also the only record of which exact files an
+ * import wrote, which is what makes deleting them safe.
+ */
+export interface ImportedReplayRecord {
+  hash: string;
+  replayName: string;
+  sceneDesc: string;
+  session: SessionType;
+  /** The stamped creation time, equal to the matched log's root DateTime. */
+  timestamp: number;
+  vcrFileName: string;
+  vcrPath: string;
+  logFileName: string;
+  logPath: string;
+  /** Guards delete against a file having been replaced since import. */
+  vcrFingerprint: string;
+  logFingerprint: string;
+  importedAt: number;
+  logData: unknown;
+  origin: {
+    trackFolder: string;
+    trackVersion: string;
+    trackContentHash: string;
+    installPath: string;
+  };
+  match: {
+    method: 'roster' | 'manual' | 'manifest';
+    confidence: number | null;
+    rosterOverlap: {
+      intersection: number;
+      vcrCount: number;
+      logCount: number;
+    } | null;
+  };
+}
+
+export type ImportedReplayStore = Record<string, ImportedReplayRecord>;
+
 export interface ArchiveReplaysRequest {
   hashes: string[];
   note?: string;
