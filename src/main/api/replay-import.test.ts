@@ -8,9 +8,16 @@
  * back instead of leaving a mis-dated file behind.
  */
 /* eslint-disable import/first */
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync, existsSync } from 'fs';
+import {
+  mkdirSync,
+  mkdtempSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+  existsSync,
+} from 'fs';
 import { tmpdir } from 'os';
-import { join } from 'path';
+import { dirname, join } from 'path';
 import { ImportedReplayStore } from '@types';
 import {
   deleteImportedReplays,
@@ -441,5 +448,76 @@ describe('main/replay import', () => {
       expect(result.deleted).toEqual([]);
       expect(result.skipped[0].reason).toMatch(/not an imported replay/);
     });
+  });
+});
+
+/*
+ * The suite above mocks setFileCreationTime, which is right for testing import
+ * orchestration but meant the stamping itself was never executed — and it was
+ * broken: `$args` is only populated by PowerShell's -File, so with -Command the
+ * path was appended to the script text and parsed as code.
+ *
+ * Windows-only, since NTFS creation time is the thing under test.
+ */
+const describeOnWindows =
+  process.platform === 'win32' ? describe : describe.skip;
+
+describeOnWindows('main/replay import creation-time stamping', () => {
+  let root: string;
+
+  beforeAll(() => {
+    root = mkdtempSync(join(tmpdir(), 'lmu-steward-stamp-'));
+  });
+
+  afterAll(() => {
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  const writeProbe = (relativePath: string): string => {
+    const filePath = join(root, relativePath);
+    mkdirSync(dirname(filePath), { recursive: true });
+    writeFileSync(filePath, Buffer.from('probe'));
+    return filePath;
+  };
+
+  it('stamps a plain path', async () => {
+    const filePath = writeProbe('plain.Vcr');
+
+    await replayImport.setFileCreationTime(filePath, EVENT_TWO);
+
+    expect(Math.round(statSync(filePath).birthtimeMs / 1000)).toBe(EVENT_TWO);
+  });
+
+  /**
+   * The shape that broke in the wild: the real LMU install path contains both
+   * spaces and parentheses, and `(x86)` is a PowerShell metacharacter.
+   */
+  it('stamps a path containing spaces and parentheses', async () => {
+    const filePath = writeProbe(
+      join(
+        'Program Files (x86)',
+        'Le Mans Ultimate',
+        'Autodromo Nazionale Monza R1 100i.Vcr',
+      ),
+    );
+
+    await replayImport.setFileCreationTime(filePath, EVENT_TWO);
+
+    expect(Math.round(statSync(filePath).birthtimeMs / 1000)).toBe(EVENT_TWO);
+  });
+
+  /** Replay names come from other people's machines; none of it is trusted. */
+  it("stamps a path containing quotes, dollars and a driver's apostrophe", async () => {
+    const filePath = writeProbe("O'Brien $env test `x.Vcr");
+
+    await replayImport.setFileCreationTime(filePath, EVENT_ONE);
+
+    expect(Math.round(statSync(filePath).birthtimeMs / 1000)).toBe(EVENT_ONE);
+  });
+
+  it('fails loudly when the file does not exist', async () => {
+    await expect(
+      replayImport.setFileCreationTime(join(root, 'missing.Vcr'), EVENT_TWO),
+    ).rejects.toThrow();
   });
 });

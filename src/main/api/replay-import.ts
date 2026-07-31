@@ -97,9 +97,18 @@ export const fingerprintFile = async (filePath: string): Promise<string> => {
  * was pasted, and log matching, dashboard grouping and replay hashing all go
  * wrong together.
  *
- * Node cannot do it; `fs.utimes` only covers access and modified times. The path
- * is passed as an argument rather than interpolated into the command, because
- * replay names routinely contain spaces and apostrophes.
+ * Node cannot do it; `fs.utimes` only covers access and modified times.
+ *
+ * Values go in through the environment rather than as arguments. `$args` is
+ * only populated by `-File`; with `-Command`, PowerShell appends trailing
+ * arguments to the command *text*, so a path lands in the script as code —
+ * `C:\Program Files (x86)\…` then fails to parse on the parentheses. Reading
+ * `$env:` avoids quoting and escaping altogether, and leaves no way for a
+ * replay name to be interpreted as PowerShell.
+ *
+ * The result is read back rather than trusted. A silent no-op here would date
+ * every imported replay to the moment it was copied, which is exactly the bug
+ * importing exists to fix, so it is worth one extra stat to be certain.
  */
 export const setFileCreationTime = async (
   filePath: string,
@@ -113,13 +122,33 @@ export const setFileCreationTime = async (
       '-NoProfile',
       '-NonInteractive',
       '-Command',
-      '$item = Get-Item -LiteralPath $args[0]; ' +
-        '$item.CreationTimeUtc = [datetime]::Parse($args[1]).ToUniversalTime()',
-      filePath,
-      iso,
+      '$ErrorActionPreference = "Stop"; ' +
+        '$item = Get-Item -LiteralPath $env:LMU_STEWARD_TARGET_PATH; ' +
+        '$item.CreationTimeUtc = ' +
+        '[datetime]::Parse($env:LMU_STEWARD_CREATED_AT).ToUniversalTime()',
     ],
-    { windowsHide: true },
+    {
+      windowsHide: true,
+      env: {
+        ...process.env,
+        LMU_STEWARD_TARGET_PATH: filePath,
+        LMU_STEWARD_CREATED_AT: iso,
+      },
+    },
   );
+
+  const { birthtimeMs } = await stat(filePath);
+  const appliedSeconds = Math.round(birthtimeMs / 1000);
+
+  // NTFS stores creation time far more precisely than a second; allow for the
+  // rounding rather than demanding an exact match.
+  if (Math.abs(appliedSeconds - epochSeconds) > 1) {
+    throw new Error(
+      `Could not set the replay's creation date. Expected ${iso}, but the file reports ${new Date(
+        birthtimeMs,
+      ).toISOString()}.`,
+    );
+  }
 };
 
 const readTextHead = (value: string, tag: string): string => {
