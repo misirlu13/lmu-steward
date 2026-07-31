@@ -78,6 +78,7 @@ describe('main/replay export paths', () => {
         size: 10,
         logFileName: 'event-two-race.xml',
         logPath: 'D:\\Elsewhere\\Logs\\event-two-race.xml',
+        logWasWritten: true,
         vcrFingerprint: 'a',
         logFingerprint: 'b',
         importedAt: 1,

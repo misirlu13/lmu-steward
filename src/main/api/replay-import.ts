@@ -511,6 +511,7 @@ export const importReplays = async ({
         size: row.size,
         logFileName,
         logPath: destinationLogPath,
+        logWasWritten: wroteLog,
         vcrFingerprint: await fingerprintFile(destinationVcrPath),
         logFingerprint: await fingerprintFile(destinationLogPath),
         importedAt: Date.now(),
@@ -624,7 +625,17 @@ export const deleteImportedReplays = async (
           other.logPath.toLowerCase() === record.logPath.toLowerCase(),
       );
 
-      if (!logStillReferenced) {
+      /*
+       * Only logs this import wrote are ever removed. A steward who raced in
+       * the event already has its result log, so importing another driver's
+       * replay of that race copies nothing — deleting the log here would
+       * destroy a file the app never placed.
+       *
+       * Records written before this flag existed have it undefined, which is
+       * treated as "not ours": leaving a stale log behind is recoverable,
+       * deleting someone's own is not.
+       */
+      if (record.logWasWritten === true && !logStillReferenced) {
         // eslint-disable-next-line no-await-in-loop
         const logFingerprint = await fingerprintFile(record.logPath).catch(
           () => null,

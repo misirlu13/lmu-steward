@@ -111,6 +111,15 @@ export interface ImportedReplayRecord {
   size: number;
   logFileName: string;
   logPath: string;
+  /**
+   * Whether this import actually wrote the log, or found it already there.
+   *
+   * Delete depends on it. A steward who raced in the event already has its
+   * result log, so importing another driver's replay of that race copies
+   * nothing — and removing the log on delete would destroy a file the app never
+   * placed.
+   */
+  logWasWritten: boolean;
   /** Guards delete against a file having been replaced since import. */
   vcrFingerprint: string;
   logFingerprint: string;

@@ -540,6 +540,63 @@ describe('main/replay import', () => {
       expect(existsSync(join(logDirectory, 'event-two-race.xml'))).toBe(true);
     });
 
+    /**
+     * The steward already had this log — they raced in the event, or they
+     * exported and re-imported their own replay. Import copied nothing, so
+     * delete must not remove it. Taking a file the app never placed would
+     * break the one guarantee that makes deleting safe at all.
+     */
+    it('keeps a log that was already there when the import ran', async () => {
+      const rows = await scan();
+      const existingLogPath = join(logDirectory, 'event-two-race.xml');
+
+      // Stand in for a log the steward already had from their own racing.
+      writeFileSync(
+        existingLogPath,
+        readFileSync(join(source, 'event-two-race.xml')),
+      );
+
+      const { imported } = await importReplays({
+        rows,
+        selections: [
+          {
+            id: rows[0].id,
+            logPath: rows[0].pairing.proposed!.candidate.filePath,
+            method: 'roster',
+            confidence: 0.8,
+          },
+        ],
+        replayDirectory,
+        logDirectory,
+        imported: {},
+      });
+
+      const hash = Object.keys(imported)[0];
+      expect(imported[hash].logWasWritten).toBe(false);
+
+      const result = await deleteImportedReplays([hash], imported);
+
+      expect(result.deleted).toEqual([hash]);
+      expect(existsSync(existingLogPath)).toBe(true);
+    });
+
+    /**
+     * Records written before logWasWritten existed have it undefined. Leaving a
+     * stale log behind is recoverable; deleting someone's own is not.
+     */
+    it('leaves the log alone for a record that predates the flag', async () => {
+      const imported = await importOne();
+      const hash = Object.keys(imported)[0];
+      const { logWasWritten: _logWasWritten, ...legacyRecord } = imported[hash];
+
+      const result = await deleteImportedReplays([hash], {
+        [hash]: legacyRecord as (typeof imported)[string],
+      });
+
+      expect(result.deleted).toEqual([hash]);
+      expect(existsSync(join(logDirectory, 'event-two-race.xml'))).toBe(true);
+    });
+
     it('refuses a hash that is not an imported replay', async () => {
       const result = await deleteImportedReplays(['not-imported'], {});
 
