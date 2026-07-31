@@ -4,6 +4,7 @@ import {
   ArchivedReplayStore,
   ArchiveReplaysRequest,
   GetReplaysRequest,
+  ImportedReplayStore,
   LMUReplay,
   SessionType,
 } from '@types';
@@ -182,6 +183,39 @@ const enforceReplayCacheSchemaVersion = (replayStore: ReplayStore) => {
 enforceReplayCacheSchemaVersion(store);
 
 const ARCHIVED_REPLAYS_STORE_KEY = 'archivedReplays';
+const IMPORTED_REPLAYS_STORE_KEY = 'importedReplays';
+
+export const readImportedReplays = (): ImportedReplayStore => {
+  const stored = getReplayStore().get(IMPORTED_REPLAYS_STORE_KEY);
+
+  if (!stored || typeof stored !== 'object' || Array.isArray(stored)) {
+    return {};
+  }
+
+  return stored as ImportedReplayStore;
+};
+
+/**
+ * Absolute path LMU would report a replay at, used to recognise our own
+ * imports in the replay API's listing.
+ *
+ * Matched on path rather than hash deliberately. A hash is derived from the
+ * timestamp, and an import that is later re-paired gets re-stamped and
+ * re-hashed; the path it was written to does not move.
+ */
+const buildReplayFilePath = (replay: {
+  replayDirectory?: string;
+  replayName?: string;
+}): string =>
+  join(
+    String(replay?.replayDirectory ?? ''),
+    `${String(replay?.replayName ?? '')}.Vcr`,
+  ).toLowerCase();
+
+const buildImportedPathIndex = (imported: ImportedReplayStore): Set<string> =>
+  new Set(
+    Object.values(imported).map((record) => record.vcrPath.toLowerCase()),
+  );
 
 const readArchivedReplays = (): ArchivedReplayStore => {
   const stored = getReplayStore().get(ARCHIVED_REPLAYS_STORE_KEY);
@@ -1340,8 +1374,24 @@ export const syncReplayData = async (
     reportProgress();
   };
 
+  /*
+   * Imported replays live in their own store and their own dashboard view. The
+   * .Vcr is physically in the replay folder, so the game lists it like any
+   * other — without this they would be cached here as well and show up twice.
+   *
+   * Applied regardless of whether experimental features are enabled: turning
+   * the flag off must not dump already-imported replays into the active list.
+   */
+  const importedPaths = buildImportedPathIndex(readImportedReplays());
+
   // Add hash to each replay and store in electron-store
   for (const replay of data) {
+    if (importedPaths.has(buildReplayFilePath(replay))) {
+      markReplayProcessed();
+      await yieldToEventLoop();
+      continue;
+    }
+
     const hash = generateReplayHash(replay);
     const identityKey = buildReplayCacheIdentityKey(replay);
 
@@ -1687,6 +1737,47 @@ export const postWatchReplay = async (
 
     if (!response.ok) {
       throw new Error(`API responded with status ${response.status}`);
+    }
+
+    /*
+     * An imported replay already knows which log it belongs to — it was chosen
+     * and recorded at import time. Re-deriving it here would put it back
+     * through findBestLogFile against the whole results directory, which is
+     * exactly the mismatch importing exists to avoid.
+     */
+    const importedRecord = readImportedReplays()[hash];
+    if (importedRecord) {
+      const importedLog = await parseLogXmlFull(importedRecord.logPath);
+
+      event.reply(CONSTANTS.API.POST_WATCH_REPLAY, {
+        status: 'success',
+        data: {
+          hash,
+          metadata: {
+            sceneDesc: importedRecord.sceneDesc,
+            session: importedRecord.session,
+          },
+          replayName: importedRecord.replayName,
+          replayDirectory: replay.replayDirectory,
+          size: replay.size,
+          timestamp: importedRecord.timestamp,
+          imported: true,
+          importedAt: importedRecord.importedAt,
+          logData: importedLog?.rFactorXML?.RaceResults ?? null,
+          logDataDirectory: importedRecord.logPath.slice(
+            0,
+            importedRecord.logPath.length -
+              importedRecord.logFileName.length -
+              1,
+          ),
+          logDataFileName: importedRecord.logFileName,
+          logDataLoaded: true,
+          multiplayer: getReplayMultiplayerFromLogData(
+            importedLog?.rFactorXML?.RaceResults,
+          ),
+        },
+      });
+      return;
     }
 
     let cachedReplay = storedReplay[hash] as LMUReplay | undefined;

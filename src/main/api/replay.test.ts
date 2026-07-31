@@ -27,6 +27,7 @@ import {
   postArchiveReplays,
   postRestoreReplays,
   postWatchReplay,
+  syncReplayData,
 } from './replay';
 /* eslint-enable import/first */
 
@@ -728,6 +729,166 @@ describe('main/replay helpers', () => {
     });
 
     expect(replayStoreSetMock).toHaveBeenCalledTimes(1);
+  });
+
+  /**
+   * An imported replay was paired with its log when it was imported. Sending it
+   * back through findBestLogFile against the whole results directory is exactly
+   * the mismatch importing exists to avoid — the correct log is already known.
+   */
+  it('serves an imported replay from its recorded log, without re-matching', async () => {
+    const replyMock = jest.fn();
+    const event = { reply: replyMock } as unknown as Electron.IpcMainEvent;
+    const replay = {
+      id: 0,
+      metadata: { session: 'RACE', sceneDesc: 'MONZAWEC' },
+      replayDirectory: 'C:/replays',
+      replayName: 'Autodromo Nazionale Monza R1 2',
+      size: 456,
+      timestamp: 1784398360,
+    } as unknown as LMUReplay;
+    const replayHash = generateReplayHash(replay);
+
+    replayStoreData.importedReplays = {
+      [replayHash]: {
+        hash: replayHash,
+        replayName: 'Autodromo Nazionale Monza R1 2',
+        sceneDesc: 'MONZAWEC',
+        session: 'RACE',
+        timestamp: 1784398360,
+        vcrFileName: 'Autodromo Nazionale Monza R1 2.Vcr',
+        vcrPath: 'C:/replays/Autodromo Nazionale Monza R1 2.Vcr',
+        logFileName: 'event-two-race.xml',
+        logPath: 'C:/logs/event-two-race.xml',
+        vcrFingerprint: 'aaa',
+        logFingerprint: 'bbb',
+        importedAt: 1,
+        logData: null,
+        origin: {
+          trackFolder: 'Monza_2023',
+          trackVersion: '1.27',
+          trackContentHash: 'abc',
+          installPath: 'E:/LMU',
+        },
+        match: { method: 'roster', confidence: 0.84, rosterOverlap: null },
+      },
+    };
+
+    global.fetch = jest.fn().mockImplementation(async (url: string) => {
+      if (url.endsWith('/rest/watch/replays')) {
+        return { ok: true, status: 200, json: async () => [replay] };
+      }
+      return { ok: true, status: 200 };
+    }) as typeof global.fetch;
+
+    parseStringPromiseMock.mockResolvedValue({
+      rFactorXML: {
+        RaceResults: {
+          Setting: 'Multiplayer',
+          DateTime: 1784398360,
+          Race: { Minutes: 20 },
+        },
+      },
+    } as unknown as Awaited<ReturnType<typeof parseStringPromise>>);
+
+    await postWatchReplay(event, replayHash);
+
+    expect(readFileMock).toHaveBeenCalledWith(
+      'C:/logs/event-two-race.xml',
+      'utf-8',
+    );
+    // The whole point: the results directory is never scanned.
+    expect(readdirMock).not.toHaveBeenCalled();
+
+    expect(replyMock).toHaveBeenCalledWith(CONSTANTS.API.POST_WATCH_REPLAY, {
+      status: 'success',
+      data: expect.objectContaining({
+        imported: true,
+        timestamp: 1784398360,
+        logDataFileName: 'event-two-race.xml',
+        logDataLoaded: true,
+        multiplayer: true,
+      }),
+    });
+
+    delete replayStoreData.importedReplays;
+  });
+
+  /**
+   * An imported .Vcr sits in the replay folder, so the game lists it like any
+   * other. Without the exclusion it would be cached here as well and appear in
+   * both the active and the imported view — and, since the flag does not gate
+   * this, turning experimental features off must not change that.
+   */
+  it('does not cache a replay that was imported', async () => {
+    /*
+     * syncReplayData yields between replays via setImmediate, which jsdom does
+     * not provide. Nothing here depends on macrotask ordering, so a minimal
+     * stand-in is enough to exercise the loop.
+     */
+    const globalWithImmediate = globalThis as unknown as Record<
+      string,
+      unknown
+    >;
+    const originalSetImmediate = globalWithImmediate.setImmediate;
+    globalWithImmediate.setImmediate = (callback: () => void) =>
+      setTimeout(callback, 0);
+
+    const importedReplay = {
+      id: 0,
+      metadata: { session: 'RACE', sceneDesc: 'MONZAWEC' },
+      replayDirectory: 'C:/replays/',
+      replayName: 'Autodromo Nazionale Monza R1 2',
+      size: 456,
+      timestamp: 1784398360,
+    };
+    const ownReplay = {
+      id: 1,
+      metadata: { session: 'RACE', sceneDesc: 'SEBRINGWEC' },
+      replayDirectory: 'C:/replays/',
+      replayName: 'Sebring International Raceway R1 1',
+      size: 123,
+      timestamp: 1000,
+    };
+
+    replayStoreData.replays = {};
+    replayStoreData.importedReplays = {
+      'imported-hash': {
+        hash: 'imported-hash',
+        vcrPath: 'C:\\replays\\Autodromo Nazionale Monza R1 2.Vcr',
+        logPath: 'C:/logs/event-two-race.xml',
+        logFileName: 'event-two-race.xml',
+      },
+    };
+
+    global.fetch = jest.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => [importedReplay, ownReplay],
+    }) as typeof global.fetch;
+
+    readdirMock.mockResolvedValue(['own.xml'] as unknown as Awaited<
+      ReturnType<typeof readdir>
+    >);
+    readFileMock.mockResolvedValue(
+      '<rFactorXML><RaceResults><DateTime>1000</DateTime><TrackVenue>Sebring</TrackVenue><Race /></RaceResults></rFactorXML>' as unknown as Awaited<
+        ReturnType<typeof readFile>
+      >,
+    );
+
+    await syncReplayData();
+
+    const cached = Object.values(
+      replayStoreData.replays as Record<string, LMUReplay>,
+    );
+
+    expect(cached.map((entry) => entry.replayName)).toEqual([
+      'Sebring International Raceway R1 1',
+    ]);
+
+    globalWithImmediate.setImmediate = originalSetImmediate;
+    delete replayStoreData.importedReplays;
+    replayStoreData.replays = {};
   });
 });
 
