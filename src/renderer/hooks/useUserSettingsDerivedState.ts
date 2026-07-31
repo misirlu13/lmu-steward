@@ -22,6 +22,7 @@ interface UseUserSettingsDerivedStateArgs {
   syncOnAppLaunch: boolean;
   syncOnIntervalMinutes: number;
   persistDashboardFiltersEnabled: boolean;
+  experimentalFeaturesEnabled: boolean;
   anonymizeDriverData: boolean;
   telemetryCacheEnabled: boolean;
   clearCacheOnExit: boolean;
@@ -49,6 +50,7 @@ export const useUserSettingsDerivedState = ({
   syncOnAppLaunch,
   syncOnIntervalMinutes,
   persistDashboardFiltersEnabled,
+  experimentalFeaturesEnabled,
   anonymizeDriverData,
   telemetryCacheEnabled,
   clearCacheOnExit,
@@ -116,6 +118,7 @@ export const useUserSettingsDerivedState = ({
       syncOnAppLaunch,
       syncOnIntervalMinutes,
       persistDashboardFiltersEnabled,
+      experimentalFeaturesEnabled,
       anonymizeDriverData,
       telemetryCacheEnabled,
       clearCacheOnExit,
@@ -126,6 +129,7 @@ export const useUserSettingsDerivedState = ({
       syncOnAppLaunch,
       syncOnIntervalMinutes,
       persistDashboardFiltersEnabled,
+      experimentalFeaturesEnabled,
       anonymizeDriverData,
       telemetryCacheEnabled,
       clearCacheOnExit,

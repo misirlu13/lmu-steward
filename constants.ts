@@ -1,3 +1,30 @@
+export interface ExperimentalFeature {
+  id: string;
+  name: string;
+  description: string;
+}
+
+/**
+ * Everything currently gated behind the Experimental Features setting.
+ *
+ * This is the only list. The settings card renders straight from it, so
+ * graduating a feature is deleting its entry and removing the gate — there is
+ * no second place that can be left claiming something is still experimental.
+ *
+ * Annotated rather than left to `as const` inference on purpose: a const
+ * assertion narrows this to a fixed-length tuple, which makes TypeScript reject
+ * the `length === 0` check the card's empty state depends on. Emptying this
+ * array is the expected end state, not an edge case.
+ */
+const EXPERIMENTAL_FEATURES: ExperimentalFeature[] = [
+  {
+    id: 'replay-import-export',
+    name: 'Replay Import & Export',
+    description:
+      'Import replays recorded on another PC, and export a replay with its result log to share with someone else.',
+  },
+];
+
 export const CONSTANTS = {
   LMU_API_BASE_URL: 'http://localhost:6397',
   LMU_DEFAULT_EXECUTABLE_PATH:
@@ -559,4 +586,5 @@ export const CONSTANTS = {
     LMP3: 'LMP3',
     HYPERCAR: 'Hypercar',
   },
+  EXPERIMENTAL_FEATURES,
 } as const;

@@ -20,6 +20,12 @@ export const DEFAULT_USER_SETTINGS: UserSettings = {
   closeLmuOnExitAlwaysPerformAction: false,
   persistDashboardFiltersEnabled: false,
   dashboardView: null,
+  /**
+   * Gates anything listed in CONSTANTS.EXPERIMENTAL_FEATURES. Off by default —
+   * experimental is opt-in, and a user who has never seen the setting should
+   * not be running unfinished features.
+   */
+  experimentalFeaturesEnabled: false,
 };
 
 // Removed threshold constants

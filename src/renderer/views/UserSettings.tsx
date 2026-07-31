@@ -60,6 +60,7 @@ interface ApiResponse {
     syncOnIntervalMinutes?: number;
     replayLogMatchThresholdMs?: number;
     persistDashboardFiltersEnabled?: boolean;
+    experimentalFeaturesEnabled?: boolean;
     anonymizeDriverData?: boolean;
     telemetryCacheEnabled?: boolean;
     clearCacheOnExit?: boolean;
@@ -113,6 +114,8 @@ export const UserSettingsView: React.FC = () => {
     setPendingReplayLogMatchThresholdMinutes,
   ] = useState(2);
   const [persistDashboardFiltersEnabled, setPersistDashboardFiltersEnabled] =
+    useState(false);
+  const [experimentalFeaturesEnabled, setExperimentalFeaturesEnabled] =
     useState(false);
   const [anonymizeDriverData, setAnonymizeDriverData] = useState(false);
   const [telemetryCacheEnabled, setTelemetryCacheEnabled] = useState(true);
@@ -183,6 +186,7 @@ export const UserSettingsView: React.FC = () => {
     syncOnAppLaunch,
     syncOnIntervalMinutes,
     persistDashboardFiltersEnabled,
+    experimentalFeaturesEnabled,
     // replayLogMatchThresholdMinutes,
     anonymizeDriverData,
     telemetryCacheEnabled,
@@ -300,6 +304,9 @@ export const UserSettingsView: React.FC = () => {
       const resolvedPersistDashboardFiltersEnabled = Boolean(
         response?.data?.persistDashboardFiltersEnabled ?? false,
       );
+      const resolvedExperimentalFeaturesEnabled = Boolean(
+        response?.data?.experimentalFeaturesEnabled ?? false,
+      );
       const resolvedAnonymizeDriverData = Boolean(
         response?.data?.anonymizeDriverData ?? false,
       );
@@ -319,6 +326,7 @@ export const UserSettingsView: React.FC = () => {
         : null;
 
       setPersistDashboardFiltersEnabled(resolvedPersistDashboardFiltersEnabled);
+      setExperimentalFeaturesEnabled(resolvedExperimentalFeaturesEnabled);
       setAnonymizeDriverData(resolvedAnonymizeDriverData);
       setTelemetryCacheEnabled(resolvedTelemetryCacheEnabled);
       setClearCacheOnExit(resolvedClearCacheOnExit);
@@ -333,6 +341,7 @@ export const UserSettingsView: React.FC = () => {
         syncOnAppLaunch: Boolean(response?.data?.syncOnAppLaunch ?? true),
         syncOnIntervalMinutes: resolvedSyncIntervalMinutes,
         persistDashboardFiltersEnabled: resolvedPersistDashboardFiltersEnabled,
+        experimentalFeaturesEnabled: resolvedExperimentalFeaturesEnabled,
         // replayLogMatchThresholdMinutes: resolvedReplayLogMatchThresholdMinutes,
         anonymizeDriverData: resolvedAnonymizeDriverData,
         telemetryCacheEnabled: resolvedTelemetryCacheEnabled,
@@ -459,6 +468,12 @@ export const UserSettingsView: React.FC = () => {
         ) {
           setPersistDashboardFiltersEnabled(
             response.data.persistDashboardFiltersEnabled,
+          );
+        }
+
+        if (typeof response?.data?.experimentalFeaturesEnabled === 'boolean') {
+          setExperimentalFeaturesEnabled(
+            response.data.experimentalFeaturesEnabled,
           );
         }
 
@@ -1446,6 +1461,88 @@ export const UserSettingsView: React.FC = () => {
                       isLoading || isSaving || isLaunching || isAutosaving
                     }
                   />
+                </Stack>
+              </Box>
+            </Stack>
+          </Paper>
+
+          <Paper
+            variant="outlined"
+            sx={{ borderColor: 'divider', borderRadius: 1, p: 3 }}
+          >
+            <Stack spacing={1.5}>
+              <Typography variant="h6" fontWeight={700}>
+                Experimental Features
+              </Typography>
+              <Box
+                sx={{
+                  border: '1px solid',
+                  borderColor: 'divider',
+                  borderRadius: 1,
+                  p: 2,
+                }}
+              >
+                <Stack
+                  direction="row"
+                  justifyContent="space-between"
+                  alignItems="center"
+                >
+                  <Box>
+                    <Typography variant="subtitle2" fontWeight={600}>
+                      Enable Experimental Features
+                    </Typography>
+                    <Typography variant="caption" color="text.secondary">
+                      Turn on features that are still being tested. They may
+                      change, behave incorrectly on some setups, or be removed
+                      in a later release. Everything already in LMU Steward
+                      keeps working either way.
+                    </Typography>
+                  </Box>
+                  <Switch
+                    checked={experimentalFeaturesEnabled}
+                    onChange={(_, checked) =>
+                      setExperimentalFeaturesEnabled(checked)
+                    }
+                    disabled={
+                      isLoading || isSaving || isLaunching || isAutosaving
+                    }
+                  />
+                </Stack>
+              </Box>
+
+              {/*
+                Rendered whether the toggle is on or off — someone deciding
+                whether to enable it needs to see what they would be enabling.
+              */}
+              <Box
+                sx={{
+                  border: '1px solid',
+                  borderColor: 'divider',
+                  borderRadius: 1,
+                  p: 2,
+                }}
+              >
+                <Stack spacing={1.5}>
+                  <Typography variant="subtitle2" fontWeight={600}>
+                    What&apos;s experimental right now
+                  </Typography>
+                  {CONSTANTS.EXPERIMENTAL_FEATURES.length === 0 ? (
+                    <Typography variant="caption" color="text.secondary">
+                      No experimental features at the moment. Everything in LMU
+                      Steward is fully released.
+                    </Typography>
+                  ) : (
+                    CONSTANTS.EXPERIMENTAL_FEATURES.map((feature) => (
+                      <Box key={feature.id}>
+                        <Typography variant="body2" fontWeight={600}>
+                          {feature.name}
+                        </Typography>
+                        <Typography variant="caption" color="text.secondary">
+                          {feature.description}
+                        </Typography>
+                      </Box>
+                    ))
+                  )}
                 </Stack>
               </Box>
             </Stack>
