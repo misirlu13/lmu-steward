@@ -63,6 +63,7 @@ export const DashboardView: React.FC = () => {
 
   const {
     experimentalFeaturesEnabled,
+    exportReplay,
     importReplayFile,
     importLogFile,
     importPairValidation,
@@ -238,6 +239,17 @@ export const DashboardView: React.FC = () => {
               onEditNote={(hash, note) => setPendingNote({ hash, note })}
               onDeleteImported={(hashes, targetLabel) =>
                 setPendingDelete({ hashes, targetLabel })
+              }
+              canExport={experimentalFeaturesEnabled}
+              onExportSession={(sessionReplay) =>
+                exportReplay({
+                  hash: sessionReplay.hash,
+                  replayName: sessionReplay.replayName,
+                  sceneDesc: sessionReplay.metadata.sceneDesc,
+                  session: sessionReplay.metadata.session,
+                  timestamp: sessionReplay.timestamp,
+                  logDataFileName: sessionReplay.logDataFileName,
+                })
               }
             />
           ))}

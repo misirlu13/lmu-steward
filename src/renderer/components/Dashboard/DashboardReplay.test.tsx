@@ -18,6 +18,7 @@ const buildReplay = (
     timestamp: 1000,
     metadata: { session, sceneDesc: 'SEBRINGWEC' },
     logData: { GameVersion: '1.0' },
+    logDataFileName: 'race.xml',
     ...overrides,
   }) as unknown as LMUReplay;
 
@@ -33,6 +34,7 @@ describe('DashboardReplay archive actions', () => {
     const onRestore = jest.fn();
     const onEditNote = jest.fn();
     const onDeleteImported = jest.fn();
+    const onExportSession = jest.fn();
 
     render(
       <DashboardReplay
@@ -42,10 +44,18 @@ describe('DashboardReplay archive actions', () => {
         onRestore={onRestore}
         onEditNote={onEditNote}
         onDeleteImported={onDeleteImported}
+        onExportSession={onExportSession}
+        canExport
       />,
     );
 
-    return { onArchive, onRestore, onEditNote, onDeleteImported };
+    return {
+      onArchive,
+      onRestore,
+      onEditNote,
+      onDeleteImported,
+      onExportSession,
+    };
   };
 
   it('archives a single session from its row menu', () => {
@@ -119,5 +129,35 @@ describe('DashboardReplay archive actions', () => {
     setup('archived', [buildReplay('race-hash', 'RACE', { archived: true })]);
 
     expect(screen.getByText('View Replay')).toBeInTheDocument();
+  });
+
+  /**
+   * Export is per session rather than per weekend: one replay and one result
+   * log is a pairing with nothing to resolve. A weekend can hold several races
+   * from restarts, and those are only distinguishable because each replay
+   * already carries its own log.
+   */
+  it('exports the session the row belongs to', () => {
+    const { onExportSession } = setup('active');
+
+    fireEvent.click(screen.getByLabelText('Actions for Race'));
+    fireEvent.click(screen.getByText('Export session'));
+
+    expect(onExportSession).toHaveBeenCalledTimes(1);
+    expect(onExportSession.mock.calls[0][0]).toMatchObject({
+      hash: 'race-hash',
+    });
+  });
+
+  it('offers no export when the replay has no result log', () => {
+    setup('active', [
+      buildReplay('race-hash', 'RACE', { logDataFileName: '' }),
+    ]);
+
+    fireEvent.click(screen.getByLabelText('Actions for Race'));
+
+    expect(
+      screen.getByText('Export session (no result log)').closest('li'),
+    ).toHaveAttribute('aria-disabled', 'true');
   });
 });

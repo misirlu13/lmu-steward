@@ -38,6 +38,7 @@ import ListItemText from '@mui/material/ListItemText';
 import { useNavigate } from 'react-router-dom';
 import { getSessionIncidentScore } from '@/renderer/utils/incidentScore';
 import DeleteForeverIcon from '@mui/icons-material/DeleteForever';
+import FileUploadIcon from '@mui/icons-material/FileUpload';
 import { SessionIncidentSeverityLabel } from '../IncidentSeverityLabels/SessionIncidentSeverityLabel';
 import {
   getSessionCarClasses,
@@ -55,6 +56,8 @@ interface DashboardReplayProps {
   onRestore: (hashes: string[]) => void;
   onEditNote: (hash: string, note: string) => void;
   onDeleteImported: (hashes: string[], targetLabel: string) => void;
+  onExportSession: (replay: LMUReplay) => void;
+  canExport: boolean;
 }
 
 interface DashboardReplayTableRow {
@@ -64,6 +67,11 @@ interface DashboardReplayTableRow {
   duration: string;
   sessionMetaData: SessionMetaData;
   archiveNote: string;
+  /**
+   * The replay this row was built from, so row actions can work on it without
+   * looking it back up out of the group by hash.
+   */
+  replay: LMUReplay;
 }
 
 const sessionOrder: Record<string, number> = {
@@ -94,6 +102,8 @@ export const DashboardReplay: React.FC<DashboardReplayProps> = ({
   onRestore,
   onEditNote,
   onDeleteImported,
+  onExportSession,
+  canExport,
 }) => {
   const replay = replayGroup[0];
   const isArchivedView = dashboardView === 'archived';
@@ -138,6 +148,7 @@ export const DashboardReplay: React.FC<DashboardReplayProps> = ({
         duration: getSessionDuration(groupReplay),
         sessionMetaData: getSessionMetaData(groupReplay),
         archiveNote: groupReplay.archiveNote ?? '',
+        replay: groupReplay,
       }));
 
     setTableRows(rows);
@@ -775,6 +786,32 @@ export const DashboardReplay: React.FC<DashboardReplayProps> = ({
                   <ListItemText>Archive session</ListItemText>
                 </MenuItem>,
               ]}
+        {/*
+          Offered in every view, and per session rather than per weekend: one
+          replay and one result log is a pairing with nothing to resolve. A
+          weekend can hold several races from restarts, which are only telling
+          apart at all because each replay already knows its own log.
+        */}
+        {canExport ? (
+          <MenuItem
+            disabled={!rowMenu?.row.replay.logDataFileName}
+            onClick={() => {
+              closeRowMenu();
+              if (rowMenu) {
+                onExportSession(rowMenu.row.replay);
+              }
+            }}
+          >
+            <ListItemIcon>
+              <FileUploadIcon fontSize="small" />
+            </ListItemIcon>
+            <ListItemText>
+              {rowMenu?.row.replay.logDataFileName
+                ? 'Export session'
+                : 'Export session (no result log)'}
+            </ListItemText>
+          </MenuItem>
+        ) : null}
       </Menu>
     </Box>
   );

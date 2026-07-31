@@ -19,7 +19,15 @@ import { getTrackAliases, tracksLikelyMatch } from './track-matching';
 
 const FIRST_RUN_GET_REPLAYS_DELAY_MS = 3000;
 const DEFAULT_REPLAY_LOG_MATCH_THRESHOLD_MS = 120_000;
-const REPLAY_CACHE_SCHEMA_VERSION = 1;
+/*
+ * Bumped to 2 so the restarted-race fix reaches replays that are already
+ * cached. Sync skips any replay it has seen by hash, so without this an
+ * existing library would keep the pairings it was given before the fix — and
+ * for a restarted weekend those point three of four races at another race's
+ * results. Archive state and imported replays live outside this cache and are
+ * unaffected; the cost is one resync.
+ */
+export const REPLAY_CACHE_SCHEMA_VERSION = 2;
 
 const delay = (ms: number) =>
   new Promise<void>((resolve) => {

@@ -20,10 +20,13 @@ describe('main/replay startup schema enforcement', () => {
       }),
     }));
 
-    await import('./replay');
+    const { REPLAY_CACHE_SCHEMA_VERSION } = await import('./replay');
 
     expect(setMock).toHaveBeenCalledWith('replays', {});
-    expect(setMock).toHaveBeenCalledWith('replayCacheSchemaVersion', 1);
+    expect(setMock).toHaveBeenCalledWith(
+      'replayCacheSchemaVersion',
+      REPLAY_CACHE_SCHEMA_VERSION,
+    );
   });
 
   it('leaves archived replays untouched when the replay cache is cleared', async () => {
@@ -70,14 +73,22 @@ describe('main/replay startup schema enforcement', () => {
     expect(decorated.archived).toBe(true);
   });
 
+  /*
+   * Reads the version through the module rather than hardcoding it, so bumping
+   * the schema does not require editing this test — the point is that a
+   * matching version is left alone, not what the number happens to be.
+   */
   it('does not clear replay cache when schema already matches', async () => {
     const setMock = jest.fn();
+    const { REPLAY_CACHE_SCHEMA_VERSION } = await import('./replay');
+
+    jest.resetModules();
 
     jest.doMock('../storage/local-data-store', () => ({
       getMainPersistentStore: () => ({
         get: (key: string) => {
           if (key === 'replayCacheSchemaVersion') {
-            return 1;
+            return REPLAY_CACHE_SCHEMA_VERSION;
           }
 
           return undefined;
