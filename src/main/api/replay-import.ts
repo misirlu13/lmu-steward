@@ -396,6 +396,15 @@ export interface ImportReplaysArgs {
   replayDirectory: string;
   logDirectory: string;
   imported: ImportedReplayStore;
+  /**
+   * Reads the log's session summary — incident, penalty and track-limit counts,
+   * duration, car classes. The dashboard renders every replay from this, so an
+   * import without it shows a card with nothing on it.
+   *
+   * Injected rather than imported so this module stays free of the replay
+   * store, which the parser's module initialises on load.
+   */
+  parseLogSummary?: (filePath: string) => Promise<unknown>;
   onProgress?: (progress: { processed: number; total: number }) => void;
 }
 
@@ -420,6 +429,7 @@ export const importReplays = async ({
   replayDirectory,
   logDirectory,
   imported,
+  parseLogSummary,
   onProgress,
 }: ImportReplaysArgs): Promise<ImportReplaysResult> => {
   const rowsById = new Map(rows.map((row) => [row.id, row]));
@@ -515,7 +525,9 @@ export const importReplays = async ({
         vcrFingerprint: await fingerprintFile(destinationVcrPath),
         logFingerprint: await fingerprintFile(destinationLogPath),
         importedAt: Date.now(),
-        logData: null,
+        logData: parseLogSummary
+          ? ((await parseLogSummary(destinationLogPath)) ?? null)
+          : null,
         origin: {
           trackFolder: row.trailer.trackFolder,
           trackVersion: row.trailer.trackVersion,

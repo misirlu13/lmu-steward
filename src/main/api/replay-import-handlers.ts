@@ -16,6 +16,7 @@ import {
   scanImportSource,
 } from './replay-import';
 import { readVcrTrailer } from './vcr-metadata';
+import { parseLogXml } from './replay';
 import { validateImportPair } from './replay-import-match';
 import { getTrackAliases } from './track-matching';
 
@@ -26,6 +27,21 @@ const EXPORT_MANIFEST_NAME = 'lmu-steward-export.json';
 
 const stripVcrExtension = (fileName: string): string =>
   fileName.replace(/\.vcr$/i, '');
+
+/**
+ * The session summary the dashboard renders from: incident, penalty and
+ * track-limit counts, duration and car classes. Same shape replay sync stores
+ * for a replay the user recorded themselves, so imported replays render through
+ * exactly the same code.
+ */
+const readLogSummary = async (filePath: string): Promise<unknown> => {
+  try {
+    const parsed = await parseLogXml(filePath);
+    return parsed?.rFactorXML?.RaceResults ?? null;
+  } catch {
+    return null;
+  }
+};
 
 const toErrorMessage = (error: unknown): string => {
   if (error instanceof Error) {
@@ -71,11 +87,49 @@ const resolveImportDirectories = async (): Promise<{
   };
 };
 
+/**
+ * Fills in the session summary for records imported before it was stored.
+ *
+ * Those replays render an empty card — no incidents, no penalties, no duration
+ * — because the dashboard reads all of it from logData. Reparsing the log they
+ * already point at fixes them in place, rather than asking the user to delete
+ * and import again.
+ */
+const backfillLogSummaries = async (
+  imported: ImportedReplayStore,
+): Promise<{ imported: ImportedReplayStore; changed: boolean }> => {
+  const next: ImportedReplayStore = { ...imported };
+  let changed = false;
+
+  for (const [hash, record] of Object.entries(next)) {
+    if (record.logData || !record.logPath) {
+      continue;
+    }
+
+    // eslint-disable-next-line no-await-in-loop
+    const logData = await readLogSummary(record.logPath);
+
+    if (logData) {
+      next[hash] = { ...record, logData };
+      changed = true;
+    }
+  }
+
+  return { imported: next, changed };
+};
+
 export const getImportedReplays = async (event: Electron.IpcMainEvent) => {
   try {
+    const { imported, changed } =
+      await backfillLogSummaries(readImportedStore());
+
+    if (changed) {
+      writeImportedStore(imported);
+    }
+
     event.reply(CONSTANTS.API.GET_IMPORTED_REPLAYS, {
       status: 'success',
-      data: Object.values(readImportedStore()).sort(
+      data: Object.values(imported).sort(
         (a, b) => Number(b.timestamp ?? 0) - Number(a.timestamp ?? 0),
       ),
     });
@@ -151,6 +205,7 @@ export const postImportReplays = async (
       replayDirectory,
       logDirectory,
       imported: readImportedStore(),
+      parseLogSummary: readLogSummary,
       onProgress: (progress) => {
         event.reply(CONSTANTS.API.PUSH_IMPORT_PROGRESS, {
           status: 'in-progress',
@@ -630,6 +685,7 @@ export const postImportReplayPair = async (
       replayDirectory,
       logDirectory,
       imported: readImportedStore(),
+      parseLogSummary: readLogSummary,
     });
 
     const outcome = outcomes[0];
