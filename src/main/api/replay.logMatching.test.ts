@@ -16,7 +16,7 @@
 /* eslint-disable import/first */
 const replayStoreData: Record<string, unknown> = { replays: {} };
 
-import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'fs';
+import { existsSync, mkdtempSync, rmSync, utimesSync, writeFileSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { LMUReplay, SessionType } from '@types';
@@ -155,6 +155,76 @@ const SYNTHETIC_LOGS: SyntheticLog[] = [
     venue: MONZA,
   },
 ];
+
+/*
+ * A restarted race produces several sessions that are identical to everything
+ * matching normally looks at: same event DateTime, same track, same session
+ * type, same grid. Taken from a real weekend where four races shared one event.
+ */
+const RESTART_EVENT = 1785469409;
+const RESTART_FLUSH_TIMES = [1785470990, 1785471040, 1785471094, 1785471361];
+
+describe('main/replay restarted races', () => {
+  let logDir: string;
+  let replayDir: string;
+
+  beforeAll(() => {
+    logDir = mkdtempSync(join(tmpdir(), 'lmu-steward-restart-logs-'));
+    replayDir = mkdtempSync(join(tmpdir(), 'lmu-steward-restart-replays-'));
+
+    RESTART_FLUSH_TIMES.forEach((flushedAt, index) => {
+      const logPath = join(
+        logDir,
+        `2026_07_30_23_0${index}_00-1${index}R1.xml`,
+      );
+      writeFileSync(
+        logPath,
+        buildLogXml({
+          fileName: '',
+          eventDateTime: RESTART_EVENT,
+          sessionDateTime: flushedAt - 600,
+          sessionTag: 'Race',
+          venue: 'Daytona International Speedway',
+        }),
+        'utf-8',
+      );
+      // The log is written the moment the replay is flushed.
+      utimesSync(logPath, flushedAt, flushedAt);
+
+      const replayPath = join(replayDir, `Daytona R1 ${index + 2}.Vcr`);
+      writeFileSync(replayPath, Buffer.from('replay'));
+      utimesSync(replayPath, flushedAt, flushedAt);
+    });
+  });
+
+  afterAll(() => {
+    rmSync(logDir, { recursive: true, force: true });
+    rmSync(replayDir, { recursive: true, force: true });
+  });
+
+  /**
+   * Every one of these shares a creation time, so the event DateTime cannot
+   * separate them. Before the flush-time tiebreak they all resolved to whichever
+   * log sorted last, meaning three of four races showed a different race's
+   * incidents, laps and standings.
+   */
+  it.each([0, 1, 2, 3])('matches restart %i to its own log', async (index) => {
+    const replay = {
+      hash: 'restart',
+      metadata: { sceneDesc: 'DAYTONA', session: 'RACE' },
+      replayName: `Daytona R1 ${index + 2}`,
+      replayDirectory: replayDir,
+      size: 0,
+      timestamp: RESTART_EVENT,
+    } as unknown as LMUReplay;
+
+    const result = await findBestLogFile(logDir, replay, parseLogXml);
+
+    expect(result?.logDataFileName).toBe(
+      `2026_07_30_23_0${index}_00-1${index}R1.xml`,
+    );
+  });
+});
 
 describe('main/replay log matching', () => {
   let logDir: string;

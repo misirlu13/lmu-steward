@@ -9,7 +9,7 @@ import {
   SessionType,
 } from '@types';
 import { createReadStream } from 'fs';
-import { readdir, readFile } from 'fs/promises';
+import { readdir, readFile, stat } from 'fs/promises';
 import { resolve as resolvePath, join } from 'path';
 import { parseStringPromise } from 'xml2js';
 import { generateReplayHash } from '../util';
@@ -1083,6 +1083,22 @@ export const getLogDataSessionType = (
   return null;
 };
 
+/**
+ * File modification time, or null when it cannot be read.
+ *
+ * Deliberately forgiving. This only refines a tiebreak, so a filesystem that
+ * will not answer should fall back to the previous ordering rather than fail
+ * the whole match.
+ */
+const safeModifiedAt = async (filePath: string): Promise<number | null> => {
+  try {
+    const { mtimeMs } = await stat(filePath);
+    return Number.isFinite(mtimeMs) ? mtimeMs / 1000 : null;
+  } catch {
+    return null;
+  }
+};
+
 interface LogFileData {
   logDataFileName: string | null;
   logData: ParsedLogXml | null;
@@ -1121,6 +1137,21 @@ export const findBestLogFile = async (
       replay.replayName,
     );
 
+    /*
+     * When a race is restarted, the weekend produces several sessions that are
+     * identical to everything else here: same event DateTime, same track, same
+     * session type, same grid. The only thing that separates them is when each
+     * one finished — and a replay is flushed at the same moment its result log
+     * is written, to within a second.
+     *
+     * Compared as absolute times rather than by parsing the log's file name,
+     * which is local time and would need the recording machine's offset to be
+     * meaningful.
+     */
+    const replayFlushedAt = await safeModifiedAt(
+      join(replay.replayDirectory ?? '', `${replay.replayName}.Vcr`),
+    );
+
     const logSummaries = (
       await Promise.allSettled(
         files.map(async (file) => {
@@ -1135,6 +1166,7 @@ export const findBestLogFile = async (
             trackVenue: raceResults?.TrackVenue || '',
             trackCourse: raceResults?.TrackCourse || '',
             trackEvent: raceResults?.TrackEvent || '',
+            writtenAt: await safeModifiedAt(join(logDir, file)),
             fileData,
           };
         }),
@@ -1189,6 +1221,17 @@ export const findBestLogFile = async (
       .sort((a, b) => {
         if (a.trackMatch !== b.trackMatch) return b.trackMatch ? 1 : -1;
         if (a.diffSec !== b.diffSec) return a.diffSec - b.diffSec;
+        if (
+          replayFlushedAt !== null &&
+          a.writtenAt !== null &&
+          b.writtenAt !== null
+        ) {
+          const aFlushDelta = Math.abs(replayFlushedAt - a.writtenAt);
+          const bFlushDelta = Math.abs(replayFlushedAt - b.writtenAt);
+          if (aFlushDelta !== bFlushDelta) {
+            return aFlushDelta - bFlushDelta;
+          }
+        }
         if (
           a.fileNameTs !== null &&
           b.fileNameTs !== null &&

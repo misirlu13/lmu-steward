@@ -56,6 +56,8 @@ jest.mock('fs', () => ({
 jest.mock('fs/promises', () => ({
   readdir: jest.fn(),
   readFile: jest.fn(),
+  // Only refines a tiebreak; rejecting here exercises the fallback ordering.
+  stat: jest.fn().mockRejectedValue(new Error('stat unavailable')),
 }));
 
 jest.mock('xml2js', () => ({
