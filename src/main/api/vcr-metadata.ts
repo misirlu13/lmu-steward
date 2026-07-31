@@ -370,6 +370,23 @@ const parseMetadataBlob = (blob: string): VcrEventMetadata | null => {
 };
 
 /**
+ * Whether a string looks like the metadata blob, without judging its contents.
+ *
+ * Kept separate from parsing it: locating the trailer and being able to use it
+ * are different questions. If a future build adds a session type this app does
+ * not know, the trailer is still exactly where it should be — and saying "this
+ * replay is from a newer version" is far more use than "no trailer found".
+ */
+const looksLikeMetadataBlob = (value: string): boolean => {
+  try {
+    const parsed = JSON.parse(value) as Record<string, unknown>;
+    return String(parsed?.sceneDesc ?? '').trim().length > 0;
+  } catch {
+    return false;
+  }
+};
+
+/**
  * Resolves where the trailer starts.
  *
  * The header pointer is authoritative and correct in both known formats. The
@@ -389,7 +406,7 @@ const resolveTrailerOffset = (
     pointerWithinTail + 4 < tail.length
   ) {
     const field = readLengthPrefixedString(tail, pointerWithinTail);
-    if (field && parseMetadataBlob(field.value)) {
+    if (field && looksLikeMetadataBlob(field.value)) {
       return pointerWithinTail;
     }
   }
@@ -405,7 +422,7 @@ const resolveTrailerOffset = (
     const braceIndex = tail.lastIndexOf(0x7b, keyIndex);
     if (braceIndex >= 4) {
       const field = readLengthPrefixedString(tail, braceIndex - 4);
-      if (field && parseMetadataBlob(field.value)) {
+      if (field && looksLikeMetadataBlob(field.value)) {
         return braceIndex - 4;
       }
     }
@@ -414,14 +431,41 @@ const resolveTrailerOffset = (
   }
 };
 
+/** In-progress recordings are named `_vcr<digits>.tmp` while LMU is writing. */
+const TEMP_RECORDING_NAME = /(^|[\\/])_vcr\d+\.tmp$/i;
+
+export type VcrReadFailureReason =
+  | 'not-a-replay'
+  | 'still-recording'
+  | 'incomplete'
+  | 'unsupported-format'
+  | 'unreadable';
+
+export interface VcrReadFailure {
+  ok: false;
+  reason: VcrReadFailureReason;
+  /** Written for the person who chose the file, not for a log. */
+  message: string;
+}
+
+export type VcrReadResult = { ok: true; trailer: VcrTrailer } | VcrReadFailure;
+
+const failure = (
+  reason: VcrReadFailureReason,
+  message: string,
+): VcrReadFailure => ({ ok: false, reason, message });
+
 /**
- * Reads a replay's metadata trailer, or null when the file is not a readable
- * replay — a partial `_vcrNNNNNNN.tmp` recording, a truncated download, or
- * anything else that is not actually a .Vcr.
+ * Reads a replay's metadata trailer, reporting why when it cannot.
+ *
+ * The distinction matters to whoever picked the file. "Still recording",
+ * "did not finish copying" and "newer than this app understands" each point at
+ * a different thing to do about it, and collapsing them into one message sends
+ * people looking in the wrong place.
  */
-export const readVcrTrailer = async (
+export const readVcrTrailerResult = async (
   filePath: string,
-): Promise<VcrTrailer | null> => {
+): Promise<VcrReadResult> => {
   let handle;
 
   try {
@@ -429,7 +473,10 @@ export const readVcrTrailer = async (
     const { size } = await handle.stat();
 
     if (size < HEADER_READ_LENGTH) {
-      return null;
+      return failure(
+        'not-a-replay',
+        'This file is too small to be an LMU replay.',
+      );
     }
 
     const header = Buffer.alloc(HEADER_READ_LENGTH);
@@ -438,7 +485,7 @@ export const readVcrTrailer = async (
     if (
       !header.subarray(MAGIC_OFFSET, MAGIC_OFFSET + MAGIC.length).equals(MAGIC)
     ) {
-      return null;
+      return failure('not-a-replay', 'This file is not an LMU replay.');
     }
 
     const pointer = header.readUInt32LE(TRAILER_POINTER_OFFSET);
@@ -450,7 +497,20 @@ export const readVcrTrailer = async (
 
     const trailerOffset = resolveTrailerOffset(tail, tailStart, pointer);
     if (trailerOffset < 0) {
-      return null;
+      /*
+       * LMU writes the trailer when a session ends, so a recording still in
+       * progress has none. A file that did not finish copying looks the same
+       * from here — the name is the only thing that separates them.
+       */
+      return TEMP_RECORDING_NAME.test(filePath)
+        ? failure(
+            'still-recording',
+            'This session is still being recorded. LMU writes a replay’s details when the session ends.',
+          )
+        : failure(
+            'incomplete',
+            'This replay is missing its details, which usually means it did not finish copying or downloading. Try transferring it again.',
+          );
     }
 
     const fields: string[] = [];
@@ -467,12 +527,18 @@ export const readVcrTrailer = async (
     }
 
     if (fields.length < TRAILER_FIELD_COUNT) {
-      return null;
+      return failure(
+        'incomplete',
+        'This replay’s details are cut short, which usually means it did not finish copying or downloading. Try transferring it again.',
+      );
     }
 
     const metadata = parseMetadataBlob(fields[0]);
     if (!metadata) {
-      return null;
+      return failure(
+        'unsupported-format',
+        'This replay’s format is not recognised. It may come from a newer version of LMU than this app supports.',
+      );
     }
 
     const [
@@ -485,7 +551,7 @@ export const readVcrTrailer = async (
       originInstallPath,
     ] = fields;
 
-    return {
+    const trailer: VcrTrailer = {
       sceneDesc: metadata.sceneDesc,
       session: metadata.session,
       eventTitle: metadata.eventTitle,
@@ -499,9 +565,25 @@ export const readVcrTrailer = async (
       originInstallPath,
       drivers: readDrivers(tail, cursor),
     };
+
+    return { ok: true, trailer };
   } catch {
-    return null;
+    return failure(
+      'unreadable',
+      'This file could not be opened. It may be in use by another program, or you may not have permission to read it.',
+    );
   } finally {
     await handle?.close();
   }
+};
+
+/**
+ * The trailer, or null when it cannot be read. For callers that only need to
+ * skip a file rather than explain it — the folder scan, mainly.
+ */
+export const readVcrTrailer = async (
+  filePath: string,
+): Promise<VcrTrailer | null> => {
+  const result = await readVcrTrailerResult(filePath);
+  return result.ok ? result.trailer : null;
 };

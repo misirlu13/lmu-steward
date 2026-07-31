@@ -15,7 +15,7 @@ import {
   readLogCandidate,
   scanImportSource,
 } from './replay-import';
-import { readVcrTrailer } from './vcr-metadata';
+import { readVcrTrailerResult } from './vcr-metadata';
 import { parseLogXml } from './replay';
 import { validateImportPair } from './replay-import-match';
 import { getTrackAliases } from './track-matching';
@@ -525,14 +525,15 @@ export const postSelectImportFile = async (
     const filePath = response.filePaths[0];
 
     if (isReplay) {
-      const trailer = await readVcrTrailer(filePath);
+      const result = await readVcrTrailerResult(filePath);
 
-      if (!trailer) {
-        throw new Error(
-          'That file is not a readable LMU replay. An in-progress recording cannot be imported.',
-        );
+      // Reported as-is: the reader knows which of several very different
+      // problems this is, and only it can say.
+      if (!result.ok) {
+        throw new Error(result.message);
       }
 
+      const { trailer } = result;
       const { size } = await stat(filePath);
 
       event.reply(CONSTANTS.API.POST_SELECT_IMPORT_FILE, {
@@ -587,11 +588,13 @@ export interface ImportPairRequest {
 }
 
 const buildPairValidation = async ({ vcrPath, logPath }: ImportPairRequest) => {
-  const trailer = await readVcrTrailer(vcrPath);
+  const trailerResult = await readVcrTrailerResult(vcrPath);
 
-  if (!trailer) {
-    throw new Error('That replay file could not be read.');
+  if (!trailerResult.ok) {
+    throw new Error(trailerResult.message);
   }
+
+  const { trailer } = trailerResult;
 
   const candidate = await readLogCandidate(logPath);
 

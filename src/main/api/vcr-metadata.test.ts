@@ -13,7 +13,7 @@ import {
 } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
-import { readVcrTrailer } from './vcr-metadata';
+import { readVcrTrailer, readVcrTrailerResult } from './vcr-metadata';
 
 const MAGIC_OFFSET = 0x2c;
 const POINTER_OFFSET = 0x35;
@@ -475,5 +475,140 @@ describeWithRealFixtures('main/vcr metadata against real replays', () => {
     );
 
     expect(installPaths.size).toBeGreaterThan(1);
+  });
+});
+
+/*
+ * Six different situations used to arrive as one message naming only the
+ * rarest of them, which sent real debugging in the wrong direction twice.
+ * Each of these is something the person who picked the file can act on, and
+ * the action differs: wait, copy it again, or update the app.
+ */
+describe('main/vcr metadata failure reasons', () => {
+  let dir: string;
+
+  beforeAll(() => {
+    dir = mkdtempSync(join(tmpdir(), 'lmu-steward-vcr-fail-'));
+  });
+
+  afterAll(() => {
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  const writeRaw = (fileName: string, contents: Buffer): string => {
+    const filePath = join(dir, fileName);
+    writeFileSync(filePath, contents);
+    return filePath;
+  };
+
+  const headerOnly = (pointer: number): Buffer => {
+    const header = Buffer.alloc(HEADER_LENGTH);
+    header[MAGIC_OFFSET] = 0x0a;
+    header.write('IRSR', MAGIC_OFFSET + 1, 'latin1');
+    header.writeUInt32LE(pointer, POINTER_OFFSET);
+    return header;
+  };
+
+  it('reports a file that is not a replay', async () => {
+    const result = await readVcrTrailerResult(
+      writeRaw('notes.txt', Buffer.from('just some text, not a replay at all')),
+    );
+
+    expect(result).toMatchObject({ ok: false, reason: 'not-a-replay' });
+  });
+
+  it('reports a recording that is still in progress', async () => {
+    const result = await readVcrTrailerResult(
+      writeRaw(
+        '_vcr7239104.tmp',
+        Buffer.concat([headerOnly(0), Buffer.alloc(4096)]),
+      ),
+    );
+
+    expect(result).toMatchObject({ ok: false, reason: 'still-recording' });
+    expect((result as { message: string }).message).toMatch(
+      /still being recorded/i,
+    );
+  });
+
+  /**
+   * Identical to an in-progress recording from inside the file — the trailer is
+   * simply absent. Only the name separates them, so a .Vcr gets the advice that
+   * actually helps: copy it again.
+   */
+  it('reports a replay whose trailer never arrived', async () => {
+    const result = await readVcrTrailerResult(
+      writeRaw(
+        'Half Copied R1 1.Vcr',
+        Buffer.concat([headerOnly(0), Buffer.alloc(4096)]),
+      ),
+    );
+
+    expect(result).toMatchObject({ ok: false, reason: 'incomplete' });
+    expect((result as { message: string }).message).toMatch(/finish copying/i);
+  });
+
+  it('reports a replay whose trailer is cut short', async () => {
+    const partial = Buffer.concat([
+      lengthPrefixed(
+        JSON.stringify({ sceneDesc: 'MONZAWEC', session: 'RACE' }),
+      ),
+      lengthPrefixed('MONZAWEC.SCN'),
+    ]);
+    const header = headerOnly(HEADER_LENGTH);
+
+    const result = await readVcrTrailerResult(
+      writeRaw('Truncated R1 1.Vcr', Buffer.concat([header, partial])),
+    );
+
+    expect(result).toMatchObject({ ok: false, reason: 'incomplete' });
+  });
+
+  it('reports a metadata blob it does not understand', async () => {
+    const trailer = Buffer.concat([
+      // Scene is where it should be; the session type is one this app has
+      // never heard of, which is what a newer LMU build would look like.
+      lengthPrefixed(
+        JSON.stringify({ sceneDesc: 'MONZAWEC', session: 'WARMUP' }),
+      ),
+      lengthPrefixed('MONZAWEC.SCN'),
+      lengthPrefixed('MONZAWEC.AIW'),
+      lengthPrefixed('Monza_2023'),
+      lengthPrefixed('1.27'),
+      lengthPrefixed('abc'),
+      lengthPrefixed('C:/LMU/Installed/Locations/Monza_2023/1.27/'),
+    ]);
+
+    const result = await readVcrTrailerResult(
+      writeRaw(
+        'Future R1 1.Vcr',
+        Buffer.concat([headerOnly(HEADER_LENGTH), trailer]),
+      ),
+    );
+
+    expect(result).toMatchObject({ ok: false, reason: 'unsupported-format' });
+    expect((result as { message: string }).message).toMatch(/newer version/i);
+  });
+
+  it('reports a file it cannot open', async () => {
+    const result = await readVcrTrailerResult(join(dir, 'does-not-exist.Vcr'));
+
+    expect(result).toMatchObject({ ok: false, reason: 'unreadable' });
+  });
+
+  it('still returns the trailer for a readable replay', async () => {
+    const result = await readVcrTrailerResult(
+      writeRaw(
+        'good.Vcr',
+        buildVcr({ sceneDesc: 'MONZAWEC', session: 'RACE' }),
+      ),
+    );
+
+    expect(result.ok).toBe(true);
+    expect(result.ok && result.trailer.sceneDesc).toBe('MONZAWEC');
+  });
+
+  it('keeps readVcrTrailer null for callers that only need to skip', async () => {
+    expect(await readVcrTrailer(join(dir, 'does-not-exist.Vcr'))).toBeNull();
   });
 });
