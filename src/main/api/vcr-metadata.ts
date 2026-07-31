@@ -15,9 +15,17 @@ import { SessionType } from '@types';
  *   0x2c  magic "\nIRSR"
  *   0x35  uint32le, absolute offset of the metadata trailer
  *
+ * Two header formats are known, distinguished by the byte at 0x31. Both share
+ * this trailer layout; they differ only in the first field. Format 7 carries
+ * just the scene and session, while format 8 wraps them in an object naming the
+ * official event:
+ *
+ *   {"eventId":"…","eventTitle":"LMGT3 Sprint Cup","eventType":"daily",
+ *    "sceneDesc":"LAGUNASECA","seriesId":"…","session":"RACE","splitNo":3}
+ *
  * The trailer is a run of uint32le length-prefixed strings:
  *
- *   {"sceneDesc":"MONZAWEC","session":"RACE"}
+ *   {"sceneDesc":"MONZAWEC","session":"RACE"}   (format 7)
  *   MONZAWEC.SCN
  *   MONZAWEC.AIW
  *   Monza_2023          track folder
@@ -50,7 +58,7 @@ const HEADER_READ_LENGTH = 0x40;
 /** The trailer sits within a few KB of EOF; this is generous headroom. */
 const TRAILER_SCAN_LENGTH = 8 * 1024 * 1024;
 
-const METADATA_BLOB_PREFIX = '{"sceneDesc"';
+const METADATA_BLOB_KEY = '"sceneDesc"';
 const TRAILER_FIELD_COUNT = 7;
 
 /** A corrupt length prefix must not turn into a multi-GB allocation. */
@@ -80,6 +88,13 @@ export interface VcrDriver {
 export interface VcrTrailer {
   sceneDesc: string;
   session: SessionType;
+  /**
+   * Present on format 8 replays from official events. A steward reviewing a
+   * hand-off can see which event and split it came from.
+   */
+  eventTitle?: string;
+  eventType?: string;
+  splitNo?: number;
   trackScene: string;
   trackAiw: string;
   trackFolder: string;
@@ -274,14 +289,28 @@ const readDrivers = (buffer: Buffer, fieldsEnd: number): VcrDriver[] => {
   return [];
 };
 
-const parseMetadataBlob = (
-  blob: string,
-): { sceneDesc: string; session: SessionType } | null => {
+export interface VcrEventMetadata {
+  sceneDesc: string;
+  session: SessionType;
+  /** Present on official-event replays: "LMGT3 Sprint Cup", "daily", split 3. */
+  eventTitle?: string;
+  eventType?: string;
+  splitNo?: number;
+}
+
+/**
+ * Reads the metadata blob.
+ *
+ * Keys are looked up rather than the string being pattern-matched, because the
+ * blob's shape has already changed once. Format 7 carries only
+ * `{"sceneDesc":…,"session":…}`; format 8 wraps the same two values in a much
+ * larger object describing the official event, with `sceneDesc` no longer
+ * first. Anything carrying both keys is accepted, whatever else is alongside
+ * them and in whatever order.
+ */
+const parseMetadataBlob = (blob: string): VcrEventMetadata | null => {
   try {
-    const parsed = JSON.parse(blob) as {
-      sceneDesc?: unknown;
-      session?: unknown;
-    };
+    const parsed = JSON.parse(blob) as Record<string, unknown>;
     const sceneDesc = String(parsed.sceneDesc ?? '').trim();
     const session = String(parsed.session ?? '')
       .trim()
@@ -291,16 +320,27 @@ const parseMetadataBlob = (
       return null;
     }
 
-    return { sceneDesc, session: session as SessionType };
+    const splitNo = Number(parsed.splitNo);
+
+    return {
+      sceneDesc,
+      session: session as SessionType,
+      eventTitle: parsed.eventTitle ? String(parsed.eventTitle) : undefined,
+      eventType: parsed.eventType ? String(parsed.eventType) : undefined,
+      splitNo: Number.isFinite(splitNo) ? splitNo : undefined,
+    };
   } catch {
     return null;
   }
 };
 
 /**
- * Resolves where the trailer starts. The header pointer is authoritative, but
- * falls back to scanning for the metadata blob so a replay whose header layout
- * shifts is still readable.
+ * Resolves where the trailer starts.
+ *
+ * The header pointer is authoritative and correct in both known formats. The
+ * scan behind it looks for the `"sceneDesc"` key rather than the start of the
+ * blob, because format 8 opens with `{"eventId":…` — anchoring on the opening
+ * brace would only ever have found format 7.
  */
 const resolveTrailerOffset = (
   tail: Buffer,
@@ -314,13 +354,29 @@ const resolveTrailerOffset = (
     pointerWithinTail + 4 < tail.length
   ) {
     const field = readLengthPrefixedString(tail, pointerWithinTail);
-    if (field?.value.startsWith(METADATA_BLOB_PREFIX)) {
+    if (field && parseMetadataBlob(field.value)) {
       return pointerWithinTail;
     }
   }
 
-  const blobIndex = tail.indexOf(METADATA_BLOB_PREFIX, 0, 'latin1');
-  return blobIndex >= 4 ? blobIndex - 4 : -1;
+  let searchFrom = 0;
+  for (;;) {
+    const keyIndex = tail.indexOf(METADATA_BLOB_KEY, searchFrom, 'latin1');
+    if (keyIndex === -1) {
+      return -1;
+    }
+
+    // Walk back to the object's opening brace, then to its length prefix.
+    const braceIndex = tail.lastIndexOf(0x7b, keyIndex);
+    if (braceIndex >= 4) {
+      const field = readLengthPrefixedString(tail, braceIndex - 4);
+      if (field && parseMetadataBlob(field.value)) {
+        return braceIndex - 4;
+      }
+    }
+
+    searchFrom = keyIndex + METADATA_BLOB_KEY.length;
+  }
 };
 
 /**
@@ -397,6 +453,9 @@ export const readVcrTrailer = async (
     return {
       sceneDesc: metadata.sceneDesc,
       session: metadata.session,
+      eventTitle: metadata.eventTitle,
+      eventType: metadata.eventType,
+      splitNo: metadata.splitNo,
       trackScene,
       trackAiw,
       trackFolder,

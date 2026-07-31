@@ -42,6 +42,11 @@ interface SyntheticDriver {
 interface SyntheticReplay {
   sceneDesc: string;
   session: string;
+  /**
+   * Format 8 wraps the scene and session in a larger object describing the
+   * official event, with sceneDesc no longer the first key.
+   */
+  officialEvent?: boolean;
   trackFolder?: string;
   trackVersion?: string;
   installPath?: string;
@@ -61,8 +66,20 @@ const buildVcr = (replay: SyntheticReplay): Buffer => {
     drivers = [],
   } = replay;
 
+  const metadataBlob = replay.officialEvent
+    ? JSON.stringify({
+        eventId: '1edc8e7e-48c1-405f-83c6-d52b4142ea99',
+        eventTitle: 'LMGT3 Sprint Cup',
+        eventType: 'daily',
+        sceneDesc,
+        seriesId: '2f3e32e6-41e1-471c-9a85-6151c736ed4a',
+        session,
+        splitNo: 3,
+      })
+    : JSON.stringify({ sceneDesc, session });
+
   const trailer = Buffer.concat([
-    lengthPrefixed(JSON.stringify({ sceneDesc, session })),
+    lengthPrefixed(metadataBlob),
     lengthPrefixed(`${sceneDesc}.SCN`),
     lengthPrefixed(`${sceneDesc}.AIW`),
     lengthPrefixed(trackFolder),
@@ -183,6 +200,58 @@ describe('main/vcr metadata', () => {
     const trailer = await readVcrTrailer(filePath);
 
     expect(trailer?.drivers).toEqual(MONZA_DRIVERS);
+  });
+
+  /**
+   * The format that broke in the wild. Anchoring on the blob starting with
+   * `{"sceneDesc"` meant every replay from a current LMU build was rejected as
+   * unreadable — the fixture set is all format 7, so nothing caught it.
+   */
+  it('reads an official-event replay whose blob does not start with sceneDesc', async () => {
+    const filePath = writeReplay('official.Vcr', {
+      sceneDesc: 'LAGUNASECA',
+      session: 'RACE',
+      officialEvent: true,
+      drivers: MONZA_DRIVERS,
+    });
+
+    const trailer = await readVcrTrailer(filePath);
+
+    expect(trailer).toMatchObject({
+      sceneDesc: 'LAGUNASECA',
+      session: 'RACE',
+      eventTitle: 'LMGT3 Sprint Cup',
+      eventType: 'daily',
+      splitNo: 3,
+    });
+    expect(trailer?.drivers).toHaveLength(MONZA_DRIVERS.length);
+  });
+
+  it('leaves event fields unset on a replay that has none', async () => {
+    const filePath = writeReplay('plain-event.Vcr', {
+      sceneDesc: 'MONZAWEC',
+      session: 'RACE',
+    });
+
+    const trailer = await readVcrTrailer(filePath);
+
+    expect(trailer?.eventTitle).toBeUndefined();
+    expect(trailer?.splitNo).toBeUndefined();
+  });
+
+  it('falls back to scanning for an official-event blob too', async () => {
+    const filePath = writeReplay('official-badpointer.Vcr', {
+      sceneDesc: 'LAGUNASECA',
+      session: 'QUALIFY',
+      officialEvent: true,
+      pointerOverride: 0xfffffff,
+      drivers: MONZA_DRIVERS,
+    });
+
+    const trailer = await readVcrTrailer(filePath);
+
+    expect(trailer?.sceneDesc).toBe('LAGUNASECA');
+    expect(trailer?.session).toBe('QUALIFY');
   });
 
   it('falls back to scanning when the header pointer is unusable', async () => {
