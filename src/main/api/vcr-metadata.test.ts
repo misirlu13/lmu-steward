@@ -19,17 +19,22 @@ const MAGIC_OFFSET = 0x2c;
 const POINTER_OFFSET = 0x35;
 const HEADER_LENGTH = 0x40;
 
-/** uint32le length-prefixed, as the trailer's string fields are stored. */
+/*
+ * Lengths count bytes, not characters, and the encoding is UTF-8 — an accented
+ * name is longer on disk than in JavaScript.
+ */
 const lengthPrefixed = (value: string): Buffer => {
-  const body = Buffer.from(value, 'latin1');
+  const body = Buffer.from(value, 'utf8');
   const prefix = Buffer.alloc(4);
   prefix.writeUInt32LE(body.length, 0);
   return Buffer.concat([prefix, body]);
 };
 
 /** uint8 length-prefixed, as the driver entry fields are stored. */
-const bytePrefixed = (value: string): Buffer =>
-  Buffer.concat([Buffer.from([value.length]), Buffer.from(value, 'latin1')]);
+const bytePrefixed = (value: string): Buffer => {
+  const body = Buffer.from(value, 'utf8');
+  return Buffer.concat([Buffer.from([body.length]), body]);
+};
 
 interface SyntheticDriver {
   name: string;
@@ -144,6 +149,18 @@ const MONZA_DRIVERS: SyntheticDriver[] = [
     carNumber: '46',
   },
   {
+    /*
+     * Accents and a shorter content id together. Both were rejected outright
+     * before, and either one takes the whole roster down with it — one bad
+     * entry ends the walk.
+     */
+    name: 'Sébastien Buemi',
+    vehicleId: '59_25_RSL_DF69FBFB',
+    contentId: '6971afbaff2181d017c969',
+    teamName: 'Racing Spirit of Léman 2025 #59',
+    carNumber: '23',
+  },
+  {
     // A solo player on base content: the team name is the manufacturer, not a
     // repeat of the driver's name.
     name: 'Pedro Couceiro',
@@ -188,6 +205,41 @@ describe('main/vcr metadata', () => {
       trackVersion: '1.27',
     });
     expect(trailer?.originInstallPath).toContain('Le Mans Ultimate');
+  });
+
+  it('reads names and teams containing accents', async () => {
+    const filePath = writeReplay('accented.Vcr', {
+      sceneDesc: 'SILVERSTONEELMS',
+      session: 'RACE',
+      drivers: MONZA_DRIVERS,
+    });
+
+    const trailer = await readVcrTrailer(filePath);
+
+    const accented = trailer?.drivers.find((driver) =>
+      driver.name.startsWith('Séb'),
+    );
+
+    expect(accented?.name).toBe('Sébastien Buemi');
+    expect(accented?.teamName).toBe('Racing Spirit of Léman 2025 #59');
+    // Decoded as UTF-8, not latin1 — "LÃ©man" would mean the wrong codec.
+    expect(accented?.teamName).not.toContain('Ã');
+  });
+
+  it('accepts content ids that are not 24 characters', async () => {
+    const filePath = writeReplay('shortcontentid.Vcr', {
+      sceneDesc: 'SILVERSTONEELMS',
+      session: 'RACE',
+      drivers: MONZA_DRIVERS,
+    });
+
+    const trailer = await readVcrTrailer(filePath);
+
+    // A rejected entry ends the walk, so the count is the real assertion here.
+    expect(trailer?.drivers).toHaveLength(MONZA_DRIVERS.length);
+    expect(
+      trailer?.drivers.some((driver) => driver.contentId.length === 22),
+    ).toBe(true);
   });
 
   it('reads the driver roster, including entries whose team is not the driver', async () => {

@@ -38,9 +38,13 @@ import { SessionType } from '@types';
  *
  *   [name][vehicleId][contentId][teamName][carNumber] <fixed binary run>
  *
- * `contentId` is present but empty for base content, and 24 characters for DLC
- * and league liveries. It is a field, not a separator — reading its zero length
- * byte as padding desynchronises every entry after the first DLC car.
+ * `contentId` is present but empty for base content, and a variable-length hex
+ * id for DLC and league liveries. It is a field, not a separator — reading its
+ * zero length byte as padding desynchronises every entry after the first DLC
+ * car.
+ *
+ * All strings are UTF-8. Driver and team names carry accents routinely
+ * ("Racing Spirit of Léman"), so they must not be validated as ASCII.
  *
  * `teamName` usually matches the driver's name, because league entries tend to
  * be one team per driver, but that is a property of the data rather than of the
@@ -74,7 +78,7 @@ const DRIVER_ENTRY_SEARCH_WINDOW = 96;
 export interface VcrDriver {
   name: string;
   vehicleId: string;
-  /** Empty for base content; a 24-character id for DLC and league liveries. */
+  /** Empty for base content; a hex id for DLC and league liveries. */
   contentId: string;
   /**
    * Often identical to the driver's name, because league entries are usually
@@ -106,8 +110,29 @@ export interface VcrTrailer {
 
 const SESSION_TYPES: readonly string[] = ['RACE', 'QUALIFY', 'PRACTICE'];
 
-const isPrintableAscii = (value: string): boolean =>
-  value.length > 0 && /^[\x20-\x7e]+$/.test(value);
+/**
+ * Strings in the trailer are UTF-8, and motorsport is full of accents:
+ * "Racing Spirit of Léman" is stored with a real é, as are plenty of driver
+ * names. Validating them as ASCII rejected the entry outright, which killed the
+ * roster read for any session containing one — and decoding as latin1 mangled
+ * whatever did get through.
+ *
+ * Bytes are checked rather than the decoded string, so the test is exactly "no
+ * control characters" and any valid UTF-8 sequence passes.
+ */
+const hasOnlyTextBytes = (bytes: Buffer): boolean => {
+  if (bytes.length === 0) {
+    return false;
+  }
+
+  for (const byte of bytes) {
+    if (byte < 0x20 || byte === 0x7f) {
+      return false;
+    }
+  }
+
+  return true;
+};
 
 /** Reads a uint32le length-prefixed string, or null if the prefix is unusable. */
 const readLengthPrefixedString = (
@@ -128,8 +153,10 @@ const readLengthPrefixedString = (
     return null;
   }
 
-  const value = buffer.subarray(offset + 4, end).toString('latin1');
-  return isPrintableAscii(value) ? { value, next: end } : null;
+  const bytes = buffer.subarray(offset + 4, end);
+  return hasOnlyTextBytes(bytes)
+    ? { value: bytes.toString('utf8'), next: end }
+    : null;
 };
 
 /**
@@ -137,8 +164,8 @@ const readLengthPrefixedString = (
  *
  * `allowEmpty` matters: a zero length is a real, present-but-empty field, not a
  * failure. Cars from base content carry an empty content id where DLC cars
- * carry a 24-character one, and treating that zero byte as a separator rather
- * than a field desynchronises the rest of the roster.
+ * carry a hex one, and treating that zero byte as a separator rather than a
+ * field desynchronises the rest of the roster.
  */
 const readBytePrefixedString = (
   buffer: Buffer,
@@ -159,13 +186,21 @@ const readBytePrefixedString = (
     return allowEmpty ? { value: '', next: end } : null;
   }
 
-  const value = buffer.subarray(offset + 1, end).toString('latin1');
-  return isPrintableAscii(value) ? { value, next: end } : null;
+  const bytes = buffer.subarray(offset + 1, end);
+  return hasOnlyTextBytes(bytes)
+    ? { value: bytes.toString('utf8'), next: end }
+    : null;
 };
 
 /** Vehicle ids are alphanumeric with underscores — never spaces. */
 const VEHICLE_ID_PATTERN = /^[A-Za-z0-9_]+$/;
-const CONTENT_ID_PATTERN = /^[a-f0-9]{24}$/i;
+/*
+ * Variable length, not fixed. The Monza fixtures happen to carry 24 characters
+ * throughout, but 22 also occurs in the wild — pinning the length rejected the
+ * entry and took the rest of that replay's roster with it. Still bounded, since
+ * this is one of the few checks keeping entry alignment honest.
+ */
+const CONTENT_ID_PATTERN = /^[a-f0-9]{8,64}$/i;
 const CAR_NUMBER_PATTERN = /^[A-Za-z0-9#+-]{1,5}$/;
 
 /**
