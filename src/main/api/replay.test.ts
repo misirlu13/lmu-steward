@@ -322,6 +322,45 @@ describe('main/replay helpers', () => {
     });
   });
 
+  /**
+   * The root <DateTime> is when LMU created the event, and it is what the replay
+   * API reports as a replay's timestamp. Each session carries its own <DateTime>
+   * at the same nesting depth this parser tracks, so a regression here silently
+   * shifts every log forward and mismatches replays recorded on the same evening.
+   */
+  it('keeps the root DateTime when a session carries its own (string parser)', async () => {
+    readFileMock.mockResolvedValue(
+      '<rFactorXML><RaceResults><DateTime>1784398360</DateTime><TrackVenue>Monza</TrackVenue><Race><DateTime>1784400388</DateTime><Minutes>20</Minutes></Race></RaceResults></rFactorXML>' as unknown as Awaited<
+        ReturnType<typeof readFile>
+      >,
+    );
+
+    const result = await parseLogXml('C:/logs/file.xml');
+
+    expect(result.rFactorXML?.RaceResults?.DateTime).toBe(1784398360);
+    expect(result.rFactorXML?.RaceResults?.Race?.Minutes).toBe(20);
+  });
+
+  it('keeps the root DateTime when a session carries its own (stream parser)', async () => {
+    const stream = Readable.from(
+      [
+        '<rFactorXML><RaceResults><DateTime>1784398360</DateTime><TrackVenue>Monza</TrackVenue>',
+        '<Race><DateTime>1784400388</DateTime><Minutes>20</Minutes></Race></RaceResults></rFactorXML>',
+      ],
+      { objectMode: false },
+    );
+    createReadStreamMock.mockReturnValueOnce(
+      stream as unknown as ReturnType<typeof createReadStream>,
+    );
+    readFileMock.mockRejectedValue(new Error('readFile should not be called'));
+
+    const result = await parseLogXml('C:/logs/file.xml');
+
+    expect(readFileMock).not.toHaveBeenCalled();
+    expect(result.rFactorXML?.RaceResults?.DateTime).toBe(1784398360);
+    expect(result.rFactorXML?.RaceResults?.Race?.Minutes).toBe(20);
+  });
+
   it('detects log session type from RaceResults keys', () => {
     expect(
       getLogDataSessionType({ rFactorXML: { RaceResults: { Race: {} } } }),

@@ -372,7 +372,20 @@ const parseLogXmlContent = (xml: string): ParsedLogXml => {
     if (currentValueTag === 'Setting') {
       raceResults.Setting = normalizedValue || undefined;
     } else if (currentValueTag === 'DateTime') {
-      raceResults.DateTime = Number(normalizedValue) || undefined;
+      /**
+       * Only the root <DateTime>, which is when LMU created the event — the
+       * same instant it stamps onto every .Vcr it writes for that weekend, and
+       * therefore what the replay API reports as a replay's timestamp.
+       *
+       * <Race>/<Qualify>/<Practice1> each carry their own <DateTime> holding
+       * that session's start. Those sit at the same nesting depth this parser
+       * tracks, so without the session guard the last one wins and every log
+       * looks minutes-to-hours later than the replay it belongs to. Two events
+       * at one track in an evening then match the wrong way round.
+       */
+      if (!currentSessionType) {
+        raceResults.DateTime = Number(normalizedValue) || undefined;
+      }
     } else if (currentValueTag === 'TrackVenue') {
       raceResults.TrackVenue = normalizedValue || undefined;
     } else if (currentValueTag === 'TrackCourse') {
@@ -696,7 +709,20 @@ const parseLogXmlFromStream = async (
     if (currentValueTag === 'Setting') {
       raceResults.Setting = normalizedValue || undefined;
     } else if (currentValueTag === 'DateTime') {
-      raceResults.DateTime = Number(normalizedValue) || undefined;
+      /**
+       * Only the root <DateTime>, which is when LMU created the event — the
+       * same instant it stamps onto every .Vcr it writes for that weekend, and
+       * therefore what the replay API reports as a replay's timestamp.
+       *
+       * <Race>/<Qualify>/<Practice1> each carry their own <DateTime> holding
+       * that session's start. Those sit at the same nesting depth this parser
+       * tracks, so without the session guard the last one wins and every log
+       * looks minutes-to-hours later than the replay it belongs to. Two events
+       * at one track in an evening then match the wrong way round.
+       */
+      if (!currentSessionType) {
+        raceResults.DateTime = Number(normalizedValue) || undefined;
+      }
     } else if (currentValueTag === 'TrackVenue') {
       raceResults.TrackVenue = normalizedValue || undefined;
     } else if (currentValueTag === 'TrackCourse') {
