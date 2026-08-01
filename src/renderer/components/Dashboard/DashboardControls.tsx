@@ -1,7 +1,11 @@
+import { useState } from 'react';
 import {
   Box,
   FormControl,
   InputLabel,
+  ListItemIcon,
+  ListItemText,
+  Menu,
   MenuItem,
   Select,
   SelectChangeEvent,
@@ -9,7 +13,11 @@ import {
 } from '@mui/material';
 import ArrowUpwardIcon from '@mui/icons-material/ArrowUpward';
 import ArrowDownwardIcon from '@mui/icons-material/ArrowDownward';
+import ArrowDropDownIcon from '@mui/icons-material/ArrowDropDown';
 import FileDownloadIcon from '@mui/icons-material/FileDownload';
+import FolderOpenIcon from '@mui/icons-material/FolderOpen';
+import FolderZipIcon from '@mui/icons-material/FolderZip';
+import InsertDriveFileOutlinedIcon from '@mui/icons-material/InsertDriveFileOutlined';
 import { DashboardViewMode } from '@types';
 import { DashboardFilter, Filters } from './DashboardFilter';
 import { DashboardSortByOptions } from '../../hooks/useDashboardReplays';
@@ -33,7 +41,9 @@ interface DashboardControlsProps {
   onApplyFilters: (filters: Filters) => void;
   onRefresh: () => void;
   onDashboardViewChange: (dashboardView: DashboardViewMode) => void;
+  /** The two-file dialog: one replay, one log, both picked by the user. */
   onImportReplays: () => void;
+  onImportSource: (kind: 'folder' | 'zip') => void;
 }
 
 export const DashboardControls: React.FC<DashboardControlsProps> = ({
@@ -49,10 +59,17 @@ export const DashboardControls: React.FC<DashboardControlsProps> = ({
   onApplyFilters,
   onDashboardViewChange,
   onImportReplays,
+  onImportSource,
 }) => {
+  const [importMenuAnchor, setImportMenuAnchor] = useState<HTMLElement | null>(
+    null,
+  );
+
   const handleSortChange = (event: SelectChangeEvent) => {
     onSortByChange(event.target.value as DashboardSortByOptions);
   };
+
+  const closeImportMenu = () => setImportMenuAnchor(null);
 
   return (
     <Box
@@ -64,15 +81,76 @@ export const DashboardControls: React.FC<DashboardControlsProps> = ({
         flexDirection: 'row',
       }}
     >
+      {/*
+        Three entry points behind one button rather than three buttons, because
+        Windows cannot show a dialog that accepts either a file or a folder —
+        Electron's own note is that asking for both silently gives a directory
+        selector. The user has to say which before the dialog opens, so the
+        choice belongs here.
+      */}
       {canImport ? (
-        <Button
-          onClick={onImportReplays}
-          variant="outlined"
-          size="small"
-          startIcon={<FileDownloadIcon />}
-        >
-          Import Replays
-        </Button>
+        <>
+          <Button
+            onClick={(clickEvent) =>
+              setImportMenuAnchor(clickEvent.currentTarget)
+            }
+            variant="outlined"
+            size="small"
+            startIcon={<FileDownloadIcon />}
+            endIcon={<ArrowDropDownIcon />}
+            aria-label="Import replays menu"
+          >
+            Import Replays
+          </Button>
+          <Menu
+            anchorEl={importMenuAnchor}
+            open={Boolean(importMenuAnchor)}
+            onClose={closeImportMenu}
+          >
+            <MenuItem
+              onClick={() => {
+                closeImportMenu();
+                onImportReplays();
+              }}
+            >
+              <ListItemIcon>
+                <InsertDriveFileOutlinedIcon fontSize="small" />
+              </ListItemIcon>
+              <ListItemText
+                primary="One replay and its log…"
+                secondary="Pick a .Vcr and its .xml yourself"
+              />
+            </MenuItem>
+            <MenuItem
+              onClick={() => {
+                closeImportMenu();
+                onImportSource('folder');
+              }}
+            >
+              <ListItemIcon>
+                <FolderOpenIcon fontSize="small" />
+              </ListItemIcon>
+              <ListItemText
+                primary="A folder of replays…"
+                secondary="Scan a hand-off and pair each replay"
+              />
+            </MenuItem>
+            <MenuItem
+              onClick={() => {
+                closeImportMenu();
+                onImportSource('zip');
+              }}
+            >
+              <ListItemIcon>
+                <FolderZipIcon fontSize="small" />
+              </ListItemIcon>
+              <ListItemText
+                primary="An archive (.zip)…"
+                secondary="Including one exported from LMU Steward"
+              />
+            </MenuItem>
+          </Menu>
+        </>
       ) : null}
       <SegmentedButtonGroup<DashboardViewMode>
         ariaLabel="replay dashboard view button group"

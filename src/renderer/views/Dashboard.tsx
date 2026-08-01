@@ -16,6 +16,8 @@ import { ExportReplayPayload, useApi } from '../providers/ApiContext';
 import { DeleteImportedConfirmDialog } from '../components/Dashboard/DeleteImportedConfirmDialog';
 import { ImportReplayDialog } from '../components/Dashboard/ImportReplayDialog';
 import { ExportProgressDialog } from '../components/Dashboard/ExportProgressDialog';
+import { ImportPreviewDialog } from '../components/Dashboard/ImportPreviewDialog';
+import { ImportProgressDialog } from '../components/Dashboard/ImportProgressDialog';
 
 interface PendingDelete {
   hashes: string[];
@@ -91,6 +93,14 @@ export const DashboardView: React.FC = () => {
     selectImportFile,
     importReplayPair,
     resetImportPair,
+    selectImportSource,
+    importPreview,
+    importProgress,
+    importRowLogSelections,
+    importOutcomes,
+    clearImportOutcomes,
+    clearImportPreview,
+    importSelectedReplays,
   } = useApi();
   const [isImportDialogOpen, setIsImportDialogOpen] = useState(false);
   const [lastImportedName, setLastImportedName] = useState('');
@@ -185,6 +195,7 @@ export const DashboardView: React.FC = () => {
             onRefresh={handleRefreshReplays}
             onDashboardViewChange={handleChangeDashboardView}
             onImportReplays={() => setIsImportDialogOpen(true)}
+            onImportSource={selectImportSource}
           />
         }
       />
@@ -391,6 +402,15 @@ export const DashboardView: React.FC = () => {
           setPendingDelete(null);
         }}
       />
+      <ImportPreviewDialog
+        preview={importPreview}
+        rowLogSelections={importRowLogSelections}
+        isImporting={importProgress?.phase === 'importing'}
+        onChooseLogForRow={(rowId) => selectImportFile('log', rowId)}
+        onCancel={clearImportPreview}
+        onConfirm={importSelectedReplays}
+      />
+      <ImportProgressDialog progress={importProgress} />
       <ExportProgressDialog progress={exportProgress} />
       {/*
         A cancelled save dialog is not an outcome worth reporting, so only a
@@ -414,6 +434,31 @@ export const DashboardView: React.FC = () => {
                 }`
               : ''
         }
+      />
+      {/*
+        Per-row outcomes, not a single verdict. A row that fails rolls itself
+        back and the rest carry on, so "imported 5" would be half the story
+        when the sixth did not make it.
+      */}
+      <Snackbar
+        open={Boolean(importOutcomes && importOutcomes.length > 0)}
+        autoHideDuration={10000}
+        onClose={clearImportOutcomes}
+        message={(() => {
+          const outcomes = importOutcomes ?? [];
+          const imported = outcomes.filter(
+            (outcome) => outcome.status === 'imported',
+          ).length;
+          const failed = outcomes.filter(
+            (outcome) => outcome.status === 'failed',
+          );
+
+          return failed.length > 0
+            ? `Imported ${imported} of ${outcomes.length}. ${failed[0].replayName} failed: ${
+                failed[0].message ?? 'unknown reason'
+              }`
+            : `Imported ${imported} ${imported === 1 ? 'replay' : 'replays'}. They are in the Imported view.`;
+        })()}
       />
       <Snackbar
         open={Boolean(lastImportedName)}

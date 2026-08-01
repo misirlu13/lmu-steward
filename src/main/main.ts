@@ -42,6 +42,7 @@ import {
   ImportPairRequest,
   ImportReplaysRequest,
   postDeleteImportedReplays,
+  postDiscardImportPreview,
   postExportReplay,
   postExportWeekend,
   postImportReplayPair,
@@ -50,6 +51,7 @@ import {
   postSelectImportSource,
   postValidateImportPair,
   SelectImportFileRequest,
+  SelectImportSourceRequest,
 } from './api/replay-import-handlers';
 import {
   getTrackThumbnail,
@@ -211,8 +213,10 @@ const CHANNEL_CALLBACK_HANDLERS: Partial<
 
   // REPLAY IMPORT / EXPORT
   [CONSTANTS.API.GET_IMPORTED_REPLAYS]: withEventOnly(getImportedReplays),
-  [CONSTANTS.API.POST_SELECT_IMPORT_SOURCE]: withEventOnly(
-    postSelectImportSource,
+  [CONSTANTS.API.POST_SELECT_IMPORT_SOURCE]:
+    withEventAndData<SelectImportSourceRequest>(postSelectImportSource),
+  [CONSTANTS.API.POST_DISCARD_IMPORT_PREVIEW]: withEventOnly(
+    postDiscardImportPreview,
   ),
   [CONSTANTS.API.POST_IMPORT_REPLAYS]:
     withEventAndData<ImportReplaysRequest>(postImportReplays),

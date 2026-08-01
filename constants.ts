@@ -70,6 +70,7 @@ export const CONSTANTS = {
     PUT_FOCUS_CAR: 'put.focus-car',
     GET_IMPORTED_REPLAYS: 'get.imported-replays',
     POST_SELECT_IMPORT_SOURCE: 'post.select-import-source',
+    POST_DISCARD_IMPORT_PREVIEW: 'post.discard-import-preview',
     POST_SELECT_IMPORT_FILE: 'post.select-import-file',
     POST_VALIDATE_IMPORT_PAIR: 'post.validate-import-pair',
     POST_IMPORT_REPLAY_PAIR: 'post.import-replay-pair',

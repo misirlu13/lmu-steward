@@ -14,6 +14,8 @@ import { promisify } from 'util';
 import { ImportedReplayRecord, ImportedReplayStore, SessionType } from '@types';
 import { generateReplayHash } from '../util';
 import { assertFreeSpace } from './disk-space';
+import { scanManifests } from './import-manifest';
+import { OmittedSession } from './replay-export';
 import { readVcrTrailer, VcrTrailer } from './vcr-metadata';
 import {
   LogCandidate,
@@ -45,6 +47,14 @@ export interface ImportPreviewRow {
   pairing: PairingResult;
   /** Set when this replay has already been imported. */
   alreadyImportedHash: string | null;
+  /**
+   * The log and event time a Steward export manifest named for this replay.
+   *
+   * Present only when the hand-off came from this app. When it is, it settles
+   * the pairing outright — including for a restarted race, whose sessions
+   * nothing else can separate.
+   */
+  manifest: { logPath: string; timestamp: number } | null;
 }
 
 export interface ImportSelection {
@@ -52,6 +62,14 @@ export interface ImportSelection {
   logPath: string;
   method: 'roster' | 'manual' | 'manifest';
   confidence: number | null;
+  /**
+   * Event time from a manifest, used in place of the log's root DateTime.
+   *
+   * The two agree to within seconds, but this is the value the exporting
+   * machine built the replay's hash from, so preferring it makes a
+   * Steward-to-Steward round trip land on the identity it started with.
+   */
+  timestamp?: number;
 }
 
 export interface ImportOutcome {
@@ -253,15 +271,33 @@ export interface ScanImportSourceArgs {
   imported: ImportedReplayStore;
 }
 
+export interface ImportScanResult {
+  rows: ImportPreviewRow[];
+  /** How many rows a manifest settled, so the user knows why nothing scored. */
+  manifestSessionCount: number;
+  /**
+   * Sessions the exporting side could not include. Reported because a steward
+   * looking for a race that was never in the archive would otherwise have no
+   * way to tell that from a scan that missed it.
+   */
+  omittedSessions: OmittedSession[];
+}
+
 /**
  * Builds the preview. Nothing is written — this reads trailers and logs, pairs
  * them, and hands the result back for the user to confirm.
+ *
+ * A Steward manifest short-circuits pairing for the replays it names. That is
+ * not an optimisation: a restarted race puts several sessions in one weekend
+ * that share an event time, a track, a session type and an identical grid, and
+ * no automatic axis separates them. The manifest is the only thing that does.
  */
 export const scanImportSource = async ({
   sourceDirectory,
   existingLogDirectory,
   imported,
-}: ScanImportSourceArgs): Promise<ImportPreviewRow[]> => {
+}: ScanImportSourceArgs): Promise<ImportScanResult> => {
+  const manifestScan = await scanManifests(sourceDirectory);
   const vcrPaths = await collectFiles(sourceDirectory, VCR_EXTENSION);
   const logPaths = [
     ...(await collectFiles(sourceDirectory, LOG_EXTENSION)),
@@ -281,7 +317,15 @@ export const scanImportSource = async ({
     ]),
   );
 
+  const candidatesByPath = new Map(
+    logCandidates.map((candidate) => [
+      candidate.filePath.toLowerCase(),
+      candidate,
+    ]),
+  );
+
   const rows: ImportPreviewRow[] = [];
+  let manifestSessionCount = 0;
 
   for (const vcrPath of vcrPaths) {
     // eslint-disable-next-line no-await-in-loop
@@ -300,6 +344,48 @@ export const scanImportSource = async ({
       (candidate) => candidate.session === trailer.session,
     );
 
+    /*
+     * Only honoured when the log it names is actually there. A manifest whose
+     * files were removed or renamed after export is worse than none, so a
+     * dangling one falls back to scoring rather than proposing a missing file.
+     */
+    const manifestEntry = manifestScan.sessions.get(vcrPath.toLowerCase());
+    const manifestCandidate = manifestEntry
+      ? candidatesByPath.get(manifestEntry.logPath.toLowerCase())
+      : undefined;
+
+    let pairing: PairingResult;
+    let manifest: ImportPreviewRow['manifest'] = null;
+
+    if (manifestEntry && manifestCandidate) {
+      manifestSessionCount += 1;
+      manifest = {
+        logPath: manifestCandidate.filePath,
+        timestamp: manifestEntry.timestamp,
+      };
+      pairing = {
+        ranked: [
+          {
+            candidate: manifestCandidate,
+            confidence: 1,
+            intersection: 0,
+            vcrCount: trailer.drivers.length,
+            logCount: manifestCandidate.driverNames.length,
+          },
+          ...scoreLogCandidates(trailer, sessionCandidates).ranked.filter(
+            (ranked) =>
+              ranked.candidate.filePath.toLowerCase() !==
+              manifestCandidate.filePath.toLowerCase(),
+          ),
+        ],
+        proposed: null,
+        reason: 'manifest',
+      };
+      [pairing.proposed] = pairing.ranked;
+    } else {
+      pairing = scoreLogCandidates(trailer, sessionCandidates);
+    }
+
     rows.push({
       id: vcrPath,
       vcrPath,
@@ -309,12 +395,17 @@ export const scanImportSource = async ({
       session: trailer.session,
       size,
       trailer,
-      pairing: scoreLogCandidates(trailer, sessionCandidates),
+      pairing,
       alreadyImportedHash: importedByVcrPath.get(vcrPath.toLowerCase()) ?? null,
+      manifest,
     });
   }
 
-  return rows;
+  return {
+    rows,
+    manifestSessionCount,
+    omittedSessions: manifestScan.omittedSessions,
+  };
 };
 
 const fileExists = async (filePath: string): Promise<boolean> => {
@@ -406,7 +497,12 @@ export interface ImportReplaysArgs {
    * store, which the parser's module initialises on load.
    */
   parseLogSummary?: (filePath: string) => Promise<unknown>;
-  onProgress?: (progress: { processed: number; total: number }) => void;
+  onProgress?: (progress: {
+    processed: number;
+    total: number;
+    /** The replay just handled, so the dialog can name what it is working on. */
+    currentLabel?: string;
+  }) => void;
 }
 
 export interface ImportReplaysResult {
@@ -496,10 +592,26 @@ export const importReplays = async ({
       // eslint-disable-next-line no-await-in-loop
       const logCandidate = await readLogCandidate(selection.logPath);
 
-      if (!logCandidate?.eventDateTime) {
+      /*
+       * A manifest's event time wins over the log's root DateTime. The two
+       * agree to within seconds, but the manifest carries what the exporting
+       * machine's LMU reported for this exact replay, which is what its hash
+       * was built from — so a Steward-to-Steward round trip lands back on the
+       * identity it started with rather than a few seconds off it.
+       */
+      const eventDateTime =
+        selection.method === 'manifest' && selection.timestamp
+          ? selection.timestamp
+          : logCandidate?.eventDateTime;
+
+      if (!eventDateTime) {
         throw new Error(
           'The selected log has no event date to import against.',
         );
+      }
+
+      if (!logCandidate) {
+        throw new Error('The selected log could not be read.');
       }
 
       // eslint-disable-next-line no-await-in-loop
@@ -514,13 +626,13 @@ export const importReplays = async ({
       }
 
       // eslint-disable-next-line no-await-in-loop
-      await setFileCreationTime(destinationVcrPath, logCandidate.eventDateTime);
+      await setFileCreationTime(destinationVcrPath, eventDateTime);
 
       // Built from the destination name, which is the one LMU will report.
       const hash = generateReplayHash({
         metadata: { sceneDesc: row.sceneDesc, session: row.session },
         replayName: destination.replayName,
-        timestamp: logCandidate.eventDateTime,
+        timestamp: eventDateTime,
         size: row.size,
       });
 
@@ -531,7 +643,7 @@ export const importReplays = async ({
         originalReplayName: row.replayName,
         sceneDesc: row.sceneDesc,
         session: row.session,
-        timestamp: logCandidate.eventDateTime,
+        timestamp: eventDateTime,
         vcrFileName: destination.fileName,
         vcrPath: destinationVcrPath,
         size: row.size,
@@ -590,7 +702,11 @@ export const importReplays = async ({
       });
     }
 
-    onProgress?.({ processed, total: selections.length });
+    onProgress?.({
+      processed,
+      total: selections.length,
+      currentLabel: row.replayName,
+    });
   }
 
   return { outcomes, imported: nextImported };

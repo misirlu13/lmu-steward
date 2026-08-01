@@ -164,8 +164,8 @@ describe('main/replay import', () => {
     rmSync(root, { recursive: true, force: true });
   });
 
-  const scan = () =>
-    scanImportSource({ sourceDirectory: source, imported: {} });
+  const scan = async () =>
+    (await scanImportSource({ sourceDirectory: source, imported: {} })).rows;
 
   it('reads the event DateTime from a log, not the session one', async () => {
     const candidate = await readLogCandidate(
@@ -406,7 +406,7 @@ describe('main/replay import', () => {
       imported: {},
     });
 
-    const rescan = await scanImportSource({
+    const { rows: rescan } = await scanImportSource({
       sourceDirectory: replayDirectory,
       imported,
     });

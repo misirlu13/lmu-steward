@@ -52,6 +52,8 @@ export interface PairingResult {
   proposed: RankedLogCandidate | null;
   reason:
     | 'proposed'
+    /** Named by a Steward export manifest, so nothing was scored. */
+    | 'manifest'
     | 'only-candidate'
     | 'roster-too-small'
     | 'no-candidates'

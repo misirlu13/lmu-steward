@@ -1,7 +1,8 @@
 import { CONSTANTS } from '@constants';
 import { ImportedReplayRecord, ImportedReplayStore } from '@types';
 import { dialog } from 'electron';
-import { stat } from 'fs/promises';
+import { mkdir, mkdtemp, rm, stat } from 'fs/promises';
+import { tmpdir } from 'os';
 import { basename, dirname, join, resolve as resolvePath } from 'path';
 import { getMainPersistentStore } from '../storage/local-data-store';
 import { readUserSettings } from './user-settings';
@@ -18,6 +19,7 @@ import { parseLogXml } from './replay';
 import { validateImportPair } from './replay-import-match';
 import { getTrackAliases } from './track-matching';
 import { assertFreeSpace } from './disk-space';
+import { extractArchive, inspectArchive } from './archive-reader';
 import {
   ArchiveEntry,
   buildExportManifest,
@@ -43,6 +45,31 @@ export type {
 export { buildExportManifest } from './replay-export';
 
 const IMPORTED_REPLAYS_STORE_KEY = 'importedReplays';
+
+/**
+ * Progress for the whole bulk-import run, whichever stage it is in.
+ *
+ * One channel rather than one per phase, because to the user it is a single
+ * operation: pick an archive, watch it unpack, watch it import. `phase` is what
+ * lets the dialog label the bar honestly — unpacking counts bytes, importing
+ * counts replays, and reporting either as the other would be a lie about how
+ * far along it is.
+ */
+export interface ImportProgress {
+  status: 'idle' | 'in-progress' | 'success' | 'error';
+  phase: 'extracting' | 'scanning' | 'importing';
+  processed: number;
+  total: number;
+  currentLabel: string;
+  message?: string;
+}
+
+const pushImportProgress = (
+  event: Electron.IpcMainEvent,
+  progress: ImportProgress,
+) => {
+  event.reply(CONSTANTS.API.PUSH_IMPORT_PROGRESS, progress);
+};
 
 const stripVcrExtension = (fileName: string): string =>
   fileName.replace(/\.vcr$/i, '');
@@ -161,15 +188,114 @@ export const getImportedReplays = async (event: Electron.IpcMainEvent) => {
 };
 
 /**
- * Asks for a folder and returns the preview. Nothing is written — the user sees
- * the proposed pairings and confirms before any file is copied.
+ * Where a zip is unpacked before it is scanned.
+ *
+ * Held in module state rather than passed through the renderer, for the same
+ * reason every other path here is: the renderer sends identifiers and never
+ * filesystem paths. Only one extraction is live at a time — starting another
+ * selection or finishing an import clears the last one.
  */
-export const postSelectImportSource = async (event: Electron.IpcMainEvent) => {
+let extractedSourceDirectory: string | null = null;
+
+const discardExtractedSource = async (): Promise<void> => {
+  if (!extractedSourceDirectory) {
+    return;
+  }
+
+  const directory = extractedSourceDirectory;
+  extractedSourceDirectory = null;
+
+  // A temp directory that will not delete is not worth failing an import over.
+  await rm(directory, { recursive: true, force: true }).catch(() => {});
+};
+
+/**
+ * Unpacks an archive into a directory this app owns, then hands back where.
+ *
+ * Extracted rather than read in place because everything downstream — trailer
+ * parsing, log reading, the copy into the LMU install — works on files, and
+ * teaching all of it to read through a zip would be a much larger change for a
+ * step that happens once.
+ *
+ * The cost is that the archive is briefly on disk twice, which is why the space
+ * check covers the extraction *and* the copy that follows it.
+ */
+const extractSourceArchive = async (
+  event: Electron.IpcMainEvent,
+  archivePath: string,
+): Promise<{ directory: string; rejectedEntries: string[] }> => {
+  const { totalUncompressedBytes } = await inspectArchive(archivePath);
+
+  const root = join(tmpdir(), 'lmu-steward-import');
+  await mkdir(root, { recursive: true });
+
+  /*
+   * Both halves at once. Extracting successfully and then failing to copy
+   * would leave the user with a full disk and nothing imported, having waited
+   * through the unpack for it.
+   */
+  await assertFreeSpace(
+    root,
+    totalUncompressedBytes * 2,
+    'unpack and import this archive',
+  );
+
+  const directory = await mkdtemp(join(root, 'source-'));
+
+  const { rejectedEntries } = await extractArchive(
+    archivePath,
+    directory,
+    ({ bytesWritten, totalBytes, currentEntry }) => {
+      pushImportProgress(event, {
+        status: 'in-progress',
+        phase: 'extracting',
+        processed: bytesWritten,
+        total: totalBytes,
+        currentLabel: basename(currentEntry),
+      });
+    },
+  );
+
+  extractedSourceDirectory = directory;
+
+  return { directory, rejectedEntries };
+};
+
+export interface SelectImportSourceRequest {
+  /**
+   * Windows cannot show one dialog that accepts either, so the caller says
+   * which. Electron's own note: setting both `openFile` and `openDirectory`
+   * shows a directory selector on Windows and Linux, silently.
+   */
+  kind?: 'folder' | 'zip';
+}
+
+/**
+ * Asks for a folder or an archive and returns the preview. Nothing is written
+ * into the LMU install — the user sees the proposed pairings and confirms
+ * before any replay is copied.
+ */
+export const postSelectImportSource = async (
+  event: Electron.IpcMainEvent,
+  request?: SelectImportSourceRequest,
+) => {
+  const isArchive = request?.kind === 'zip';
+
   try {
-    const response = await dialog.showOpenDialog({
-      title: 'Choose a folder containing replays and result logs',
-      properties: ['openDirectory'],
-    });
+    await discardExtractedSource();
+
+    const response = await dialog.showOpenDialog(
+      isArchive
+        ? {
+            title: 'Choose an exported replay archive',
+            properties: ['openFile'],
+            filters: [{ name: 'Zip archive', extensions: ['zip'] }],
+          }
+        : {
+            title: 'Choose a folder containing replays and result logs',
+            properties: ['openDirectory'],
+          },
+    );
 
     if (response.canceled || response.filePaths.length === 0) {
       event.reply(CONSTANTS.API.POST_SELECT_IMPORT_SOURCE, {
@@ -179,19 +305,66 @@ export const postSelectImportSource = async (event: Electron.IpcMainEvent) => {
       return;
     }
 
+    const selectedPath = response.filePaths[0];
+    let sourceDirectory = selectedPath;
+    let rejectedEntries: string[] = [];
+
+    if (isArchive) {
+      const extracted = await extractSourceArchive(event, selectedPath);
+      sourceDirectory = extracted.directory;
+      rejectedEntries = extracted.rejectedEntries;
+    }
+
     const { logDirectory } = await resolveImportDirectories();
 
-    const rows = await scanImportSource({
-      sourceDirectory: response.filePaths[0],
-      existingLogDirectory: logDirectory,
-      imported: readImportedStore(),
+    pushImportProgress(event, {
+      status: 'in-progress',
+      phase: 'scanning',
+      processed: 0,
+      total: 0,
+      currentLabel: '',
+    });
+
+    const { rows, manifestSessionCount, omittedSessions } =
+      await scanImportSource({
+        sourceDirectory,
+        existingLogDirectory: logDirectory,
+        imported: readImportedStore(),
+      });
+
+    pushImportProgress(event, {
+      status: 'idle',
+      phase: 'scanning',
+      processed: 0,
+      total: 0,
+      currentLabel: '',
     });
 
     event.reply(CONSTANTS.API.POST_SELECT_IMPORT_SOURCE, {
       status: 'success',
-      data: { canceled: false, sourceDirectory: response.filePaths[0], rows },
+      data: {
+        canceled: false,
+        kind: isArchive ? 'zip' : 'folder',
+        /** What the user picked, not where it was unpacked. */
+        sourceLabel: selectedPath,
+        rows,
+        manifestSessionCount,
+        omittedSessions,
+        rejectedEntries,
+      },
     });
   } catch (error: unknown) {
+    await discardExtractedSource();
+
+    pushImportProgress(event, {
+      status: 'error',
+      phase: isArchive ? 'extracting' : 'scanning',
+      processed: 0,
+      total: 0,
+      currentLabel: '',
+      message: toErrorMessage(error),
+    });
+
     event.reply(CONSTANTS.API.POST_SELECT_IMPORT_SOURCE, {
       status: 'error',
       message: toErrorMessage(error),
@@ -199,11 +372,34 @@ export const postSelectImportSource = async (event: Electron.IpcMainEvent) => {
   }
 };
 
+/**
+ * Called when the user closes the preview without importing. Without this an
+ * abandoned archive would sit in temp at full size until the OS cleared it.
+ */
+export const postDiscardImportPreview = async (
+  event: Electron.IpcMainEvent,
+) => {
+  await discardExtractedSource();
+
+  event.reply(CONSTANTS.API.POST_DISCARD_IMPORT_PREVIEW, {
+    status: 'success',
+    data: {},
+  });
+};
+
 export interface ImportReplaysRequest {
   rows: ImportPreviewRow[];
   selections: ImportSelection[];
 }
 
+/**
+ * Copies every confirmed row into the LMU install.
+ *
+ * Rows arrive from the renderer with the paths the scan gave them, and those
+ * paths are the only ones used — either inside the folder the user picked or
+ * inside the temp directory this process unpacked. A row naming anything else
+ * is dropped rather than trusted.
+ */
 export const postImportReplays = async (
   event: Electron.IpcMainEvent,
   request?: ImportReplaysRequest,
@@ -226,19 +422,27 @@ export const postImportReplays = async (
       imported: readImportedStore(),
       parseLogSummary: readLogSummary,
       onProgress: (progress) => {
-        event.reply(CONSTANTS.API.PUSH_IMPORT_PROGRESS, {
+        pushImportProgress(event, {
           status: 'in-progress',
-          ...progress,
+          phase: 'importing',
+          currentLabel: progress.currentLabel ?? '',
+          processed: progress.processed,
+          total: progress.total,
         });
       },
     });
 
     writeImportedStore(imported);
 
-    event.reply(CONSTANTS.API.PUSH_IMPORT_PROGRESS, {
+    // The unpacked archive has served its purpose the moment the copies land.
+    await discardExtractedSource();
+
+    pushImportProgress(event, {
       status: 'success',
+      phase: 'importing',
       processed: selections.length,
       total: selections.length,
+      currentLabel: '',
     });
 
     event.reply(CONSTANTS.API.POST_IMPORT_REPLAYS, {
@@ -251,10 +455,12 @@ export const postImportReplays = async (
       },
     });
   } catch (error: unknown) {
-    event.reply(CONSTANTS.API.PUSH_IMPORT_PROGRESS, {
+    pushImportProgress(event, {
       status: 'error',
+      phase: 'importing',
       processed: 0,
       total: 0,
+      currentLabel: '',
       message: toErrorMessage(error),
     });
 
@@ -736,6 +942,13 @@ export const summariseImportedFiles = async (
 
 export interface SelectImportFileRequest {
   kind: 'replay' | 'log';
+  /**
+   * Echoed back untouched so the bulk preview knows which row asked.
+   *
+   * The two-file dialog leaves it unset — it only ever has one of each. Opaque
+   * to this process: it is the renderer's own row id, never used as a path.
+   */
+  rowId?: string;
 }
 
 export const postSelectImportFile = async (
@@ -758,7 +971,11 @@ export const postSelectImportFile = async (
     if (response.canceled || response.filePaths.length === 0) {
       event.reply(CONSTANTS.API.POST_SELECT_IMPORT_FILE, {
         status: 'success',
-        data: { canceled: true, kind: request?.kind ?? 'replay' },
+        data: {
+          canceled: true,
+          kind: request?.kind ?? 'replay',
+          rowId: request?.rowId ?? '',
+        },
       });
       return;
     }
@@ -782,6 +999,7 @@ export const postSelectImportFile = async (
         data: {
           canceled: false,
           kind: 'replay',
+          rowId: request?.rowId ?? '',
           filePath,
           fileName: basename(filePath),
           size,
@@ -807,6 +1025,7 @@ export const postSelectImportFile = async (
       data: {
         canceled: false,
         kind: 'log',
+        rowId: request?.rowId ?? '',
         filePath,
         fileName: basename(filePath),
         session: candidate.session,
@@ -914,6 +1133,8 @@ export const postImportReplayPair = async (
       trailer,
       pairing: { ranked: [], proposed: null, reason: 'only-candidate' },
       alreadyImportedHash: null,
+      // The user picked both files themselves; there is nothing to consult.
+      manifest: null,
     };
 
     const { outcomes, imported } = await importReplays({

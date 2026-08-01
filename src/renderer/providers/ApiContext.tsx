@@ -41,6 +41,8 @@ export interface ImportSelectionPayload {
   logPath: string;
   method: 'roster' | 'manual' | 'manifest';
   confidence: number | null;
+  /** Event time from a manifest, preferred over the log's own when present. */
+  timestamp?: number;
 }
 
 export interface ExportReplayPayload {
@@ -83,6 +85,8 @@ export interface ExportResultState {
 
 export interface ImportFileSelection {
   kind: 'replay' | 'log';
+  /** Set when the bulk preview asked, naming the row that did. */
+  rowId?: string;
   filePath: string;
   fileName: string;
   size?: number;
@@ -111,15 +115,85 @@ export interface ImportPairValidationState {
   canImport: boolean;
 }
 
+/**
+ * One scanned replay, as the preview renders it.
+ *
+ * Mirrors `ImportPreviewRow` in the main process. Paths are carried through
+ * untouched and handed back on import — the renderer reads them for display and
+ * never builds or edits one.
+ */
+export interface ImportPreviewRowState {
+  id: string;
+  vcrPath: string;
+  vcrFileName: string;
+  replayName: string;
+  sceneDesc: string;
+  session: string;
+  size: number;
+  alreadyImportedHash: string | null;
+  manifest: { logPath: string; timestamp: number } | null;
+  pairing: {
+    ranked: Array<{
+      candidate: {
+        fileName: string;
+        filePath: string;
+        session: string | null;
+        eventDateTime: number | null;
+        trackVenue: string;
+        driverNames: string[];
+      };
+      confidence: number;
+      intersection: number;
+      vcrCount: number;
+      logCount: number;
+    }>;
+    proposed: {
+      candidate: { fileName: string; filePath: string };
+      confidence: number;
+      intersection: number;
+      vcrCount: number;
+    } | null;
+    reason:
+      | 'proposed'
+      | 'manifest'
+      | 'only-candidate'
+      | 'roster-too-small'
+      | 'no-candidates'
+      | 'below-floor'
+      | 'ambiguous';
+  };
+}
+
 export interface ImportPreviewState {
-  sourceDirectory: string;
-  rows: unknown[];
+  kind: 'folder' | 'zip';
+  /** What the user picked. For a zip, not where it was unpacked. */
+  sourceLabel: string;
+  rows: ImportPreviewRowState[];
+  /** Rows a Steward manifest settled without scoring. */
+  manifestSessionCount: number;
+  omittedSessions: Array<{
+    replayName: string;
+    session: string;
+    reason: string;
+  }>;
+  /** Archive entries refused by the path guard. */
+  rejectedEntries: string[];
 }
 
 export interface ImportProgressState {
-  status: 'in-progress' | 'success' | 'error';
+  status: 'idle' | 'in-progress' | 'success' | 'error';
+  /** Unpacking counts bytes; importing counts replays. */
+  phase?: 'extracting' | 'scanning' | 'importing';
   processed: number;
   total: number;
+  currentLabel?: string;
+  message?: string;
+}
+
+export interface ImportOutcomeState {
+  id: string;
+  replayName: string;
+  status: 'imported' | 'skipped' | 'failed';
   message?: string;
 }
 
@@ -191,13 +265,17 @@ interface ApiContextType {
   restoreReplays: (hashes: string[]) => void;
   setArchiveNote: (hashes: string[], note: string) => void;
   requestImportedReplays: () => void;
-  selectImportSource: () => void;
+  selectImportSource: (kind: 'folder' | 'zip') => void;
+  /** The log the user browsed to for one preview row, keyed by row id. */
+  importRowLogSelections: Record<string, ImportFileSelection>;
+  importOutcomes: ImportOutcomeState[] | null;
+  clearImportOutcomes: () => void;
   importReplayFile: ImportFileSelection | null;
   importLogFile: ImportFileSelection | null;
   importPairValidation: ImportPairValidationState | null;
   importPairError: string;
   isImportingPair: boolean;
-  selectImportFile: (kind: 'replay' | 'log') => void;
+  selectImportFile: (kind: 'replay' | 'log', rowId?: string) => void;
   importReplayPair: () => void;
   resetImportPair: () => void;
   clearImportPreview: () => void;
@@ -246,6 +324,9 @@ const ApiContext = createContext<ApiContextType>({
   archiveReplays: () => {},
   requestImportedReplays: () => {},
   selectImportSource: () => {},
+  importRowLogSelections: {},
+  importOutcomes: null,
+  clearImportOutcomes: () => {},
   importReplayFile: null,
   importLogFile: null,
   importPairValidation: null,
@@ -302,6 +383,12 @@ export const ApiProvider: React.FC<{ children: React.ReactNode }> = ({
   const [importPreview, setImportPreview] = useState<ImportPreviewState | null>(
     null,
   );
+  const [importRowLogSelections, setImportRowLogSelections] = useState<
+    Record<string, ImportFileSelection>
+  >({});
+  const [importOutcomes, setImportOutcomes] = useState<
+    ImportOutcomeState[] | null
+  >(null);
   const [importProgress, setImportProgress] =
     useState<ImportProgressState | null>(null);
   const [exportProgress, setExportProgress] =
@@ -487,13 +574,26 @@ export const ApiProvider: React.FC<{ children: React.ReactNode }> = ({
     sendMessage(CONSTANTS.API.GET_IMPORTED_REPLAYS);
   }, []);
 
-  const selectImportSource = useCallback(() => {
-    sendMessage(CONSTANTS.API.POST_SELECT_IMPORT_SOURCE);
+  const selectImportSource = useCallback((kind: 'folder' | 'zip') => {
+    setImportPreview(null);
+    setImportRowLogSelections({});
+    setImportOutcomes(null);
+    sendMessage(CONSTANTS.API.POST_SELECT_IMPORT_SOURCE, { kind });
   }, []);
 
+  /**
+   * Closing the preview tells the main process to delete anything it unpacked.
+   * An abandoned archive would otherwise sit in temp at full size.
+   */
   const clearImportPreview = useCallback(() => {
     setImportPreview(null);
     setImportProgress(null);
+    setImportRowLogSelections({});
+    sendMessage(CONSTANTS.API.POST_DISCARD_IMPORT_PREVIEW);
+  }, []);
+
+  const clearImportOutcomes = useCallback(() => {
+    setImportOutcomes(null);
   }, []);
 
   const importSelectedReplays = useCallback(
@@ -502,8 +602,10 @@ export const ApiProvider: React.FC<{ children: React.ReactNode }> = ({
         return;
       }
 
+      setImportOutcomes(null);
       setImportProgress({
         status: 'in-progress',
+        phase: 'importing',
         processed: 0,
         total: selections.length,
       });
@@ -512,10 +614,13 @@ export const ApiProvider: React.FC<{ children: React.ReactNode }> = ({
     [],
   );
 
-  const selectImportFile = useCallback((kind: 'replay' | 'log') => {
-    setImportPairError('');
-    sendMessage(CONSTANTS.API.POST_SELECT_IMPORT_FILE, { kind });
-  }, []);
+  const selectImportFile = useCallback(
+    (kind: 'replay' | 'log', rowId?: string) => {
+      setImportPairError('');
+      sendMessage(CONSTANTS.API.POST_SELECT_IMPORT_FILE, { kind, rowId });
+    },
+    [],
+  );
 
   const importReplayPair = useCallback(() => {
     if (!importReplayFile || !importLogFile) {
@@ -647,6 +752,21 @@ export const ApiProvider: React.FC<{ children: React.ReactNode }> = ({
           }
 
           if (payload.data?.kind === 'log') {
+            /*
+             * A row id means the bulk preview asked, not the two-file dialog.
+             * Kept apart so browsing for one row's log cannot overwrite the
+             * single-import selection sitting behind it.
+             */
+            const rowId = payload.data.rowId ?? '';
+
+            if (rowId) {
+              setImportRowLogSelections((previous) => ({
+                ...previous,
+                [rowId]: payload.data as ImportFileSelection,
+              }));
+              return;
+            }
+
             setImportLogFile(payload.data);
             return;
           }
@@ -719,24 +839,31 @@ export const ApiProvider: React.FC<{ children: React.ReactNode }> = ({
         (data: unknown) => {
           const payload = data as {
             status?: string;
-            data?: {
-              canceled?: boolean;
-              sourceDirectory?: string;
-              rows?: unknown[];
-            };
+            data?: Partial<ImportPreviewState> & { canceled?: boolean };
             message?: string;
           };
 
-          if (payload?.status !== 'success' || payload.data?.canceled) {
-            if (payload?.status === 'error') {
-              console.error('Failed to scan import source:', payload.message);
-            }
+          if (payload?.status !== 'success') {
+            setImportProgress({
+              status: 'error',
+              processed: 0,
+              total: 0,
+              message: payload?.message ?? 'That source could not be scanned.',
+            });
+            return;
+          }
+
+          if (payload.data?.canceled) {
             return;
           }
 
           setImportPreview({
-            sourceDirectory: payload.data?.sourceDirectory ?? '',
+            kind: payload.data?.kind ?? 'folder',
+            sourceLabel: payload.data?.sourceLabel ?? '',
             rows: payload.data?.rows ?? [],
+            manifestSessionCount: payload.data?.manifestSessionCount ?? 0,
+            omittedSessions: payload.data?.omittedSessions ?? [],
+            rejectedEntries: payload.data?.rejectedEntries ?? [],
           });
         },
       ),
@@ -771,15 +898,27 @@ export const ApiProvider: React.FC<{ children: React.ReactNode }> = ({
         (data: unknown) => {
           const payload = data as {
             status?: string;
-            data?: { replays?: ImportedReplayRecord[] };
+            data?: {
+              replays?: ImportedReplayRecord[];
+              outcomes?: ImportOutcomeState[];
+            };
             message?: string;
           };
 
           if (payload?.status === 'success') {
             setImportedReplays(payload.data?.replays ?? []);
+            /*
+             * Outcomes are per row: a failed replay does not fail the run, so
+             * "imported 5" is only half the story when the sixth rolled back.
+             * Closing the preview is what clears them.
+             */
+            setImportOutcomes(payload.data?.outcomes ?? []);
+            setImportPreview(null);
+            setImportRowLogSelections({});
             return;
           }
 
+          setImportOutcomes([]);
           console.error('Failed to import replays:', payload?.message);
         },
       ),
@@ -981,6 +1120,9 @@ export const ApiProvider: React.FC<{ children: React.ReactNode }> = ({
       setArchiveNote,
       requestImportedReplays,
       selectImportSource,
+      importRowLogSelections,
+      importOutcomes,
+      clearImportOutcomes,
       importReplayFile,
       importLogFile,
       importPairValidation,
@@ -1025,6 +1167,9 @@ export const ApiProvider: React.FC<{ children: React.ReactNode }> = ({
       setArchiveNote,
       requestImportedReplays,
       selectImportSource,
+      importRowLogSelections,
+      importOutcomes,
+      clearImportOutcomes,
       importReplayFile,
       importLogFile,
       importPairValidation,
