@@ -9,13 +9,19 @@ import {
   SessionType,
 } from '@types';
 import { createReadStream } from 'fs';
-import { readdir, readFile, stat } from 'fs/promises';
+import { readFile } from 'fs/promises';
 import { resolve as resolvePath, join } from 'path';
 import { parseStringPromise } from 'xml2js';
 import { generateReplayHash } from '../util';
 import { readUserSettings, writeUserSettings } from './user-settings';
 import { getMainPersistentStore } from '../storage/local-data-store';
-import { getTrackAliases, tracksLikelyMatch } from './track-matching';
+import {
+  buildLogFileIndex,
+  getLogDataSessionType as getLogDataSessionTypeFromIndex,
+  LogFileIndex,
+  safeModifiedAtSeconds,
+  selectBestLogSummary,
+} from './log-index';
 
 const FIRST_RUN_GET_REPLAYS_DELAY_MS = 3000;
 const DEFAULT_REPLAY_LOG_MATCH_THRESHOLD_MS = 120_000;
@@ -1074,189 +1080,61 @@ export const parseLogXmlFull = async (filePath: string) => {
   })) as ParsedLogXml;
 };
 
+/** Re-exported from log-index, which needs it to summarise a directory. */
 export const getLogDataSessionType = (
   logData: ParsedLogXml,
-): SessionType | null => {
-  const raceResultsKeys = Object.keys(logData?.rFactorXML?.RaceResults || {});
-
-  if (raceResultsKeys.includes('Race')) {
-    return 'RACE';
-  }
-  if (raceResultsKeys.includes('Qualify')) {
-    return 'QUALIFY';
-  }
-  if (raceResultsKeys.includes('Practice1')) {
-    return 'PRACTICE';
-  }
-  return null;
-};
-
-/**
- * File modification time, or null when it cannot be read.
- *
- * Deliberately forgiving. This only refines a tiebreak, so a filesystem that
- * will not answer should fall back to the previous ordering rather than fail
- * the whole match.
- */
-const safeModifiedAt = async (filePath: string): Promise<number | null> => {
-  try {
-    const { mtimeMs } = await stat(filePath);
-    return Number.isFinite(mtimeMs) ? mtimeMs / 1000 : null;
-  } catch {
-    return null;
-  }
-};
+): SessionType | null => getLogDataSessionTypeFromIndex(logData);
 
 interface LogFileData {
   logDataFileName: string | null;
   logData: ParsedLogXml | null;
 }
 
-const getSessionCodeFromFileName = (fileName: string): SessionType | null => {
-  const match = String(fileName ?? '').match(/([RQP])\d+\.xml$/i);
-  if (!match) {
-    return null;
-  }
+/**
+ * When a race is restarted, the weekend produces several sessions that are
+ * identical to everything matching looks at: same event DateTime, same track,
+ * same session type, same grid. The only thing that separates them is when each
+ * one finished — and a replay is flushed at the same moment its result log is
+ * written, to within a second.
+ *
+ * Compared as absolute times rather than by parsing the log's file name, which
+ * is local time and would need the recording machine's offset to be meaningful.
+ */
+const getReplayFlushedAt = (replay: LMUReplay): Promise<number | null> =>
+  safeModifiedAtSeconds(
+    join(replay.replayDirectory ?? '', `${replay.replayName}.Vcr`),
+  );
 
-  const code = match[1].toUpperCase();
-  if (code === 'R') {
-    return 'RACE';
-  }
-  if (code === 'Q') {
-    return 'QUALIFY';
-  }
-
-  return 'PRACTICE';
-};
-
+/**
+ * Selects the log belonging to a replay.
+ *
+ * Retained for callers that hold no index — chiefly the tests, which exercise
+ * ranking a directory at a time. Anything syncing or opening more than one
+ * replay should build an index once and pass it to getReplayLogData instead;
+ * this rebuilds the directory summary on every call.
+ */
 export const findBestLogFile = async (
   logDir: string,
   replay: LMUReplay,
   parser: (filePath: string) => Promise<ParsedLogXml> = parseLogXml,
 ): Promise<LogFileData | null> => {
   try {
-    const files = (await readdir(logDir)).filter((file) =>
-      file.endsWith('.xml'),
-    );
-    const replayTimestamp = replay.timestamp;
-    const replaySessionType = replay.metadata.session;
-    const replayTrackAliases = getTrackAliases(
-      replay.metadata.sceneDesc,
-      replay.replayName,
+    const index = await buildLogFileIndex<ParsedRaceResults>(logDir, parser);
+    const best = selectBestLogSummary(
+      index,
+      replay,
+      await getReplayFlushedAt(replay),
     );
 
-    /*
-     * When a race is restarted, the weekend produces several sessions that are
-     * identical to everything else here: same event DateTime, same track, same
-     * session type, same grid. The only thing that separates them is when each
-     * one finished — and a replay is flushed at the same moment its result log
-     * is written, to within a second.
-     *
-     * Compared as absolute times rather than by parsing the log's file name,
-     * which is local time and would need the recording machine's offset to be
-     * meaningful.
-     */
-    const replayFlushedAt = await safeModifiedAt(
-      join(replay.replayDirectory ?? '', `${replay.replayName}.Vcr`),
-    );
-
-    const logSummaries = (
-      await Promise.allSettled(
-        files.map(async (file) => {
-          const fileData = await parser(join(logDir, file));
-          const raceResults = fileData?.rFactorXML?.RaceResults || {};
-          return {
-            fileName: file,
-            dateTime: raceResults?.DateTime ?? null,
-            sessionCode:
-              getLogDataSessionType(fileData) ||
-              getSessionCodeFromFileName(file),
-            trackVenue: raceResults?.TrackVenue || '',
-            trackCourse: raceResults?.TrackCourse || '',
-            trackEvent: raceResults?.TrackEvent || '',
-            writtenAt: await safeModifiedAt(join(logDir, file)),
-            fileData,
-          };
-        }),
-      )
-    ).flatMap((result) =>
-      result.status === 'fulfilled' ? [result.value] : [],
-    );
-
-    const candidates = logSummaries.filter(
-      (log) =>
-        log.sessionCode === replaySessionType &&
-        log.dateTime !== null &&
-        log.dateTime !== undefined,
-    );
-    if (candidates.length === 0) {
+    if (!best) {
       return { logDataFileName: null, logData: null };
     }
 
-    const ranked = candidates
-      .map((log) => {
-        const diff = Math.abs(replayTimestamp - Number(log.dateTime));
-        const trackMatch = tracksLikelyMatch(
-          replayTrackAliases,
-          log.trackVenue,
-          log.trackCourse,
-          log.trackEvent,
-        );
-        const fileNameTsMatch = log.fileName.match(
-          /^(\d{4})_(\d{2})_(\d{2})_(\d{2})_(\d{2})_(\d{2})-/,
-        );
-        let fileNameTs = null;
-        if (fileNameTsMatch) {
-          const dt = new Date(
-            Date.UTC(
-              Number(fileNameTsMatch[1]),
-              Number(fileNameTsMatch[2]) - 1,
-              Number(fileNameTsMatch[3]),
-              Number(fileNameTsMatch[4]),
-              Number(fileNameTsMatch[5]),
-              Number(fileNameTsMatch[6]),
-            ),
-          );
-          fileNameTs = Math.floor(dt.getTime() / 1000);
-        }
-        return {
-          ...log,
-          diffSec: diff,
-          trackMatch,
-          fileNameTs,
-        };
-      })
-      .sort((a, b) => {
-        if (a.trackMatch !== b.trackMatch) return b.trackMatch ? 1 : -1;
-        if (a.diffSec !== b.diffSec) return a.diffSec - b.diffSec;
-        if (
-          replayFlushedAt !== null &&
-          a.writtenAt !== null &&
-          b.writtenAt !== null
-        ) {
-          const aFlushDelta = Math.abs(replayFlushedAt - a.writtenAt);
-          const bFlushDelta = Math.abs(replayFlushedAt - b.writtenAt);
-          if (aFlushDelta !== bFlushDelta) {
-            return aFlushDelta - bFlushDelta;
-          }
-        }
-        if (
-          a.fileNameTs !== null &&
-          b.fileNameTs !== null &&
-          a.fileNameTs !== b.fileNameTs
-        ) {
-          return (
-            Math.abs(replayTimestamp - a.fileNameTs) -
-            Math.abs(replayTimestamp - b.fileNameTs)
-          );
-        }
-        return a.fileName.localeCompare(b.fileName);
-      });
-
-    const best = ranked[0];
     return {
-      logDataFileName: best?.fileName ?? null,
-      logData: best?.fileData ?? null,
+      logDataFileName: best.fileName,
+      logData: best.logData
+        ? { rFactorXML: { RaceResults: best.logData } }
+        : null,
     };
   } catch {
     return { logDataFileName: null, logData: null };
@@ -1269,29 +1147,70 @@ interface LogMetaData {
   logDataFileName: string;
 }
 
+export const resolveLogDirectoryForReplay = (replay: LMUReplay): string =>
+  resolvePath(replay.replayDirectory, '../Log/Results');
+
+/**
+ * Builds the results-directory index for a replay's install.
+ *
+ * Callers that touch more than one replay should build this once and pass it
+ * down. Summaries are memoised per file, so a rebuild after nothing changed
+ * costs a stat per file rather than a parse.
+ */
+export const buildReplayLogIndex = (
+  replay: LMUReplay,
+): Promise<LogFileIndex<ParsedRaceResults>> =>
+  buildLogFileIndex<ParsedRaceResults>(
+    resolveLogDirectoryForReplay(replay),
+    parseLogXml,
+  );
+
 export const getReplayLogData = async (
   replay: LMUReplay,
-  options?: { fullData?: boolean },
+  options?: { fullData?: boolean; index?: LogFileIndex<ParsedRaceResults> },
 ): Promise<LogMetaData | null> => {
   try {
-    const { replayDirectory } = replay;
-    const logDataDirectory = resolvePath(replayDirectory, '../Log/Results');
-    const logData = await findBestLogFile(
-      logDataDirectory,
+    const logDataDirectory = resolveLogDirectoryForReplay(replay);
+    /*
+     * Selection always runs on the cheap streaming summaries, never on whole
+     * documents. Asking for full data used to swap the parser for xml2js — for
+     * every log in the directory, in parallel, to choose one of them. That is
+     * seconds and hundreds of megabytes per replay opened once a 24h log is in
+     * the folder.
+     */
+    const index =
+      options?.index?.logDir === logDataDirectory
+        ? options.index
+        : await buildLogFileIndex<ParsedRaceResults>(
+            logDataDirectory,
+            parseLogXml,
+          );
+
+    const best = selectBestLogSummary(
+      index,
       replay,
-      options?.fullData ? parseLogXmlFull : parseLogXml,
+      await getReplayFlushedAt(replay),
     );
 
-    if (!logData || !logData.logDataFileName || !logData.logData) {
+    if (!best) {
       return null;
     }
 
-    const logMetaData: LogMetaData = {
-      logData: logData?.logData?.rFactorXML?.RaceResults || null,
+    // Only the one log the replay actually belongs to is read in full.
+    const logData = options?.fullData
+      ? ((await parseLogXmlFull(best.filePath))?.rFactorXML?.RaceResults ??
+        null)
+      : best.logData;
+
+    if (!logData) {
+      return null;
+    }
+
+    return {
+      logData,
       logDataDirectory,
-      logDataFileName: logData?.logDataFileName || '',
+      logDataFileName: best.fileName,
     };
-    return logMetaData;
   } catch {
     return null;
   }
@@ -1373,6 +1292,28 @@ export const syncReplayData = async (
    */
   const importedPaths = buildImportedPathIndex(readImportedReplays());
 
+  /*
+   * Built once for the whole sync, not once per replay.
+   *
+   * Every replay in a run shares an install and therefore a results directory,
+   * so re-deriving it per replay meant re-reading and re-parsing the same
+   * directory for each one — a first sync of 193 replays against 388 logs is
+   * 74 884 parses of the same files. Lazily, because a sync that finds nothing
+   * new should not touch the directory at all.
+   */
+  let logIndex: LogFileIndex<ParsedRaceResults> | null = null;
+  const getLogIndex = async (replay: LMUReplay) => {
+    const logDir = resolveLogDirectoryForReplay(replay);
+    if (logIndex?.logDir !== logDir) {
+      logIndex = await buildLogFileIndex<ParsedRaceResults>(
+        logDir,
+        parseLogXml,
+      );
+    }
+
+    return logIndex;
+  };
+
   // Add hash to each replay and store in electron-store
   for (const replay of data) {
     if (importedPaths.has(buildReplayFilePath(replay))) {
@@ -1423,7 +1364,9 @@ export const syncReplayData = async (
     }
 
     if (!storedReplay[hash]) {
-      const logMetaData = await getReplayLogData(replay);
+      const logMetaData = await getReplayLogData(replay, {
+        index: await getLogIndex(replay),
+      });
 
       if (logMetaData) {
         replay.logData = logMetaData.logData;
@@ -1769,9 +1712,12 @@ export const postWatchReplay = async (
       return;
     }
 
+    // One index for both lookups below, rather than a directory scan per call.
+    const logIndex = await buildReplayLogIndex(replay);
+
     let cachedReplay = storedReplay[hash] as LMUReplay | undefined;
     if (!cachedReplay) {
-      const logMetaData = await getReplayLogData(replay);
+      const logMetaData = await getReplayLogData(replay, { index: logIndex });
 
       if (!logMetaData) {
         return;
@@ -1787,7 +1733,10 @@ export const postWatchReplay = async (
       cachedReplay = storedReplay[hash] as LMUReplay;
     }
 
-    const fullLogMetaData = await getReplayLogData(replay, { fullData: true });
+    const fullLogMetaData = await getReplayLogData(replay, {
+      fullData: true,
+      index: logIndex,
+    });
     const responseReplay = {
       ...cachedReplay,
       logData: fullLogMetaData?.logData ?? cachedReplay.logData,

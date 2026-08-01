@@ -892,6 +892,63 @@ describe('main/replay helpers', () => {
     delete replayStoreData.importedReplays;
     replayStoreData.replays = {};
   });
+
+  /**
+   * Log matching used to rebuild the results directory for every replay, so a
+   * sync of N replays read and parsed every log N times. That was tolerable
+   * while a log was ~80 KB. LMU now records 24-hour races, where a single
+   * result log runs to tens of megabytes, and the same sync would read on the
+   * order of a terabyte.
+   *
+   * Asserted on readdir rather than on parse counts because it is the cheapest
+   * honest proxy: one listing per sync means one pass over the directory.
+   */
+  it('summarises the results directory once per sync, not once per replay', async () => {
+    const globalWithImmediate = globalThis as unknown as Record<
+      string,
+      unknown
+    >;
+    const originalSetImmediate = globalWithImmediate.setImmediate;
+    globalWithImmediate.setImmediate = (callback: () => void) =>
+      setTimeout(callback, 0);
+
+    const replays = Array.from({ length: 5 }, (_unused, index) => ({
+      id: index,
+      metadata: { session: 'RACE', sceneDesc: 'SEBRINGWEC' },
+      replayDirectory: 'C:/replays/',
+      replayName: `Sebring International Raceway R1 ${index + 1}`,
+      size: 123,
+      timestamp: 1000 + index,
+    }));
+
+    replayStoreData.replays = {};
+    global.fetch = jest.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => replays,
+    }) as typeof global.fetch;
+
+    readdirMock.mockClear();
+    readdirMock.mockResolvedValue([
+      'race.xml',
+      'quali.xml',
+    ] as unknown as Awaited<ReturnType<typeof readdir>>);
+    readFileMock.mockResolvedValue(
+      '<rFactorXML><RaceResults><DateTime>1000</DateTime><TrackVenue>Sebring</TrackVenue><Race /></RaceResults></rFactorXML>' as unknown as Awaited<
+        ReturnType<typeof readFile>
+      >,
+    );
+
+    await syncReplayData();
+
+    expect(
+      Object.keys(replayStoreData.replays as Record<string, LMUReplay>),
+    ).toHaveLength(5);
+    expect(readdirMock).toHaveBeenCalledTimes(1);
+
+    globalWithImmediate.setImmediate = originalSetImmediate;
+    replayStoreData.replays = {};
+  });
 });
 
 describe('main/replay archive', () => {
