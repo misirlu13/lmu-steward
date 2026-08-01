@@ -2,6 +2,7 @@ import { readdir, stat } from 'fs/promises';
 import { join } from 'path';
 import { SessionType } from '@types';
 import { getTrackAliases, tracksLikelyMatch } from './track-matching';
+import { parseResultLog, ResultLogParser, ResultLogRecord } from './result-log';
 
 /**
  * One parse of the results directory, shared by everything that needs it.
@@ -23,28 +24,7 @@ import { getTrackAliases, tracksLikelyMatch } from './track-matching';
  * parsed document; that is what made the previous version dangerous.
  */
 
-/** The fields log matching reads. Structurally satisfied by ParsedRaceResults. */
-export interface LogSummaryFields {
-  DateTime?: number;
-  TrackVenue?: string;
-  TrackCourse?: string;
-  TrackEvent?: string;
-  Race?: unknown;
-  Qualify?: unknown;
-  Practice1?: unknown;
-}
-
-export interface ParsedLogDocument<
-  T extends LogSummaryFields = LogSummaryFields,
-> {
-  rFactorXML?: { RaceResults?: T };
-}
-
-export type LogSummaryParser<T extends LogSummaryFields> = (
-  filePath: string,
-) => Promise<ParsedLogDocument<T>>;
-
-export interface LogFileSummary<T extends LogSummaryFields = LogSummaryFields> {
+export interface LogFileSummary {
   fileName: string;
   filePath: string;
   dateTime: number | null;
@@ -54,12 +34,16 @@ export interface LogFileSummary<T extends LogSummaryFields = LogSummaryFields> {
   trackEvent: string;
   /** File mtime in seconds, used to separate restarted races. */
   writtenAt: number | null;
-  logData: T | null;
+  /**
+   * The whole canonical record — the dashboard's session summary and the career
+   * facts, both produced by the one pass that read this file.
+   */
+  record: ResultLogRecord;
 }
 
-export interface LogFileIndex<T extends LogSummaryFields = LogSummaryFields> {
+export interface LogFileIndex {
   logDir: string;
-  summaries: LogFileSummary<T>[];
+  summaries: LogFileSummary[];
 }
 
 /**
@@ -71,18 +55,29 @@ export interface LogFileIndex<T extends LogSummaryFields = LogSummaryFields> {
  */
 const LOG_PARSE_CONCURRENCY = 4;
 
-interface CachedSummary<T extends LogSummaryFields> {
+interface CachedSummary {
   fingerprint: string | null;
-  summary: LogFileSummary<T>;
+  summary: LogFileSummary;
 }
 
-const summaryCache = new Map<string, Map<string, CachedSummary<never>>>();
+/*
+ * Keyed by parser first, then directory.
+ *
+ * A cache keyed on the directory alone would hand a caller whatever the last
+ * parser produced for an unchanged file. That is harmless while one parser
+ * exists and silently wrong the moment a second one wants a different record
+ * out of the same files — which is exactly what a richer career pass would be.
+ */
+let summaryCache = new Map<
+  ResultLogParser,
+  Map<string, Map<string, CachedSummary>>
+>();
 
 const cacheKeyForDirectory = (logDir: string): string => logDir.toLowerCase();
 
 /** Clears memoised summaries. Tests reuse directory paths across cases. */
 export const resetLogIndexCacheForTests = (): void => {
-  summaryCache.clear();
+  summaryCache = new Map();
 };
 
 /**
@@ -138,7 +133,7 @@ export const getSessionCodeFromFileName = (
 };
 
 export const getLogDataSessionType = (
-  logData: ParsedLogDocument | null | undefined,
+  logData: { rFactorXML?: { RaceResults?: object } } | null | undefined,
 ): SessionType | null => {
   const raceResultsKeys = Object.keys(logData?.rFactorXML?.RaceResults || {});
 
@@ -187,17 +182,17 @@ const mapWithConcurrency = async <TItem, TResult>(
 };
 
 /**
- * Summarises every result log in `logDir`, reusing cached summaries for files
+ * Summarises every result log in `logDir`, reusing cached records for files
  * whose size and mtime are unchanged.
  *
- * `parseSummary` must be the cheap streaming parser. Passing a whole-document
- * parser here is what used to make opening a single replay parse the entire
- * directory through xml2js.
+ * `parse` must be a single-pass streaming parser. Handing this a
+ * whole-document parser is what used to make opening one replay run xml2js over
+ * the entire directory.
  */
-export const buildLogFileIndex = async <T extends LogSummaryFields>(
+export const buildLogFileIndex = async (
   logDir: string,
-  parseSummary: LogSummaryParser<T>,
-): Promise<LogFileIndex<T>> => {
+  parse: ResultLogParser = parseResultLog,
+): Promise<LogFileIndex> => {
   let files: string[];
 
   try {
@@ -207,11 +202,12 @@ export const buildLogFileIndex = async <T extends LogSummaryFields>(
   }
 
   const cacheKey = cacheKeyForDirectory(logDir);
-  const cached = (summaryCache.get(cacheKey) ?? new Map()) as Map<
-    string,
-    CachedSummary<T>
-  >;
-  const nextCache = new Map<string, CachedSummary<T>>();
+  const byDirectory =
+    summaryCache.get(parse) ?? new Map<string, Map<string, CachedSummary>>();
+  summaryCache.set(parse, byDirectory);
+
+  const cached = byDirectory.get(cacheKey) ?? new Map<string, CachedSummary>();
+  const nextCache = new Map<string, CachedSummary>();
 
   const summaries = await mapWithConcurrency(
     files,
@@ -230,20 +226,20 @@ export const buildLogFileIndex = async <T extends LogSummaryFields>(
         return previous.summary;
       }
 
-      const logDocument = await parseSummary(filePath);
-      const raceResults = logDocument?.rFactorXML?.RaceResults;
-      const summary: LogFileSummary<T> = {
+      const record = await parse(filePath);
+      const raceResults = record?.summary;
+      const summary: LogFileSummary = {
         fileName,
         filePath,
         dateTime: raceResults?.DateTime ?? null,
         sessionCode:
-          getLogDataSessionType(logDocument) ||
+          getLogDataSessionType({ rFactorXML: { RaceResults: raceResults } }) ||
           getSessionCodeFromFileName(fileName),
         trackVenue: raceResults?.TrackVenue || '',
         trackCourse: raceResults?.TrackCourse || '',
         trackEvent: raceResults?.TrackEvent || '',
         writtenAt: await safeModifiedAtSeconds(filePath),
-        logData: raceResults ?? null,
+        record,
       };
 
       nextCache.set(fileName, { fingerprint, summary });
@@ -251,10 +247,7 @@ export const buildLogFileIndex = async <T extends LogSummaryFields>(
     },
   );
 
-  summaryCache.set(
-    cacheKey,
-    nextCache as unknown as Map<string, CachedSummary<never>>,
-  );
+  byDirectory.set(cacheKey, nextCache);
 
   /*
    * Completion order out of the pool is not input order, and ranking's last
@@ -281,11 +274,11 @@ interface SelectionReplay {
  * where every session shares an event time, track and grid — how close the log
  * was written to the moment the replay was flushed.
  */
-export const selectBestLogSummary = <T extends LogSummaryFields>(
-  index: LogFileIndex<T>,
+export const selectBestLogSummary = (
+  index: LogFileIndex,
   replay: SelectionReplay,
   replayFlushedAt: number | null,
-): LogFileSummary<T> | null => {
+): LogFileSummary | null => {
   const replayTimestamp = replay.timestamp;
   const replaySessionType = replay.metadata?.session;
   const replayTrackAliases = getTrackAliases(

@@ -282,9 +282,15 @@ describe('main/replay helpers', () => {
     });
   });
 
+  /*
+   * The track-limits element is <TrackLimits>, plural — this fixture used to say
+   * <TrackLimit>, matching a parser that compared the lowercased tag against
+   * 'tracklimit' and therefore never counted a real one. The count reached the
+   * dashboard as zero for every replay whose full log was not loaded.
+   */
   it('parseLogXml reads streamed XML and parses session summary counts', async () => {
     const xmlChunks = [
-      '<rFactorXML><RaceResults><DateTime>1000</DateTime><TrackVenue>Sebring</TrackVenue><Race><Minutes>60</Minutes><CarClass>LMP2</CarClass><CarClass>GTE</CarClass><Driver></Driver><Driver></Driver><Stream><Incident></Incident><Penalty></Penalty><TrackLimit></TrackLimit></Stream></Race></RaceResults></rFactorXML>',
+      '<rFactorXML><RaceResults><DateTime>1000</DateTime><TrackVenue>Sebring</TrackVenue><Race><Minutes>60</Minutes><CarClass>LMP2</CarClass><CarClass>GTE</CarClass><Driver></Driver><Driver></Driver><Stream><Incident></Incident><Penalty></Penalty><TrackLimits></TrackLimits></Stream></Race></RaceResults></rFactorXML>',
     ];
     const stream = Readable.from(xmlChunks, { objectMode: false });
     createReadStreamMock.mockReturnValueOnce(

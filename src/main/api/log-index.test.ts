@@ -13,15 +13,10 @@ import { join } from 'path';
 import { LMUReplay, SessionType } from '@types';
 import {
   buildLogFileIndex,
-  LogSummaryFields,
-  ParsedLogDocument,
   resetLogIndexCacheForTests,
   selectBestLogSummary,
 } from './log-index';
-
-interface TestRaceResults extends LogSummaryFields {
-  Setting?: string;
-}
+import { parseResultLogFromString, ResultLogRecord } from './result-log';
 
 const buildLogXml = (
   eventDateTime: number,
@@ -51,32 +46,10 @@ const buildLogXml = (
 const createCountingParser = () => {
   const calls: string[] = [];
 
-  const parse = async (
-    filePath: string,
-  ): Promise<ParsedLogDocument<TestRaceResults>> => {
+  const parse = async (filePath: string): Promise<ResultLogRecord> => {
     calls.push(filePath);
     const { readFileSync } = await import('fs');
-    const xml = readFileSync(filePath, 'utf-8');
-    const read = (tag: string) => {
-      const match = xml.match(new RegExp(`<${tag}>([^<]*)</${tag}>`));
-      return match ? match[1] : undefined;
-    };
-    const sessionTag = (['Race', 'Qualify', 'Practice1'] as const).find((tag) =>
-      xml.includes(`<${tag}>`),
-    );
-
-    return {
-      rFactorXML: {
-        RaceResults: {
-          Setting: read('Setting'),
-          DateTime: Number(read('DateTime')),
-          TrackVenue: read('TrackVenue'),
-          TrackCourse: read('TrackCourse'),
-          TrackEvent: read('TrackEvent'),
-          ...(sessionTag ? { [sessionTag]: {} } : {}),
-        },
-      },
-    };
+    return parseResultLogFromString(readFileSync(filePath, 'utf-8'));
   };
 
   return { parse, calls };
@@ -125,7 +98,7 @@ describe('main/log-index', () => {
   it('parses each log once per build and returns them in a stable order', async () => {
     const { parse, calls } = createCountingParser();
 
-    const index = await buildLogFileIndex<TestRaceResults>(logDir, parse);
+    const index = await buildLogFileIndex(logDir, parse);
 
     expect(calls).toHaveLength(3);
     expect(index.summaries.map((summary) => summary.fileName)).toEqual([
@@ -147,11 +120,11 @@ describe('main/log-index', () => {
   it('reuses summaries across rebuilds instead of re-parsing unchanged logs', async () => {
     const { parse, calls } = createCountingParser();
 
-    await buildLogFileIndex<TestRaceResults>(logDir, parse);
+    await buildLogFileIndex(logDir, parse);
     expect(calls).toHaveLength(3);
 
-    await buildLogFileIndex<TestRaceResults>(logDir, parse);
-    await buildLogFileIndex<TestRaceResults>(logDir, parse);
+    await buildLogFileIndex(logDir, parse);
+    await buildLogFileIndex(logDir, parse);
 
     expect(calls).toHaveLength(3);
   });
@@ -159,7 +132,7 @@ describe('main/log-index', () => {
   it('re-parses only the logs whose contents changed', async () => {
     const { parse, calls } = createCountingParser();
 
-    await buildLogFileIndex<TestRaceResults>(logDir, parse);
+    await buildLogFileIndex(logDir, parse);
     calls.length = 0;
 
     const changed = join(logDir, '2026_07_18_09_13_39-31R1.xml');
@@ -168,7 +141,7 @@ describe('main/log-index', () => {
       buildLogXml(EVENT_ONE + 5, 'Circuit de Spa-Francorchamps', 'Race'),
     );
 
-    const index = await buildLogFileIndex<TestRaceResults>(logDir, parse);
+    const index = await buildLogFileIndex(logDir, parse);
 
     expect(calls).toEqual([changed]);
     expect(index.summaries[0].trackVenue).toBe('Circuit de Spa-Francorchamps');
@@ -177,7 +150,7 @@ describe('main/log-index', () => {
   it('picks up new logs and drops ones that were deleted', async () => {
     const { parse } = createCountingParser();
 
-    await buildLogFileIndex<TestRaceResults>(logDir, parse);
+    await buildLogFileIndex(logDir, parse);
 
     rmSync(join(logDir, '2026_07_18_09_52_40-31R1.xml'));
     writeFileSync(
@@ -185,7 +158,7 @@ describe('main/log-index', () => {
       buildLogXml(EVENT_TWO + 900, 'Autodromo Nazionale Monza', 'Race'),
     );
 
-    const index = await buildLogFileIndex<TestRaceResults>(logDir, parse);
+    const index = await buildLogFileIndex(logDir, parse);
 
     expect(index.summaries.map((summary) => summary.fileName)).toEqual([
       '2026_07_18_09_13_39-31R1.xml',
@@ -196,16 +169,14 @@ describe('main/log-index', () => {
 
   it('survives an unreadable log rather than failing the directory', async () => {
     const failing = join(logDir, '2026_07_18_09_20_11-31Q1.xml');
-    const parse = async (
-      filePath: string,
-    ): Promise<ParsedLogDocument<TestRaceResults>> => {
+    const parse = async (filePath: string): Promise<ResultLogRecord> => {
       if (filePath === failing) {
         throw new Error('malformed XML log');
       }
       return createCountingParser().parse(filePath);
     };
 
-    const index = await buildLogFileIndex<TestRaceResults>(logDir, parse);
+    const index = await buildLogFileIndex(logDir, parse);
 
     expect(index.summaries.map((summary) => summary.fileName)).toEqual([
       '2026_07_18_09_13_39-31R1.xml',
@@ -216,7 +187,7 @@ describe('main/log-index', () => {
   it('returns an empty index for a directory that cannot be read', async () => {
     const { parse } = createCountingParser();
 
-    const index = await buildLogFileIndex<TestRaceResults>(
+    const index = await buildLogFileIndex(
       join(logDir, 'does-not-exist'),
       parse,
     );
@@ -227,7 +198,7 @@ describe('main/log-index', () => {
   describe('selection', () => {
     it('matches a replay to the log of its own event, not the neighbouring one', async () => {
       const { parse } = createCountingParser();
-      const index = await buildLogFileIndex<TestRaceResults>(logDir, parse);
+      const index = await buildLogFileIndex(logDir, parse);
 
       const first = selectBestLogSummary(
         index,
@@ -246,7 +217,7 @@ describe('main/log-index', () => {
 
     it('never crosses session types', async () => {
       const { parse } = createCountingParser();
-      const index = await buildLogFileIndex<TestRaceResults>(logDir, parse);
+      const index = await buildLogFileIndex(logDir, parse);
 
       const qualifying = selectBestLogSummary(
         index,
@@ -273,7 +244,7 @@ describe('main/log-index', () => {
       const originalWrittenAt = new Date((EVENT_ONE + 900) * 1000);
       utimesSync(original, originalWrittenAt, originalWrittenAt);
 
-      const index = await buildLogFileIndex<TestRaceResults>(logDir, parse);
+      const index = await buildLogFileIndex(logDir, parse);
 
       expect(
         selectBestLogSummary(
@@ -294,7 +265,7 @@ describe('main/log-index', () => {
 
     it('returns null when the directory holds no log of that session type', async () => {
       const { parse } = createCountingParser();
-      const index = await buildLogFileIndex<TestRaceResults>(logDir, parse);
+      const index = await buildLogFileIndex(logDir, parse);
 
       expect(
         selectBestLogSummary(

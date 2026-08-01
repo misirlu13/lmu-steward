@@ -20,7 +20,8 @@ import { existsSync, mkdtempSync, rmSync, utimesSync, writeFileSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { LMUReplay, SessionType } from '@types';
-import { findBestLogFile, parseLogXml } from './replay';
+import { findBestLogFile } from './replay';
+import { parseResultLog } from './result-log';
 
 jest.mock('../storage/local-data-store', () => ({
   getMainPersistentStore: () => ({
@@ -218,7 +219,7 @@ describe('main/replay restarted races', () => {
       timestamp: RESTART_EVENT,
     } as unknown as LMUReplay;
 
-    const result = await findBestLogFile(logDir, replay, parseLogXml);
+    const result = await findBestLogFile(logDir, replay, parseResultLog);
 
     expect(result?.logDataFileName).toBe(
       `2026_07_30_23_0${index}_00-1${index}R1.xml`,
@@ -241,11 +242,11 @@ describe('main/replay log matching', () => {
   });
 
   it('reads the event DateTime rather than the session one', async () => {
-    const parsed = await parseLogXml(
+    const parsed = await parseResultLog(
       join(logDir, '2026_07_18_22_37_06-39R1.xml'),
     );
 
-    expect(parsed.rFactorXML?.RaceResults?.DateTime).toBe(EVENT_TWO);
+    expect(parsed.summary.DateTime).toBe(EVENT_TWO);
   });
 
   /**
@@ -258,7 +259,7 @@ describe('main/replay log matching', () => {
     const result = await findBestLogFile(
       logDir,
       buildReplay('Autodromo Nazionale Monza R1 2', 'RACE', EVENT_TWO),
-      parseLogXml,
+      parseResultLog,
     );
 
     expect(result?.logDataFileName).toBe('2026_07_18_22_37_06-39R1.xml');
@@ -281,7 +282,7 @@ describe('main/replay log matching', () => {
           session as SessionType,
           timestamp,
         ),
-        parseLogXml,
+        parseResultLog,
       );
 
       expect(result?.logDataFileName).toBe(expectedLogFileName);
@@ -353,7 +354,7 @@ describeWithRealFixtures(
         const result = await findBestLogFile(
           REAL_FIXTURE_LOG_DIR,
           buildReplay(replayName, session as SessionType, timestamp),
-          parseLogXml,
+          parseResultLog,
         );
 
         expect(result?.logDataFileName).toBe(expectedLogFileName);
