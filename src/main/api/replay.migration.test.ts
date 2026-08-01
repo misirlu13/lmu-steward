@@ -20,7 +20,7 @@ describe('main/replay startup schema enforcement', () => {
       }),
     }));
 
-    const { REPLAY_CACHE_SCHEMA_VERSION } = await import('./replay');
+    const { REPLAY_CACHE_SCHEMA_VERSION } = await import('./replay.js');
 
     expect(setMock).toHaveBeenCalledWith('replays', {});
     expect(setMock).toHaveBeenCalledWith(
@@ -56,7 +56,7 @@ describe('main/replay startup schema enforcement', () => {
       }),
     }));
 
-    const { applyArchiveState } = await import('./replay');
+    const { applyArchiveState } = await import('./replay.js');
 
     // A schema bump wipes the rebuildable cache; the user's archive decisions
     // live outside it and must survive.
@@ -80,7 +80,7 @@ describe('main/replay startup schema enforcement', () => {
    */
   it('does not clear replay cache when schema already matches', async () => {
     const setMock = jest.fn();
-    const { REPLAY_CACHE_SCHEMA_VERSION } = await import('./replay');
+    const { REPLAY_CACHE_SCHEMA_VERSION } = await import('./replay.js');
 
     jest.resetModules();
 
@@ -97,7 +97,7 @@ describe('main/replay startup schema enforcement', () => {
       }),
     }));
 
-    await import('./replay');
+    await import('./replay.js');
 
     expect(setMock).not.toHaveBeenCalled();
   });

@@ -60,7 +60,7 @@ const loadStorageOnLegacyBackend = async (tempDir: string) => {
   });
   jest.doMock('electron-store', () => createFileBackedStoreMock(tempDir));
 
-  return import('./local-data-store');
+  return import('./local-data-store.js');
 };
 
 const loadStorageOnSqliteBackend = async (tempDir: string) => {
@@ -71,7 +71,7 @@ const loadStorageOnSqliteBackend = async (tempDir: string) => {
   jest.doMock('electron', () => ({ app: { getPath: () => tempDir } }));
   jest.doMock('electron-store', () => createFileBackedStoreMock(tempDir));
 
-  return import('./local-data-store');
+  return import('./local-data-store.js');
 };
 
 describe('main/storage local data store', () => {
@@ -131,7 +131,7 @@ describe('main/storage local data store', () => {
         },
       }));
 
-      const storage = await import('./local-data-store');
+      const storage = await import('./local-data-store.js');
       const mainStore = storage.getMainPersistentStore();
       const profileStore = storage.getProfilePersistentStore();
 
@@ -147,7 +147,7 @@ describe('main/storage local data store', () => {
       expect(profileStore.get('hasFetchedProfileInfo')).toBe(true);
       expect(profileStore.get('lastFetchedAt')).toBe(12345);
     } finally {
-      const storage = await import('./local-data-store');
+      const storage = await import('./local-data-store.js');
       storage.resetLocalDataStoreForTests();
       rmSync(tempDir, { recursive: true, force: true });
     }
@@ -203,7 +203,7 @@ describe('main/storage local data store', () => {
         },
       }));
 
-      const storage = await import('./local-data-store');
+      const storage = await import('./local-data-store.js');
       const mainStore = storage.getMainPersistentStore();
       const profileStore = storage.getProfilePersistentStore();
 
@@ -214,7 +214,7 @@ describe('main/storage local data store', () => {
       expect(profileStore.backend).toBe('legacy');
       expect(profileStore.get('hasFetchedProfileInfo')).toBe(false);
     } finally {
-      const storage = await import('./local-data-store');
+      const storage = await import('./local-data-store.js');
       storage.resetLocalDataStoreForTests();
       rmSync(tempDir, { recursive: true, force: true });
     }
@@ -265,7 +265,7 @@ describe('main/storage local data store', () => {
         'keep1',
       ]);
     } finally {
-      const storage = await import('./local-data-store');
+      const storage = await import('./local-data-store.js');
       storage.resetLocalDataStoreForTests();
       rmSync(tempDir, { recursive: true, force: true });
     }
@@ -296,7 +296,7 @@ describe('main/storage local data store', () => {
         quickViewEnabled: true,
       });
     } finally {
-      const storage = await import('./local-data-store');
+      const storage = await import('./local-data-store.js');
       storage.resetLocalDataStoreForTests();
       rmSync(tempDir, { recursive: true, force: true });
     }
@@ -329,7 +329,7 @@ describe('main/storage local data store', () => {
         existsSync(path.join(tempDir, 'lmu-steward-pending-clear.json')),
       ).toBe(false);
     } finally {
-      const storage = await import('./local-data-store');
+      const storage = await import('./local-data-store.js');
       storage.resetLocalDataStoreForTests();
       rmSync(tempDir, { recursive: true, force: true });
     }
@@ -365,7 +365,7 @@ describe('main/storage local data store', () => {
         nextRun.getMainPersistentStore().get('userSettings'),
       ).toBeUndefined();
     } finally {
-      const storage = await import('./local-data-store');
+      const storage = await import('./local-data-store.js');
       storage.resetLocalDataStoreForTests();
       rmSync(tempDir, { recursive: true, force: true });
     }
