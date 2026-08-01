@@ -27,6 +27,11 @@ import {
   ParsedRaceResults,
   ResultLogParser,
 } from './result-log';
+import {
+  createCareerLogParser,
+  ensureCareerIdentity,
+  scanCareer,
+} from './career';
 
 const FIRST_RUN_GET_REPLAYS_DELAY_MS = 3000;
 const DEFAULT_REPLAY_LOG_MATCH_THRESHOLD_MS = 120_000;
@@ -581,7 +586,14 @@ export const syncReplayData = async (
   const getLogIndex = async (replay: LMUReplay) => {
     const logDir = resolveLogDirectoryForReplay(replay);
     if (logIndex?.logDir !== logDir) {
-      logIndex = await buildLogFileIndex(logDir);
+      /*
+       * Parsed with the career's own parser so this one pass serves both
+       * consumers. Matching reads only the session summary, which is identical
+       * either way; the career needs its driver names bound in, because
+       * isPlayer marks every human on the grid rather than the local one.
+       */
+      ensureCareerIdentity();
+      logIndex = await buildLogFileIndex(logDir, createCareerLogParser());
     }
 
     return logIndex;
@@ -660,6 +672,36 @@ export const syncReplayData = async (
   }
 
   replayStore.set('replays', storedReplay);
+
+  /*
+   * The career rides the index this sync already built, so it costs no extra
+   * filesystem work. Deliberately after the replay cache is written and behind
+   * its own guard: a career scan that fails must not lose a completed sync.
+   *
+   * Skipped when the sync never needed the directory — every replay was already
+   * cached — because the career is rescanned explicitly from its own page and
+   * has nothing new to read either.
+   */
+  if (logIndex) {
+    try {
+      await scanCareer({
+        index: logIndex,
+        /*
+         * Only logs this app actually wrote. Importing a replay of a race the
+         * user also drove copies no log — theirs is already there — and
+         * excluding those would drop their own sessions from their career.
+         */
+        importedLogPaths: new Set(
+          Object.values(readImportedReplays())
+            .filter((record) => record.logWasWritten)
+            .map((record) => record.logPath)
+            .filter((path): path is string => Boolean(path)),
+        ),
+      });
+    } catch {
+      // Career data is rebuilt on demand; a failure here is not a sync failure.
+    }
+  }
 };
 
 /**

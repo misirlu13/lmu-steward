@@ -192,6 +192,218 @@ export interface PersistedDashboardView {
   sortDirection: DashboardSortDirection;
 }
 
+/**
+ * One session the user drove, as the driver dashboard remembers it.
+ *
+ * These records are the whole point of the feature: they outlive the files they
+ * were derived from. A result log the user deletes takes its session with it —
+ * no scan can bring it back — so scanning only ever adds and updates rows, and
+ * a vanished source file marks `filePresent` rather than removing anything.
+ *
+ * They live in their own table for the same reason imported replays do. The
+ * replay cache is emptied wholesale on schema bumps and forced resets, and a
+ * career kept there would be erased by a routine version bump.
+ */
+export interface CareerSessionRecord {
+  /**
+   * Derived from the session's own content, not its file name, so a log that is
+   * renamed, moved or re-imported updates its row instead of duplicating it.
+   * Restarted races differ in session start time and so remain distinct.
+   */
+  sessionKey: string;
+  driverName: string;
+  startedAt: number;
+  sessionType: SessionType;
+  /** `Multiplayer` or `Race Weekend`, straight from the log. */
+  setting: string;
+  trackVenue: string;
+  trackFolder: string;
+  /**
+   * The layout, not the venue. One track folder can hold several — Imola ships
+   * IMOLAWEC and IMOLAELMS — and lap times from different layouts must never
+   * share a personal-best row.
+   */
+  trackLayout: string;
+  trackVersion: string;
+  trackLengthM: number;
+  trackEvent: string;
+  gameVersion: string;
+  carClass: string;
+  carType: string;
+  carNumber: string;
+  teamName: string;
+  aids: string;
+  gridPos: number | null;
+  classGridPos: number | null;
+  finishPos: number | null;
+  classFinishPos: number | null;
+  lapsCompleted: number;
+  pitstops: number;
+  finishStatus: string;
+  dnfReason: string | null;
+  finishTimeSec: number | null;
+  bestLapSec: number | null;
+  theoreticalBestSec: number | null;
+  averageLapSec: number | null;
+  lapStdDevSec: number | null;
+  topSpeedKph: number | null;
+  lapsLed: number;
+  firstLapPos: number | null;
+  timedLapCount: number;
+  /** Fastest lap anyone set, which is what a pace comparison needs. */
+  sessionBestLapSec: number | null;
+  classBestLapSec: number | null;
+  fieldSize: number;
+  classFieldSize: number;
+  aiCount: number;
+  humanCount: number;
+  classes: string[];
+  incidentsCaused: number;
+  incidentsInvolved: number;
+  incidentForceMax: number;
+  contactWithVehicle: number;
+  contactWithScenery: number;
+  penalties: { penalty: string; reason: string; timeSec: number | null }[];
+  trackLimitWarnings: number;
+  trackLimitInvalidLaps: number;
+  opponents: { name: string; carClass: string; isAi: boolean }[];
+  sourceFileName: string;
+  sourcePath: string;
+  /** Size and mtime, so an unchanged log is skipped rather than re-parsed. */
+  sourceFingerprint: string | null;
+  /** Display only. A missing file never removes the record. */
+  filePresent: boolean;
+  /** User-set: keep the session in the library but out of every statistic. */
+  excluded: boolean;
+  firstSeenAt: number;
+}
+
+/**
+ * Who the career belongs to.
+ *
+ * `primary` comes from the LMU profile. `aliases` covers renames and second
+ * profiles, and `unclaimed` holds names found in logs this app did not import
+ * but does not recognise — surfaced so the user can claim them rather than
+ * silently folding someone else's sessions into their own history.
+ */
+export interface CareerIdentity {
+  primary: string;
+  aliases: string[];
+  unclaimed: { name: string; sessionCount: number }[];
+}
+
+export interface CareerScanReport {
+  scannedAt: number;
+  logsSeen: number;
+  logsParsed: number;
+  sessionsRecorded: number;
+  /** Records whose source log is no longer on disk. */
+  sessionsMissingFiles: number;
+  skippedImported: number;
+  skippedUnclaimed: number;
+}
+
+export interface CareerTrackSummary {
+  trackFolder: string;
+  trackLayout: string;
+  trackVenue: string;
+  sessions: number;
+  races: number;
+  wins: number;
+  podiums: number;
+  bestClassGridPos: number | null;
+  bestClassFinishPos: number | null;
+  bestLapSec: number | null;
+  averageFinishPercentile: number | null;
+  lapsCompleted: number;
+  distanceKm: number;
+  incidentsCaused: number;
+  incidentsPer100Km: number | null;
+  lastRacedAt: number;
+}
+
+export interface CareerCarSummary {
+  carType: string;
+  carClass: string;
+  sessions: number;
+  races: number;
+  wins: number;
+  podiums: number;
+  bestLapSec: number | null;
+  averageFinishPercentile: number | null;
+}
+
+export interface CareerAggregate {
+  identity: CareerIdentity;
+  headline: {
+    firstSessionAt: number | null;
+    lastSessionAt: number | null;
+    sessions: number;
+    races: number;
+    qualifying: number;
+    practice: number;
+    multiplayerSessions: number;
+    raceWeekendSessions: number;
+    lapsCompleted: number;
+    distanceKm: number;
+    timeOnTrackSec: number;
+    tracks: number;
+    layouts: number;
+    cars: number;
+    classes: number;
+  };
+  results: {
+    wins: number;
+    podiums: number;
+    topFives: number;
+    poles: number;
+    frontRows: number;
+    winsMultiplayer: number;
+    winsRaceWeekend: number;
+    podiumsMultiplayer: number;
+    podiumsRaceWeekend: number;
+    averageClassFinish: number | null;
+    averageClassGrid: number | null;
+    bestClassFinish: number | null;
+    worstClassFinish: number | null;
+    finishes: number;
+    dnfs: number;
+    dnfMechanical: number;
+    dnfAccident: number;
+    disqualifications: number;
+    netPositionsGained: number;
+    bestComeback: number | null;
+    lapsLed: number;
+    finishDistribution: { position: number; count: number }[];
+  };
+  discipline: {
+    incidentsCaused: number;
+    incidentsInvolved: number;
+    incidentsPer100Km: number | null;
+    contactWithVehicle: number;
+    contactWithScenery: number;
+    worstImpactForce: number;
+    penalties: number;
+    penaltiesByReason: { reason: string; count: number }[];
+    trackLimitWarnings: number;
+    trackLimitInvalidLaps: number;
+    longestCleanStreak: number;
+  };
+  tracks: CareerTrackSummary[];
+  cars: CareerCarSummary[];
+  /** Newest first, for the recent-form strip. */
+  recentSessions: CareerSessionRecord[];
+  dataHealth: {
+    sessionsWithMissingFiles: number;
+    excludedSessions: number;
+    lastScan: CareerScanReport | null;
+  };
+}
+
+export interface CareerSummaryResponse {
+  aggregate: CareerAggregate;
+}
+
 export type LMUReplayCommands =
   | 'VCRCOMMAND_REVERSESCAN'
   | 'VCRCOMMAND_PLAYBACKWARDS'

@@ -15,6 +15,7 @@ import { NavBar } from './components/Navbar/NavBar';
 import theme from './theme';
 import { ReplayView } from './views/Replay';
 import { DriverAnalysisView } from './views/DriverAnalysis';
+import { DriverDashboardView } from './views/DriverDashboard';
 import { UserSettingsView } from './views/UserSettings';
 import { LmuDisconnectedDialog } from './components/Common/LmuDisconnectedDialog';
 import { AppExitConfirmDialog } from './components/Common/AppExitConfirmDialog';
@@ -52,7 +53,15 @@ const AppRoutesShell = () => {
         }}
       >
         <Routes>
-          <Route path="/" element={<DashboardView />} />
+          {/*
+            The driver dashboard is the landing page, with the replay list one
+            click away at /replays. Existing links to "/" for the replay list
+            keep working through the redirect below, and the dashboard sends a
+            driver with no recorded sessions straight on to the replays it does
+            have rather than opening on a page of zeros.
+          */}
+          <Route path="/" element={<DriverDashboardView />} />
+          <Route path="/replays" element={<DashboardView />} />
           <Route path="/replay/:replayHash" element={<ReplayView />} />
           <Route
             path="/replay/:replayHash/driver/:driverId"

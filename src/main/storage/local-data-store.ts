@@ -8,7 +8,12 @@ import {
   writeFileSync,
 } from 'fs';
 import nodePath from 'path';
-import { ImportedReplayRecord, LMUReplay, ProfileCacheStore } from '@types';
+import {
+  CareerSessionRecord,
+  ImportedReplayRecord,
+  LMUReplay,
+  ProfileCacheStore,
+} from '@types';
 
 type SqliteDatabase = import('better-sqlite3').Database;
 
@@ -55,6 +60,13 @@ const LEGACY_SYNC_STAMPS_KEY = '__syncStamps__';
  * carries it without a second code path.
  */
 const IMPORTED_REPLAYS_KEY = 'importedReplays';
+
+/**
+ * Backed by the career_sessions table, for the same reason imported replays get
+ * their own: these records survive the deletion of the files they came from, so
+ * they must not sit in a cache that is wiped on schema bumps.
+ */
+const CAREER_SESSIONS_KEY = 'careerSessions';
 const RESERVED_LEGACY_KEYS = new Set(['__internal__', LEGACY_SYNC_STAMPS_KEY]);
 
 const SQLITE_OPEN_ATTEMPTS = 3;
@@ -162,6 +174,24 @@ class SqliteNamespaceStore implements PersistentStore {
       return imported;
     }
 
+    if (this.namespace === 'main' && key === CAREER_SESSIONS_KEY) {
+      const rows = this.db
+        .prepare(
+          'SELECT session_key, payload FROM career_sessions ORDER BY started_at DESC',
+        )
+        .all() as Array<{ session_key: string; payload: string }>;
+      const sessions: Record<string, CareerSessionRecord> = {};
+
+      for (const row of rows) {
+        const record = deserializeValue(row.payload);
+        if (record !== undefined) {
+          sessions[row.session_key] = record as CareerSessionRecord;
+        }
+      }
+
+      return sessions;
+    }
+
     const row = this.db
       .prepare(
         'SELECT value FROM kv_store WHERE namespace = ? AND key = ? LIMIT 1',
@@ -264,6 +294,84 @@ class SqliteNamespaceStore implements PersistentStore {
       return;
     }
 
+    /*
+      Written as an upsert over the collection the caller holds, never as a
+      delete-then-insert. A career record cannot be rebuilt once its source log
+      is gone, so a caller that somehow passes a partial map must leave the rest
+      of the table standing rather than erasing history.
+    */
+    if (this.namespace === 'main' && key === CAREER_SESSIONS_KEY) {
+      const careerEntries = Object.entries(
+        isRecord(value) ? value : {},
+      ) as Array<[string, CareerSessionRecord]>;
+
+      const upsertCareer = this.db.transaction(
+        (entries: Array<[string, CareerSessionRecord]>) => {
+          const statement = this.db.prepare(`
+            INSERT INTO career_sessions (
+              session_key,
+              driver_name,
+              started_at,
+              session_type,
+              setting,
+              track_folder,
+              track_layout,
+              track_venue,
+              car_class,
+              source_file_name,
+              source_fingerprint,
+              file_present,
+              excluded,
+              payload,
+              first_seen_at,
+              updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(session_key) DO UPDATE SET
+              driver_name = excluded.driver_name,
+              started_at = excluded.started_at,
+              session_type = excluded.session_type,
+              setting = excluded.setting,
+              track_folder = excluded.track_folder,
+              track_layout = excluded.track_layout,
+              track_venue = excluded.track_venue,
+              car_class = excluded.car_class,
+              source_file_name = excluded.source_file_name,
+              source_fingerprint = excluded.source_fingerprint,
+              file_present = excluded.file_present,
+              excluded = excluded.excluded,
+              payload = excluded.payload,
+              updated_at = excluded.updated_at
+          `);
+
+          const updatedAt = Date.now();
+
+          for (const [sessionKey, record] of entries) {
+            statement.run(
+              sessionKey,
+              record?.driverName ?? '',
+              Number(record?.startedAt ?? 0),
+              record?.sessionType ?? '',
+              record?.setting ?? null,
+              record?.trackFolder ?? null,
+              record?.trackLayout ?? null,
+              record?.trackVenue ?? null,
+              record?.carClass ?? null,
+              record?.sourceFileName ?? null,
+              record?.sourceFingerprint ?? null,
+              record?.filePresent === false ? 0 : 1,
+              record?.excluded ? 1 : 0,
+              serializeValue(record),
+              Number(record?.firstSeenAt ?? updatedAt),
+              updatedAt,
+            );
+          }
+        },
+      );
+
+      upsertCareer(careerEntries);
+      return;
+    }
+
     this.db
       .prepare(
         `
@@ -285,6 +393,7 @@ class SqliteNamespaceStore implements PersistentStore {
     if (this.namespace === 'main') {
       this.db.prepare('DELETE FROM replay_cache').run();
       this.db.prepare('DELETE FROM imported_replays').run();
+      this.db.prepare('DELETE FROM career_sessions').run();
     }
   }
 }
@@ -405,6 +514,41 @@ const initializeSqliteSchema = (db: SqliteDatabase) => {
     CREATE INDEX IF NOT EXISTS idx_imported_replays_timestamp
       ON imported_replays(timestamp DESC);
 
+    /*
+      Sessions the user drove, as the driver dashboard remembers them.
+
+      Deliberately not in replay_cache, and for a stronger reason than imported
+      replays are not: a career record can outlive every file it was derived
+      from. Once the user deletes a result log no scan can rebuild that session,
+      so scanning only ever inserts and updates, and a vanished source marks
+      file_present rather than removing the row. Nothing here is dropped except
+      by an explicit user action.
+    */
+    CREATE TABLE IF NOT EXISTS career_sessions (
+      session_key TEXT PRIMARY KEY,
+      driver_name TEXT NOT NULL,
+      started_at INTEGER NOT NULL DEFAULT 0,
+      session_type TEXT NOT NULL,
+      setting TEXT,
+      track_folder TEXT,
+      track_layout TEXT,
+      track_venue TEXT,
+      car_class TEXT,
+      source_file_name TEXT,
+      source_fingerprint TEXT,
+      file_present INTEGER NOT NULL DEFAULT 1,
+      excluded INTEGER NOT NULL DEFAULT 0,
+      payload TEXT NOT NULL,
+      first_seen_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_career_sessions_started_at
+      ON career_sessions(started_at DESC);
+
+    CREATE INDEX IF NOT EXISTS idx_career_sessions_track
+      ON career_sessions(track_folder, track_layout);
+
     CREATE TABLE IF NOT EXISTS meta (
       key TEXT PRIMARY KEY,
       value TEXT NOT NULL
@@ -494,6 +638,14 @@ const readImportedStamps = (db: SqliteDatabase): Map<string, number> => {
   return new Map(rows.map((row) => [row.hash, row.updated_at]));
 };
 
+const readCareerStamps = (db: SqliteDatabase): Map<string, number> => {
+  const rows = db
+    .prepare('SELECT session_key, updated_at FROM career_sessions')
+    .all() as Array<{ session_key: string; updated_at: number }>;
+
+  return new Map(rows.map((row) => [row.session_key, row.updated_at]));
+};
+
 /**
  * Merges a legacy main-store snapshot into SQLite, keeping whichever copy of
  * each key was written last. Replays merge per hash rather than replacing the
@@ -507,6 +659,42 @@ const reconcileLegacyMainStore = (
   const kvStamps = readKvStamps(db, 'main');
   const replayStamps = readReplayStamps(db);
   const importedStamps = readImportedStamps(db);
+  const careerStamps = readCareerStamps(db);
+  const careerStatement = db.prepare(`
+    INSERT INTO career_sessions (
+      session_key,
+      driver_name,
+      started_at,
+      session_type,
+      setting,
+      track_folder,
+      track_layout,
+      track_venue,
+      car_class,
+      source_file_name,
+      source_fingerprint,
+      file_present,
+      excluded,
+      payload,
+      first_seen_at,
+      updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT(session_key) DO UPDATE SET
+      driver_name = excluded.driver_name,
+      started_at = excluded.started_at,
+      session_type = excluded.session_type,
+      setting = excluded.setting,
+      track_folder = excluded.track_folder,
+      track_layout = excluded.track_layout,
+      track_venue = excluded.track_venue,
+      car_class = excluded.car_class,
+      source_file_name = excluded.source_file_name,
+      source_fingerprint = excluded.source_fingerprint,
+      file_present = excluded.file_present,
+      excluded = excluded.excluded,
+      payload = excluded.payload,
+      updated_at = excluded.updated_at
+  `);
   const importedStatement = db.prepare(`
     INSERT INTO imported_replays (
       hash,
@@ -629,6 +817,45 @@ const reconcileLegacyMainStore = (
       continue;
     }
 
+    /*
+      Career sessions merge per key, and for a stronger reason than the two
+      above: a record whose source log has since been deleted exists nowhere
+      else. Replacing the collection with a fallback session's partial view
+      would destroy history that cannot be rebuilt from disk.
+    */
+    if (key === CAREER_SESSIONS_KEY) {
+      const careerEntries = Object.entries(
+        isRecord(value) ? value : {},
+      ) as Array<[string, CareerSessionRecord]>;
+
+      for (const [sessionKey, record] of careerEntries) {
+        if ((careerStamps.get(sessionKey) ?? -1) >= stamp) {
+          continue;
+        }
+
+        careerStatement.run(
+          sessionKey,
+          record?.driverName ?? '',
+          Number(record?.startedAt ?? 0),
+          record?.sessionType ?? '',
+          record?.setting ?? null,
+          record?.trackFolder ?? null,
+          record?.trackLayout ?? null,
+          record?.trackVenue ?? null,
+          record?.carClass ?? null,
+          record?.sourceFileName ?? null,
+          record?.sourceFingerprint ?? null,
+          record?.filePresent === false ? 0 : 1,
+          record?.excluded ? 1 : 0,
+          serializeValue(record),
+          Number(record?.firstSeenAt ?? stamp),
+          stamp,
+        );
+      }
+
+      continue;
+    }
+
     if ((kvStamps.get(key) ?? -1) >= stamp) {
       continue;
     }
@@ -726,6 +953,7 @@ const clearSqliteContents = (db: SqliteDatabase) => {
     db.prepare('DELETE FROM kv_store').run();
     db.prepare('DELETE FROM replay_cache').run();
     db.prepare('DELETE FROM imported_replays').run();
+    db.prepare('DELETE FROM career_sessions').run();
     db.prepare('DELETE FROM meta').run();
   });
 

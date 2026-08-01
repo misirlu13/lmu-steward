@@ -336,25 +336,50 @@ describeFixtures('main/result-log career facts against real logs', () => {
         .slice(0, 40)
     : [];
 
-  it('finds exactly one player in every real result log', () => {
-    const parsed = raceLogs.map((file) =>
-      parseResultLogFromString(readFileSync(join(FIXTURE_DIR, file), 'utf-8')),
+  const read = (file: string, names?: Set<string>) =>
+    parseResultLogFromString(
+      readFileSync(join(FIXTURE_DIR, file), 'utf-8'),
+      names,
     );
 
+  /*
+   * The correction that matters most in this file. `isPlayer` marks every human
+   * on the grid, so with no names supplied only a session with a single human —
+   * an offline race weekend — can be attributed to anyone at all. A multiplayer
+   * race has many, and guessing would credit a stranger's result to this driver.
+   */
+  it('refuses to name a player in a multiplayer field when given no names', () => {
+    const parsed = raceLogs.map((file) => read(file));
+    const claimed = parsed.filter((record) => record.career?.player);
+
     expect(parsed.length).toBeGreaterThan(0);
-    expect(parsed.filter((record) => record.career?.player).length).toBe(
-      parsed.length,
+    expect(claimed.length).toBeGreaterThan(0);
+    expect(claimed.length).toBeLessThan(parsed.length);
+
+    // Every unclaimed session says why: more than one human on the grid.
+    const unexplained = parsed.filter(
+      (record) => !record.career?.player && !record.playerAmbiguous,
     );
+
+    expect(unexplained).toEqual([]);
+  });
+
+  it('finds the named driver in the multiplayer logs they raced in', () => {
+    const names = new Set(['bradley drake']);
+    const found = raceLogs
+      .map((file) => read(file, names))
+      .filter((record) => record.career?.player);
+
+    expect(found.length).toBeGreaterThan(0);
+    for (const record of found) {
+      expect(record.career?.player?.name).toBe('Bradley Drake');
+    }
   });
 
   it('never misses the player lap data the result row claims exists', () => {
+    const names = new Set(['bradley drake']);
     const missed = raceLogs
-      .map((file) => ({
-        file,
-        record: parseResultLogFromString(
-          readFileSync(join(FIXTURE_DIR, file), 'utf-8'),
-        ),
-      }))
+      .map((file) => ({ file, record: read(file, names) }))
       .filter((entry) => entry.record.career?.lapDataMissed);
 
     expect(missed.map((entry) => entry.file)).toEqual([]);

@@ -26,10 +26,16 @@ import { SessionType } from '@types';
  *    keyed by driver name as it goes past, and the player's is selected when
  *    the session closes. Memory is O(drivers), flat in race length.
  *
- * 2. `<isPlayer>` appears before the first `<Lap>` in every driver block —
- *    verified across 8 143 blocks spanning game versions 1.1000 to 1.4000 — so
- *    only the player's laps are ever parsed out of attributes. On a 28.6 MB
- *    24h log that is the difference between 669 ms and 150 ms.
+ * 2. `<Name>` opens every driver block, so a driver can be recognised before
+ *    their `<Lap>` rows are reached and every other driver's laps skipped
+ *    without their attributes ever being parsed. On a 28.6 MB 24h log that is
+ *    the difference between 669 ms and 150 ms.
+ *
+ * Identity is the driver's name, not `<isPlayer>`. That element marks every
+ * human on the grid: exactly one in an offline race weekend, and the entire
+ * field online — measured at 240 of 242 multiplayer logs in a real install,
+ * one of them with twenty-three. Reading it as "the local driver" is right
+ * offline by coincidence and picks a stranger online.
  */
 
 export interface ParsedSessionSummary {
@@ -59,6 +65,9 @@ export interface ParsedRaceResults {
   TrackVenue?: string;
   TrackCourse?: string;
   TrackEvent?: string;
+  /** Path to the layout's .mas, which is where track folder/version/layout live. */
+  TrackData?: string;
+  TrackLength?: number;
   GameVersion?: string;
   FuelMult?: number;
   TireMult?: number;
@@ -86,11 +95,20 @@ export interface ResultLogDriver {
   carNumber: string;
   teamName: string;
   vehFile: string;
+  /**
+   * Human-controlled — *not* "this is the local user".
+   *
+   * Measured across a real install: every one of 146 race-weekend logs has
+   * exactly one, because you are the only human on the grid, but 240 of 242
+   * multiplayer logs have several and one had twenty-three. Reading it as the
+   * local driver works offline by coincidence and picks an arbitrary stranger
+   * online. Identity comes from the driver's name; see `playerNames`.
+   */
   isPlayer: boolean;
   /**
    * From ControlAndAids containing `AIControl`, not from `isPlayer === 0`.
-   * The latter is how the app currently decides, which badges every human
-   * opponent in a multiplayer race as AI.
+   * The latter is how the rest of the app currently decides, which badges every
+   * human opponent in a multiplayer race as AI.
    */
   isAi: boolean;
   aids: string;
@@ -174,8 +192,8 @@ export interface CareerLogFacts {
   opponents: ResultLogOpponent[];
   /**
    * Set when the player finished laps the parser never saw, which would mean
-   * `<Lap>` had moved ahead of `<isPlayer>` in some future format. A canary for
-   * the one ordering assumption this parser makes.
+   * `<Lap>` had moved ahead of `<Name>` in some future format. A canary for the
+   * one ordering assumption this parser makes.
    */
   lapDataMissed: boolean;
 }
@@ -184,9 +202,40 @@ export interface ResultLogRecord {
   summary: ParsedRaceResults;
   /** Null when the log holds no session, or no session names a player. */
   career: CareerLogFacts | null;
+  /**
+   * The only human on the grid, when there was exactly one and it was not the
+   * driver being looked for.
+   *
+   * This is what a rename or a second LMU profile looks like: an offline race
+   * weekend whose sole human carries a name the career does not recognise. A
+   * multiplayer field has many humans and offers nothing here, which keeps the
+   * whole roster of an imported stranger's race out of the claim prompt.
+   */
+  soleHumanName: string | null;
+  /**
+   * The session holds several human drivers and no names were supplied, so
+   * which one is "us" cannot be decided.
+   *
+   * Reported here rather than on the facts because there are no facts in this
+   * case — the session is left unattributed rather than credited to whoever
+   * happened to be read last.
+   */
+  playerAmbiguous: boolean;
 }
 
 export type ResultLogParser = (filePath: string) => Promise<ResultLogRecord>;
+
+/**
+ * Names, normalised, that identify the driver whose career is being built.
+ *
+ * Multiplayer appends a discriminator — `Steve Davis#1924` — so it is stripped
+ * before comparison, as are XML entities and surrounding space.
+ */
+export const normalizeDriverName = (value: string): string =>
+  String(value ?? '')
+    .replace(/#\d+$/, '')
+    .trim()
+    .toLowerCase();
 
 /*
  * The element is <TrackLimits>, plural. Both parsers this replaces compared the
@@ -217,6 +266,8 @@ const CAPTURED_SCALARS: Record<string, string> = {
   trackvenue: 'TrackVenue',
   trackcourse: 'TrackCourse',
   trackevent: 'TrackEvent',
+  trackdata: 'TrackData',
+  tracklength: 'TrackLength',
   gameversion: 'GameVersion',
   fuelmult: 'FuelMult',
   tiremult: 'TireMult',
@@ -392,6 +443,8 @@ interface SessionAccumulator {
   conductByDriver: Map<string, ResultLogConduct>;
   playerLaps: LapAccumulator | null;
   player: ResultLogDriver | null;
+  /** How many drivers were human, used only for the no-names fallback. */
+  humanDrivers: number;
 }
 
 const createSessionAccumulator = (
@@ -408,6 +461,7 @@ const createSessionAccumulator = (
   conductByDriver: new Map(),
   playerLaps: null,
   player: null,
+  humanDrivers: 0,
 });
 
 /**
@@ -548,8 +602,19 @@ const buildDriver = (scalars: DriverScalars): ResultLogDriver => {
 
 const buildCareerFacts = (
   session: SessionAccumulator,
+  hasPlayerNames: boolean,
 ): CareerLogFacts | null => {
-  const { player } = session;
+  /*
+   * With names, the player is whoever matched them. Without them the only safe
+   * reading is a session holding exactly one human — every offline race
+   * weekend, and almost nothing online. Guessing in the ambiguous case would
+   * attribute a stranger's race to this driver, so it reports nothing instead.
+   */
+  const soleHuman =
+    session.humanDrivers === 1
+      ? (session.drivers.find((driver) => driver.isPlayer) ?? null)
+      : null;
+  const player = hasPlayerNames ? session.player : soleHuman;
 
   if (!player) {
     return null;
@@ -601,7 +666,8 @@ interface Extractor {
   finish: () => ResultLogRecord;
 }
 
-const createExtractor = (): Extractor => {
+const createExtractor = (playerNames?: ReadonlySet<string>): Extractor => {
+  const hasPlayerNames = Boolean(playerNames && playerNames.size > 0);
   const raceResults: ParsedRaceResults = {};
   let career: CareerLogFacts | null = null;
 
@@ -621,6 +687,8 @@ const createExtractor = (): Extractor => {
   let pendingLap: Record<string, string> | null = null;
   let pendingTrackLimits: Record<string, string> | null = null;
 
+  let soleHumanName: string | null = null;
+  let playerAmbiguous = false;
   let totalDriverCount = 0;
   let totalIncidentCount = 0;
   let totalPenaltyCount = 0;
@@ -728,11 +796,24 @@ const createExtractor = (): Extractor => {
         session.carClasses.add(value);
       }
       /*
-       * The one place the ordering assumption is used: isPlayer precedes the
-       * lap rows, so the accumulator can be created here and every other
-       * driver's laps skipped without their attributes ever being parsed.
+       * The one place the ordering assumption is used. <Name> opens every
+       * driver block, so matching here lets every other driver's laps be
+       * skipped without their attributes ever being parsed.
        */
-      if (tag === 'isPlayer' && value === '1' && session) {
+      if (tag === 'Name' && session && hasPlayerNames) {
+        if (playerNames?.has(normalizeDriverName(value))) {
+          inPlayerBlock = true;
+          session.playerLaps = createLapAccumulator();
+        }
+        return;
+      }
+
+      /*
+       * Without names there is no way to know which block is ours until the
+       * session closes, so laps are collected for any human and kept only if
+       * that human turns out to be the only one.
+       */
+      if (tag === 'isPlayer' && value === '1' && session && !hasPlayerNames) {
         inPlayerBlock = true;
         session.playerLaps = createLapAccumulator();
       }
@@ -764,6 +845,12 @@ const createExtractor = (): Extractor => {
         break;
       case 'TrackEvent':
         raceResults.TrackEvent = value || undefined;
+        break;
+      case 'TrackData':
+        raceResults.TrackData = value || undefined;
+        break;
+      case 'TrackLength':
+        raceResults.TrackLength = Number(value) || undefined;
         break;
       case 'GameVersion':
         raceResults.GameVersion = value || undefined;
@@ -816,7 +903,21 @@ const createExtractor = (): Extractor => {
       };
     }
 
-    career = buildCareerFacts(session) ?? career;
+    career = buildCareerFacts(session, hasPlayerNames) ?? career;
+
+    /*
+     * Recorded whether or not the session was claimed, so the career can offer
+     * an unrecognised name back to the user instead of silently ignoring it.
+     */
+    if (session.humanDrivers === 1) {
+      const human = session.drivers.find((driver) => driver.isPlayer);
+      if (human && human !== career?.player) {
+        soleHumanName = human.name;
+      }
+    } else if (!hasPlayerNames && session.humanDrivers > 1) {
+      playerAmbiguous = true;
+    }
+
     session = null;
   };
 
@@ -876,6 +977,9 @@ const createExtractor = (): Extractor => {
           const driver = buildDriver(driverScalars);
           session.drivers.push(driver);
           if (driver.isPlayer) {
+            session.humanDrivers += 1;
+          }
+          if (inPlayerBlock) {
             session.player = driver;
           }
         }
@@ -993,7 +1097,7 @@ const createExtractor = (): Extractor => {
     raceResults.TrackLimitCount = totalTrackLimitCount || undefined;
     raceResults.DriverCount = totalDriverCount || undefined;
 
-    return { summary: raceResults, career };
+    return { summary: raceResults, career, soleHumanName, playerAmbiguous };
   };
 
   return { onText, onTag, finish };
@@ -1037,8 +1141,11 @@ const createChunkScanner = (extractor: Extractor) => {
   };
 };
 
-export const parseResultLogFromString = (xml: string): ResultLogRecord => {
-  const extractor = createExtractor();
+export const parseResultLogFromString = (
+  xml: string,
+  playerNames?: ReadonlySet<string>,
+): ResultLogRecord => {
+  const extractor = createExtractor(playerNames);
   const scanner = createChunkScanner(extractor);
 
   scanner.push(xml);
@@ -1049,8 +1156,9 @@ export const parseResultLogFromString = (xml: string): ResultLogRecord => {
 
 export const parseResultLogFromStream = async (
   stream: AsyncIterable<string | Buffer>,
+  playerNames?: ReadonlySet<string>,
 ): Promise<ResultLogRecord> => {
-  const extractor = createExtractor();
+  const extractor = createExtractor(playerNames);
   const scanner = createChunkScanner(extractor);
 
   for await (const chunk of stream) {
@@ -1071,12 +1179,37 @@ export const parseResultLogFromStream = async (
  */
 export const parseResultLog = async (
   filePath: string,
+  playerNames?: ReadonlySet<string>,
 ): Promise<ResultLogRecord> => {
   try {
     const stream = createReadStream(filePath, { encoding: 'utf-8' });
-    return await parseResultLogFromStream(stream);
+    return await parseResultLogFromStream(stream, playerNames);
   } catch {
     const xml = await readFile(filePath, 'utf-8');
-    return parseResultLogFromString(xml);
+    return parseResultLogFromString(xml, playerNames);
   }
+};
+
+/**
+ * A parser bound to a set of driver names, memoised so the log index keeps
+ * hitting its cache — the index keys cached records by parser identity, so a
+ * fresh closure per call would re-read every log.
+ */
+const parserCache = new Map<string, ResultLogParser>();
+
+export const createResultLogParser = (
+  playerNames: ReadonlySet<string>,
+): ResultLogParser => {
+  const signature = [...playerNames].sort().join('|');
+  const cached = parserCache.get(signature);
+
+  if (cached) {
+    return cached;
+  }
+
+  const parser: ResultLogParser = (filePath) =>
+    parseResultLog(filePath, playerNames);
+  parserCache.set(signature, parser);
+
+  return parser;
 };

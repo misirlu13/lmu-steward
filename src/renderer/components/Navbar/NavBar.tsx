@@ -6,9 +6,10 @@ import IconButton from '@mui/material/IconButton';
 import Typography from '@mui/material/Typography';
 import Container from '@mui/material/Container';
 import Avatar from '@mui/material/Avatar';
+import Button from '@mui/material/Button';
 import Tooltip from '@mui/material/Tooltip';
 import SettingsRoundedIcon from '@mui/icons-material/SettingsRounded';
-import { useNavigate } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router-dom';
 import { CONSTANTS } from '@constants';
 import { useNavbar } from '@/renderer/providers/NavbarContext';
 import { sendMessage } from '../../utils/postMessage';
@@ -17,6 +18,7 @@ import navLogoIcon from '../../../../assets/icons/48x48.png';
 
 export const NavBar = () => {
   const navigate = useNavigate();
+  const { pathname } = useLocation();
   const [profileName, setProfileName] = useState('');
   const { isViewHeaderAttached } = useNavbar();
 
@@ -98,6 +100,26 @@ export const NavBar = () => {
           >
             LMU STEWARD
           </Typography>
+          <Box sx={{ display: 'flex', gap: 0.5, ml: 1 }}>
+            <Button
+              color="inherit"
+              size="small"
+              onClick={() => navigate('/')}
+              sx={{ fontWeight: pathname === '/' ? 700 : 400 }}
+            >
+              Driver
+            </Button>
+            <Button
+              color="inherit"
+              size="small"
+              onClick={() => navigate('/replays')}
+              sx={{
+                fontWeight: pathname.startsWith('/replay') ? 700 : 400,
+              }}
+            >
+              Replays
+            </Button>
+          </Box>
           <Box sx={{ flexGrow: 1 }} />
           <Box
             sx={{ display: 'flex', flexGrow: 0, alignItems: 'center', gap: 1 }}

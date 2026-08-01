@@ -93,7 +93,7 @@ export const ReplayView: React.FC = () => {
     isReplayActive,
     quickViewEnabled,
     subscribeToApiChannel,
-    navigateToDashboard: () => navigate('/'),
+    navigateToDashboard: () => navigate('/replays'),
   });
 
   const toggleChatDrawer = (newOpen: boolean) => () => {

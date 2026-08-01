@@ -902,7 +902,7 @@ export const UserSettingsView: React.FC = () => {
               variant="caption"
               color="text.secondary"
               sx={{ cursor: 'pointer' }}
-              onClick={() => navigate('/')}
+              onClick={() => navigate('/replays')}
             >
               Dashboard
             </Typography>
@@ -916,7 +916,7 @@ export const UserSettingsView: React.FC = () => {
         }
         title="User Settings"
         subtitle="Configure your LMU Steward preferences and paths."
-        onBack={() => navigate('/')}
+        onBack={() => navigate('/replays')}
       />
 
       <Box sx={{ mt: 3 }}>

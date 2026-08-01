@@ -32,6 +32,9 @@ import {
 /* eslint-enable import/first */
 
 jest.mock('../storage/local-data-store', () => ({
+  // The sync seeds the career identity from the cached profile before it builds
+  // the shared log index.
+  readProfileCache: () => ({ profileInfo: { name: 'Bradley Drake' } }),
   getMainPersistentStore: () => ({
     get(key: string) {
       return replayStoreData[key];
