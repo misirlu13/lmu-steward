@@ -2,10 +2,30 @@
  * Base webpack config used across other specific configs
  */
 
+import path from 'path';
 import webpack from 'webpack';
 import TsconfigPathsPlugins from 'tsconfig-paths-webpack-plugin';
 import webpackPaths from './webpack.paths';
 import { dependencies as externals } from '../../release/app/package.json';
+
+const escapeRegExp = (value: string) =>
+  value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+/**
+ * Every directory above the project root, in the forward-slash form watchpack
+ * compares against. Resolving symlinks makes enhanced-resolve walk each path
+ * segment, so the drive root ends up as a file dependency; watching it makes
+ * watchpack scan the whole drive, which fails on Windows system folders
+ * ("EINVAL: invalid argument, lstat 'D:\System Volume Information'"). Nothing
+ * we build lives above the root, so these are safe to leave unwatched.
+ */
+const ancestorsOfRoot: string[] = [];
+let ancestor = path.dirname(webpackPaths.rootPath);
+while (path.dirname(ancestor) !== ancestor) {
+  ancestorsOfRoot.push(escapeRegExp(ancestor.replace(/\\/g, '/')));
+  ancestor = path.dirname(ancestor);
+}
+ancestorsOfRoot.push(escapeRegExp(ancestor.replace(/\\/g, '/')));
 
 const configuration: webpack.Configuration = {
   externals: [...Object.keys(externals || {})],
@@ -39,8 +59,11 @@ const configuration: webpack.Configuration = {
   },
 
   watchOptions: {
-    ignored:
-      /(^|[\\/])(node_modules|\.git|System Volume Information|\$RECYCLE\.BIN)([\\/]|$)/,
+    ignored: new RegExp(
+      `(^|[\\\\/])(node_modules|\\.git|System Volume Information|\\$RECYCLE\\.BIN)([\\\\/]|$)|^(${ancestorsOfRoot.join(
+        '|',
+      )})$`,
+    ),
   },
 
   /**

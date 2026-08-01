@@ -1,4 +1,4 @@
-import { CONSTANTS } from "@constants";
+import { CONSTANTS } from '@constants';
 
 /**
  * POST
@@ -59,8 +59,7 @@ export const postSetCameraAngle = async (
       message: toErrorMessage(error),
     });
   }
-}
-
+};
 
 /**
  * GET
@@ -90,7 +89,7 @@ export const getFocusedCar = async (event: Electron.IpcMainEvent) => {
       message: toErrorMessage(error),
     });
   }
-}
+};
 
 /**
  * PUT
@@ -126,4 +125,4 @@ export const putFocusCar = async (
       message: toErrorMessage(error),
     });
   }
-}
+};

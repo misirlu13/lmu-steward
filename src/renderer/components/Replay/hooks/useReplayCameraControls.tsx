@@ -43,7 +43,9 @@ export const cameraModeConfig: Record<
 
 export const useReplayCameraControls = (cameraCommandDebounceMs: number) => {
   const [cameraMode, setCameraMode] = useState<CameraMode>('driving');
-  const cameraCommandDebounceTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const cameraCommandDebounceTimeoutRef = useRef<ReturnType<
+    typeof setTimeout
+  > | null>(null);
 
   useEffect(() => {
     return () => {

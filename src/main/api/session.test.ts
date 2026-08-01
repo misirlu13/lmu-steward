@@ -9,7 +9,8 @@ import {
 
 describe('main/session API contracts', () => {
   const fetchMock = jest.fn();
-  const createEvent = () => ({ reply: jest.fn() } as unknown as Electron.IpcMainEvent);
+  const createEvent = () =>
+    ({ reply: jest.fn() }) as unknown as Electron.IpcMainEvent;
 
   beforeEach(() => {
     jest.clearAllMocks();
@@ -62,71 +63,73 @@ describe('main/session API contracts', () => {
     },
   ];
 
-  it.each(successCases)('$name returns success reply on ok response', async ({
-    handler,
-    eventChannel,
-    url,
-    arg,
-    expectsWrappedSuccess,
-  }) => {
-    const event = createEvent();
-    const payload = { ok: true };
+  it.each(successCases)(
+    '$name returns success reply on ok response',
+    async ({ handler, eventChannel, url, arg, expectsWrappedSuccess }) => {
+      const event = createEvent();
+      const payload = { ok: true };
 
-    fetchMock.mockResolvedValue({
-      ok: true,
-      json: async () => payload,
-    });
-
-    await handler(event, arg);
-
-    expect(fetchMock).toHaveBeenCalledWith(url);
-
-    if (expectsWrappedSuccess) {
-      expect((event.reply as jest.Mock)).toHaveBeenCalledWith(eventChannel, {
-        status: 'success',
-        data: payload,
+      fetchMock.mockResolvedValue({
+        ok: true,
+        json: async () => payload,
       });
-      return;
-    }
 
-    expect((event.reply as jest.Mock)).toHaveBeenCalledWith(eventChannel, payload);
-  });
+      await handler(event, arg);
 
-  it.each(successCases)('$name returns error reply on non-ok response', async ({
-    handler,
-    eventChannel,
-    arg,
-  }) => {
-    const event = createEvent();
+      expect(fetchMock).toHaveBeenCalledWith(url);
 
-    fetchMock.mockResolvedValue({
-      ok: false,
-      status: 500,
-      json: async () => ({}),
-    });
+      if (expectsWrappedSuccess) {
+        // Shared table-driven helper: the branch selects which response shape
+        // to assert, rather than making the assertion itself conditional on
+        // runtime behaviour.
+        // eslint-disable-next-line jest/no-conditional-expect
+        expect(event.reply as jest.Mock).toHaveBeenCalledWith(eventChannel, {
+          status: 'success',
+          data: payload,
+        });
+        return;
+      }
 
-    await handler(event, arg);
+      expect(event.reply as jest.Mock).toHaveBeenCalledWith(
+        eventChannel,
+        payload,
+      );
+    },
+  );
 
-    expect((event.reply as jest.Mock)).toHaveBeenCalledWith(eventChannel, {
-      status: 'error',
-      message: 'API responded with status 500',
-    });
-  });
+  it.each(successCases)(
+    '$name returns error reply on non-ok response',
+    async ({ handler, eventChannel, arg }) => {
+      const event = createEvent();
 
-  it.each(successCases)('$name returns error reply when fetch throws', async ({
-    handler,
-    eventChannel,
-    arg,
-  }) => {
-    const event = createEvent();
+      fetchMock.mockResolvedValue({
+        ok: false,
+        status: 500,
+        json: async () => ({}),
+      });
 
-    fetchMock.mockRejectedValue(new Error('LMU API unreachable'));
+      await handler(event, arg);
 
-    await handler(event, arg);
+      expect(event.reply as jest.Mock).toHaveBeenCalledWith(eventChannel, {
+        status: 'error',
+        message: 'API responded with status 500',
+      });
+    },
+  );
 
-    expect((event.reply as jest.Mock)).toHaveBeenCalledWith(eventChannel, {
-      status: 'error',
-      message: 'LMU API unreachable',
-    });
-  });
+  it.each(successCases)(
+    '$name returns error reply when fetch throws',
+    async ({ handler, eventChannel, arg }) => {
+      const event = createEvent();
+
+      fetchMock.mockRejectedValue(new Error('LMU API unreachable'));
+
+      await handler(event, arg);
+
+      expect(event.reply as jest.Mock).toHaveBeenCalledWith(eventChannel, {
+        status: 'error',
+        message: 'LMU API unreachable',
+      });
+    },
+  );
 });

@@ -1,4 +1,4 @@
-export const toArray = <T,>(value: T | T[] | null | undefined): T[] => {
+export const toArray = <T>(value: T | T[] | null | undefined): T[] => {
   if (!value) {
     return [];
   }
@@ -6,7 +6,7 @@ export const toArray = <T,>(value: T | T[] | null | undefined): T[] => {
   return Array.isArray(value) ? value : [value];
 };
 
-export const toObjectOrArrayEntries = <T,>(
+export const toObjectOrArrayEntries = <T>(
   value: T[] | Record<string, T> | null | undefined,
 ): T[] => {
   if (!value) {
@@ -36,7 +36,7 @@ export const toObjectOrArrayEntries = <T,>(
   return [];
 };
 
-export const countCollectionEntries = <T,>(
+export const countCollectionEntries = <T>(
   value: T[] | Record<string, T> | null | undefined,
   predicate?: (entry: T) => boolean,
 ): number => {

@@ -1,7 +1,7 @@
-import { Box, Typography } from "@mui/material";
-import { LMUReplay } from "@types";
+import { Box, Typography } from '@mui/material';
+import { LMUReplay } from '@types';
 
-export const ReplayHeader = ({replay}: {replay: LMUReplay}) => {
+export const ReplayHeader = (_props: { replay: LMUReplay }) => {
   return (
     <Box
       sx={{
@@ -15,4 +15,4 @@ export const ReplayHeader = ({replay}: {replay: LMUReplay}) => {
       <Typography variant="h5">Replay Details</Typography>
     </Box>
   );
-}
+};

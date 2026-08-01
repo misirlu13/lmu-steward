@@ -2,6 +2,7 @@ import { Box, Paper, Stack, Tooltip, Typography } from '@mui/material';
 import { useEffect } from 'react';
 import { useLocation, useNavigate, useParams } from 'react-router-dom';
 import InfoOutlinedIcon from '@mui/icons-material/InfoOutlined';
+import { CONSTANTS } from '@constants';
 import { ViewHeader } from '../components/Common/ViewHeader';
 import { ReplayIncidentEvent } from '../components/Replay/ReplayMasterIncidentTimeline';
 import { ReplayDriverStanding } from '../components/Replay/ReplayDriverStandings';
@@ -16,7 +17,6 @@ import { useDriverAnalysisData } from '../hooks/useDriverAnalysisData';
 import { AiBadge } from '../components/Common/AiBadge';
 import { useDriverAnalysisViewState } from '../hooks/useDriverAnalysisViewState';
 import { sendMessage } from '../utils/postMessage';
-import { CONSTANTS } from '@constants';
 
 interface DriverAnalysisRouteState {
   replayTitle?: string;
@@ -94,7 +94,7 @@ export const DriverAnalysisView: React.FC = () => {
     ) {
       setActiveIncidentId(null);
     }
-  }, [activeIncidentId, incidents]);
+  }, [activeIncidentId, incidents, setActiveIncidentId]);
 
   return (
     <Box sx={{ paddingBottom: { xs: '260px', md: '180px' } }}>

@@ -1,13 +1,16 @@
-import { useEffect } from 'react';
-import { LMUReplay, SessionIncidents, SessionMetaData } from '@types';
+import { useEffect, useState } from 'react';
+import {
+  DashboardViewMode,
+  LMUReplay,
+  SessionIncidents,
+  SessionMetaData,
+} from '@types';
 import Box from '@mui/material/Box';
 import Typography from '@mui/material/Typography';
 import { CONSTANTS } from '@constants';
 import Accordion from '@mui/material/Accordion';
 import AccordionSummary from '@mui/material/AccordionSummary';
 import AccordionDetails from '@mui/material/AccordionDetails';
-import CalendarMonthIcon from '@mui/icons-material/CalendarMonth';
-import { useState } from 'react';
 import Table from '@mui/material/Table';
 import TableBody from '@mui/material/TableBody';
 import TableCell from '@mui/material/TableCell';
@@ -22,16 +25,40 @@ import ToolTip from '@mui/material/Tooltip';
 import TireRepair from '@mui/icons-material/TireRepair';
 import LocalFireDepartmentIcon from '@mui/icons-material/LocalFireDepartment';
 import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
+import MoreVertIcon from '@mui/icons-material/MoreVert';
+import ArchiveIcon from '@mui/icons-material/Archive';
+import UnarchiveIcon from '@mui/icons-material/Unarchive';
+import EditNoteIcon from '@mui/icons-material/EditNote';
+import StickyNote2Icon from '@mui/icons-material/StickyNote2';
+import IconButton from '@mui/material/IconButton';
+import Menu from '@mui/material/Menu';
+import MenuItem from '@mui/material/MenuItem';
+import ListItemIcon from '@mui/material/ListItemIcon';
+import ListItemText from '@mui/material/ListItemText';
 import { useNavigate } from 'react-router-dom';
 import { getSessionIncidentScore } from '@/renderer/utils/incidentScore';
+import DeleteForeverIcon from '@mui/icons-material/DeleteForever';
+import FileUploadIcon from '@mui/icons-material/FileUpload';
 import { SessionIncidentSeverityLabel } from '../IncidentSeverityLabels/SessionIncidentSeverityLabel';
-import LocationOnIcon from '@mui/icons-material/LocationOn';
-import { getSessionCarClasses, getSessionIncidents, getSessionMetaData, getSessionDuration } from '../../utils/sessionUtils';
+import {
+  getSessionCarClasses,
+  getSessionIncidents,
+  getSessionMetaData,
+  getSessionDuration,
+} from '../../utils/sessionUtils';
 import { CarClassBadge } from '../CarClassBadge/CarClassBadge';
 import { ReplaySubtitle } from '../Common/ReplaySubtitle';
 
 interface DashboardReplayProps {
   replayGroup: LMUReplay[];
+  dashboardView: DashboardViewMode;
+  onArchive: (hashes: string[], targetLabel: string) => void;
+  onRestore: (hashes: string[]) => void;
+  onEditNote: (hash: string, note: string) => void;
+  onDeleteImported: (hashes: string[], targetLabel: string) => void;
+  onExportSession: (replay: LMUReplay) => void;
+  onExportWeekend: (replays: LMUReplay[], weekendLabel: string) => void;
+  canExport: boolean;
 }
 
 interface DashboardReplayTableRow {
@@ -40,12 +67,61 @@ interface DashboardReplayTableRow {
   incidents: SessionIncidents;
   duration: string;
   sessionMetaData: SessionMetaData;
+  /**
+   * The note shown on this row.
+   *
+   * Archived replays carry an archive note; imported ones carry the note
+   * written at import. A replay is never both — the three views are mutually
+   * exclusive — so one field renders either.
+   */
+  note: string;
+  /**
+   * The replay this row was built from, so row actions can work on it without
+   * looking it back up out of the group by hash.
+   */
+  replay: LMUReplay;
 }
+
+const sessionOrder: Record<string, number> = {
+  RACE: 0,
+  QUALIFY: 1,
+  PRACTICE: 2,
+};
+
+const sessionTypeLabelMap: Record<
+  string,
+  DashboardReplayTableRow['sessionType']
+> = {
+  RACE: 'Race',
+  QUALIFY: 'Qualifying',
+  PRACTICE: 'Practice',
+};
+
+const sessionColorMap: Record<string, string> = {
+  Race: 'error.main',
+  Qualifying: 'qualifying.main',
+  Practice: 'success.main',
+};
 
 export const DashboardReplay: React.FC<DashboardReplayProps> = ({
   replayGroup,
+  dashboardView,
+  onArchive,
+  onRestore,
+  onEditNote,
+  onDeleteImported,
+  onExportSession,
+  onExportWeekend,
+  canExport,
 }) => {
   const replay = replayGroup[0];
+  const isArchivedView = dashboardView === 'archived';
+  const isImportedView = dashboardView === 'imported';
+  const weekendMenuLabel = isImportedView
+    ? 'Weekend delete menu'
+    : isArchivedView
+      ? 'Weekend restore menu'
+      : 'Weekend archive menu';
   const metaData =
     CONSTANTS.TRACK_META_DATA[
       replay.metadata.sceneDesc as keyof typeof CONSTANTS.TRACK_META_DATA
@@ -55,25 +131,24 @@ export const DashboardReplay: React.FC<DashboardReplayProps> = ({
   const backgroundImage = metaData?.background;
   const [isActive, setIsActive] = useState<boolean>(false);
   const [tableRows, setTableRows] = useState<DashboardReplayTableRow[]>([]);
+  const [weekendMenuAnchor, setWeekendMenuAnchor] =
+    useState<HTMLElement | null>(null);
+  const [rowMenu, setRowMenu] = useState<{
+    anchor: HTMLElement;
+    row: DashboardReplayTableRow;
+  } | null>(null);
   const navigate = useNavigate();
-  const sessionOrder: Record<string, number> = {
-    RACE: 0,
-    QUALIFY: 1,
-    PRACTICE: 2,
-  };
-  const sessionTypeLabelMap: Record<
-    string,
-    DashboardReplayTableRow['sessionType']
-  > = {
-    RACE: 'Race',
-    QUALIFY: 'Qualifying',
-    PRACTICE: 'Practice',
-  };
-  const sessionColorMap: Record<string, string> = {
-    Race: 'error.main',
-    Qualifying: 'qualifying.main',
-    Practice: 'success.main',
-  };
+  const groupHashes = replayGroup.map((groupReplay) => groupReplay.hash);
+  /*
+   * A session with no matched log is left out of the weekend rather than
+   * blocking it. A .Vcr on its own is half a hand-off, but one unmatched
+   * practice session is no reason to withhold the other four — so the count
+   * here is what will actually be written, and the item only disappears when
+   * that is nothing.
+   */
+  const exportableSessions = replayGroup.filter(
+    (groupReplay) => groupReplay.logDataFileName,
+  );
 
   useEffect(() => {
     const rows = [...replayGroup]
@@ -84,12 +159,15 @@ export const DashboardReplay: React.FC<DashboardReplayProps> = ({
           sessionOrder[b.metadata.session] ?? Number.MAX_SAFE_INTEGER;
         return aOrder - bOrder;
       })
-      .map((replay) => ({
-        hash: replay.hash,
-        sessionType: sessionTypeLabelMap[replay.metadata.session] ?? 'Practice',
-        incidents: getSessionIncidents(replay),
-        duration: getSessionDuration(replay),
-        sessionMetaData: getSessionMetaData(replay),
+      .map((groupReplay) => ({
+        hash: groupReplay.hash,
+        sessionType:
+          sessionTypeLabelMap[groupReplay.metadata.session] ?? 'Practice',
+        incidents: getSessionIncidents(groupReplay),
+        duration: getSessionDuration(groupReplay),
+        sessionMetaData: getSessionMetaData(groupReplay),
+        note: groupReplay.archiveNote ?? groupReplay.importNote ?? '',
+        replay: groupReplay,
       }));
 
     setTableRows(rows);
@@ -98,6 +176,8 @@ export const DashboardReplay: React.FC<DashboardReplayProps> = ({
   const onViewReplay = (replayHash: string) => {
     navigate(`/replay/${replayHash}`);
   };
+
+  const closeRowMenu = () => setRowMenu(null);
 
   return (
     <Box sx={{ width: '100%', mb: 2 }}>
@@ -138,7 +218,7 @@ export const DashboardReplay: React.FC<DashboardReplayProps> = ({
                 backgroundSize: 'cover',
                 backgroundPosition: 'center',
               }}
-            ></Box>
+            />
             <Box
               sx={{
                 display: 'flex',
@@ -219,7 +299,14 @@ export const DashboardReplay: React.FC<DashboardReplayProps> = ({
                 >
                   Car Class
                 </Typography>
-                <Box sx={{display: 'flex', flexDirection: 'row', mt: 0.5, gap: 0.75}}>
+                <Box
+                  sx={{
+                    display: 'flex',
+                    flexDirection: 'row',
+                    mt: 0.5,
+                    gap: 0.75,
+                  }}
+                >
                   {getSessionCarClasses(replay)?.map((carClass) => (
                     <CarClassBadge key={carClass} carClass={carClass} />
                   ))}
@@ -320,9 +407,100 @@ export const DashboardReplay: React.FC<DashboardReplayProps> = ({
                   }, 0)}
                 />
               </Box>
+              <IconButton
+                aria-label={weekendMenuLabel}
+                size="small"
+                // The button sits inside the accordion header, so the click has
+                // to be kept from toggling the panel open.
+                onClick={(event) => {
+                  event.stopPropagation();
+                  setWeekendMenuAnchor(event.currentTarget);
+                }}
+                onFocus={(event) => event.stopPropagation()}
+                sx={{ alignSelf: 'center', color: 'text.secondary' }}
+              >
+                <MoreVertIcon fontSize="small" />
+              </IconButton>
             </Box>
           </Box>
         </AccordionSummary>
+        <Menu
+          anchorEl={weekendMenuAnchor}
+          open={Boolean(weekendMenuAnchor)}
+          onClose={() => setWeekendMenuAnchor(null)}
+        >
+          {isImportedView ? (
+            <MenuItem
+              key="delete-weekend"
+              onClick={() => {
+                setWeekendMenuAnchor(null);
+                onDeleteImported(groupHashes, title ?? 'this weekend');
+              }}
+            >
+              <ListItemIcon>
+                <DeleteForeverIcon fontSize="small" />
+              </ListItemIcon>
+              <ListItemText>
+                Delete weekend from disk ({groupHashes.length})
+              </ListItemText>
+            </MenuItem>
+          ) : isArchivedView ? (
+            <MenuItem
+              key="restore-weekend"
+              onClick={() => {
+                setWeekendMenuAnchor(null);
+                onRestore(groupHashes);
+              }}
+            >
+              <ListItemIcon>
+                <UnarchiveIcon fontSize="small" />
+              </ListItemIcon>
+              <ListItemText>
+                Restore weekend ({groupHashes.length})
+              </ListItemText>
+            </MenuItem>
+          ) : (
+            <MenuItem
+              key="archive-weekend"
+              onClick={() => {
+                setWeekendMenuAnchor(null);
+                onArchive(groupHashes, 'this weekend');
+              }}
+            >
+              <ListItemIcon>
+                <ArchiveIcon fontSize="small" />
+              </ListItemIcon>
+              <ListItemText>
+                Archive weekend ({groupHashes.length})
+              </ListItemText>
+            </MenuItem>
+          )}
+          {/*
+            One archive holding every session of the weekend, a directory each.
+            Offered alongside per-session export rather than instead of it: a
+            steward reviewing one incident wants the one session, and a steward
+            handing a protest to another league wants the lot.
+          */}
+          {canExport ? (
+            <MenuItem
+              key="export-weekend"
+              disabled={exportableSessions.length === 0}
+              onClick={() => {
+                setWeekendMenuAnchor(null);
+                onExportWeekend(exportableSessions, title ?? 'Race weekend');
+              }}
+            >
+              <ListItemIcon>
+                <FileUploadIcon fontSize="small" />
+              </ListItemIcon>
+              <ListItemText>
+                {exportableSessions.length === 0
+                  ? 'Export weekend (no result logs)'
+                  : `Export weekend (${exportableSessions.length})`}
+              </ListItemText>
+            </MenuItem>
+          ) : null}
+        </Menu>
         <AccordionDetails sx={{ m: 0, p: 0 }}>
           <TableContainer>
             <Table>
@@ -532,13 +710,44 @@ export const DashboardReplay: React.FC<DashboardReplayProps> = ({
                         : '-'}
                     </TableCell>
                     <TableCell align="right">
-                      <Button
-                        onClick={() => onViewReplay(row.hash)}
-                        size="small"
-                        variant="contained"
+                      <Box
+                        sx={{
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'flex-end',
+                          gap: 1,
+                        }}
                       >
-                        View Replay
-                      </Button>
+                        {row.note ? (
+                          <ToolTip title={row.note}>
+                            <StickyNote2Icon
+                              aria-label={`Note: ${row.note}`}
+                              sx={{
+                                width: '18px',
+                                height: '18px',
+                                color: 'text.secondary',
+                              }}
+                            />
+                          </ToolTip>
+                        ) : null}
+                        <Button
+                          onClick={() => onViewReplay(row.hash)}
+                          size="small"
+                          variant="contained"
+                        >
+                          View Replay
+                        </Button>
+                        <IconButton
+                          aria-label={`Actions for ${row.sessionType}`}
+                          size="small"
+                          onClick={(event) =>
+                            setRowMenu({ anchor: event.currentTarget, row })
+                          }
+                          sx={{ color: 'text.secondary' }}
+                        >
+                          <MoreVertIcon fontSize="small" />
+                        </IconButton>
+                      </Box>
                     </TableCell>
                   </TableRow>
                 ))}
@@ -547,7 +756,132 @@ export const DashboardReplay: React.FC<DashboardReplayProps> = ({
           </TableContainer>
         </AccordionDetails>
       </Accordion>
+      <Menu
+        anchorEl={rowMenu?.anchor ?? null}
+        open={Boolean(rowMenu)}
+        onClose={closeRowMenu}
+      >
+        {isImportedView
+          ? [
+              <MenuItem
+                key="delete-imported"
+                onClick={() => {
+                  closeRowMenu();
+                  if (rowMenu) {
+                    onDeleteImported(
+                      [rowMenu.row.hash],
+                      rowMenu.row.sessionType,
+                    );
+                  }
+                }}
+              >
+                <ListItemIcon>
+                  <DeleteForeverIcon fontSize="small" />
+                </ListItemIcon>
+                <ListItemText>Delete from disk</ListItemText>
+              </MenuItem>,
+              /*
+                Imported replays get note editing too. Without it the note
+                written at import would be permanent, since an imported replay
+                is never in the archived view where this action otherwise
+                lives.
+              */
+              <MenuItem
+                key="imported-note"
+                onClick={() => {
+                  closeRowMenu();
+                  if (rowMenu) {
+                    onEditNote(rowMenu.row.hash, rowMenu.row.note);
+                  }
+                }}
+              >
+                <ListItemIcon>
+                  <EditNoteIcon fontSize="small" />
+                </ListItemIcon>
+                <ListItemText>
+                  {rowMenu?.row.note ? 'Edit note' : 'Add note'}
+                </ListItemText>
+              </MenuItem>,
+            ]
+          : isArchivedView
+            ? [
+                <MenuItem
+                  key="restore"
+                  onClick={() => {
+                    closeRowMenu();
+                    if (rowMenu) {
+                      onRestore([rowMenu.row.hash]);
+                    }
+                  }}
+                >
+                  <ListItemIcon>
+                    <UnarchiveIcon fontSize="small" />
+                  </ListItemIcon>
+                  <ListItemText>Restore session</ListItemText>
+                </MenuItem>,
+                <MenuItem
+                  key="note"
+                  onClick={() => {
+                    closeRowMenu();
+                    if (rowMenu) {
+                      onEditNote(rowMenu.row.hash, rowMenu.row.note);
+                    }
+                  }}
+                >
+                  <ListItemIcon>
+                    <EditNoteIcon fontSize="small" />
+                  </ListItemIcon>
+                  <ListItemText>
+                    {rowMenu?.row.note ? 'Edit note' : 'Add note'}
+                  </ListItemText>
+                </MenuItem>,
+              ]
+            : [
+                <MenuItem
+                  key="archive"
+                  onClick={() => {
+                    closeRowMenu();
+                    if (rowMenu) {
+                      onArchive(
+                        [rowMenu.row.hash],
+                        `this ${rowMenu.row.sessionType}`,
+                      );
+                    }
+                  }}
+                >
+                  <ListItemIcon>
+                    <ArchiveIcon fontSize="small" />
+                  </ListItemIcon>
+                  <ListItemText>Archive session</ListItemText>
+                </MenuItem>,
+              ]}
+        {/*
+          Offered in every view, and per session rather than per weekend: one
+          replay and one result log is a pairing with nothing to resolve. A
+          weekend can hold several races from restarts, which are only telling
+          apart at all because each replay already knows its own log.
+        */}
+        {canExport ? (
+          <MenuItem
+            disabled={!rowMenu?.row.replay.logDataFileName}
+            onClick={() => {
+              closeRowMenu();
+              if (rowMenu) {
+                onExportSession(rowMenu.row.replay);
+              }
+            }}
+          >
+            <ListItemIcon>
+              <FileUploadIcon fontSize="small" />
+            </ListItemIcon>
+            <ListItemText>
+              {rowMenu?.row.replay.logDataFileName
+                ? 'Export session'
+                : 'Export session (no result log)'}
+            </ListItemText>
+          </MenuItem>
+        ) : null}
+      </Menu>
     </Box>
   );
 };
-

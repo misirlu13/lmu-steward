@@ -1,18 +1,37 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
-import { GetReplaysRequest, LMUReplay } from '@types';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { CONSTANTS } from '@constants';
+import {
+  DashboardSortByOptions,
+  DashboardSortDirection,
+  DashboardViewMode,
+  GetReplaysRequest,
+  LMUReplay,
+  PersistedDashboardView,
+} from '@types';
 import { useApi } from '../providers/ApiContext';
+import { sendMessage } from '../utils/postMessage';
 import {
   getSessionCarClasses,
   getTotalSessionIncidents,
 } from '../utils/sessionUtils';
+import { DEFAULT_FILTERS, Filters } from '../utils/dashboardFilters';
+import { importedRecordsToReplays } from '../utils/importedReplays';
 import {
-  DEFAULT_FILTERS,
-  Filters,
-} from '../components/Dashboard/DashboardFilter';
+  DEFAULT_SORT_BY,
+  DEFAULT_SORT_DIRECTION,
+  deserializeDashboardView,
+  serializeDashboardView,
+} from '../utils/dashboardViewPersistence';
 
-export type DashboardSortByOptions = 'date' | 'track' | 'incidents';
+export type { DashboardSortByOptions };
 
 const REPLAYS_PER_PAGE = 5;
+
+/**
+ * Filters and sort can change rapidly while the user tweaks the menu, so writes
+ * are coalesced rather than issued on every keystroke or toggle.
+ */
+const PERSIST_DEBOUNCE_MS = 500;
 
 interface SessionDriverLike {
   CarClass?: string;
@@ -20,7 +39,7 @@ interface SessionDriverLike {
 
 const getSessionLength = (replay: LMUReplay): number | null => {
   const sessionType = replay.metadata.session;
-  const logData = replay.logData;
+  const { logData } = replay;
 
   if (sessionType === 'RACE' && logData?.Race?.Minutes) {
     return logData.Race.Minutes;
@@ -44,7 +63,7 @@ const getSessionLengthCategory = (minutes: number | null): string => {
 
 const getSessionDrivers = (replay: LMUReplay): SessionDriverLike[] => {
   const sessionType = replay.metadata.session;
-  const logData = replay.logData;
+  const { logData } = replay;
 
   if (sessionType === 'RACE' && logData?.Race?.Driver) {
     return Array.isArray(logData.Race.Driver)
@@ -65,7 +84,8 @@ const getSessionDrivers = (replay: LMUReplay): SessionDriverLike[] => {
   return [];
 };
 
-const getFieldSize = (replay: LMUReplay): number => getSessionDrivers(replay).length;
+const getFieldSize = (replay: LMUReplay): number =>
+  getSessionDrivers(replay).length;
 
 const getFieldSizeCategory = (size: number): string => {
   if (size <= 10) return 'small';
@@ -98,7 +118,9 @@ const getIncidentSeverity = (replay: LMUReplay): string => {
   return 'high';
 };
 
-const getGameType = (replay: LMUReplay): NonNullable<GetReplaysRequest['gameType']> =>
+const getGameType = (
+  replay: LMUReplay,
+): NonNullable<GetReplaysRequest['gameType']> =>
   replay.multiplayer ? 'multiplayer' : 'race-weekend';
 
 const getReplayRequest = (filters: Filters): GetReplaysRequest | undefined => {
@@ -109,7 +131,25 @@ const getReplayRequest = (filters: Filters): GetReplaysRequest | undefined => {
   return { gameType: filters.gameType };
 };
 
-const matchesFilters = (replay: LMUReplay, filters: Filters): boolean => {
+const matchesFilters = (
+  replay: LMUReplay,
+  filters: Filters,
+  dashboardView: DashboardViewMode,
+): boolean => {
+  // Active, archived and imported are mutually exclusive views. Active and
+  // archived replays are already in memory with their archive state attached,
+  // so switching between them costs nothing — no request, no sync.
+  if (dashboardView === 'imported') {
+    if (!replay.imported) {
+      return false;
+    }
+  } else if (
+    replay.imported ||
+    Boolean(replay.archived) !== (dashboardView === 'archived')
+  ) {
+    return false;
+  }
+
   const [startDate, endDate] = filters.dateRange;
   const replayTimestamp = Number(replay.timestamp) * 1000;
 
@@ -173,7 +213,7 @@ const matchesFilters = (replay: LMUReplay, filters: Filters): boolean => {
 const sortReplays = (
   replayGroups: LMUReplay[][],
   sortBy: DashboardSortByOptions,
-  sortDirection: 'asc' | 'desc',
+  sortDirection: DashboardSortDirection,
 ): LMUReplay[][] => {
   return replayGroups.sort((groupA, groupB) => {
     if (sortBy === 'track') {
@@ -203,14 +243,71 @@ const sortReplays = (
 };
 
 export const useDashboardReplays = () => {
-  const { isConnected, replays, requestReplays } = useApi();
+  const {
+    isConnected,
+    hasUserSettingsResponse,
+    persistDashboardFiltersEnabled,
+    persistedDashboardView,
+    replays,
+    importedReplays,
+    requestImportedReplays,
+    deleteImportedReplays,
+    requestReplays,
+    archiveReplays,
+    restoreReplays,
+    setArchiveNote,
+  } = useApi();
 
+  /*
+   * Imported replays are presented as ordinary replays so grouping, filtering
+   * and the session cards all work on them unchanged. They come from their own
+   * store rather than the replay cache, which is why they are merged here
+   * rather than arriving with the rest.
+   */
+  const allReplays = useMemo(
+    () => [
+      ...(replays?.data ?? []),
+      ...importedRecordsToReplays(importedReplays ?? []),
+    ],
+    [replays, importedReplays],
+  );
+
+  /*
+   * Deliberately not persisted across restarts: archived and imported are both
+   * somewhere you go on purpose, and reopening the app into either would read
+   * as missing replays.
+   */
+  const [dashboardView, setDashboardView] =
+    useState<DashboardViewMode>('active');
   const [hasCalledForReplays, setHasCalledForReplays] = useState(false);
   const [hasReplaysResponded, setHasReplaysResponded] = useState(false);
+  const [hasHydratedView, setHasHydratedView] = useState(false);
   const [page, setPage] = useState(1);
-  const [sortBy, setSortBy] = useState<DashboardSortByOptions>('date');
-  const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('desc');
+  const [sortBy, setSortBy] = useState<DashboardSortByOptions>(DEFAULT_SORT_BY);
+  const [sortDirection, setSortDirection] = useState<DashboardSortDirection>(
+    DEFAULT_SORT_DIRECTION,
+  );
   const [filters, setFilters] = useState<Filters>(DEFAULT_FILTERS);
+  const hasHydratedViewRef = useRef(false);
+  const lastPersistedViewRef = useRef('');
+  const pendingViewRef = useRef<PersistedDashboardView | null>(null);
+  const persistTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // The dashboard unmounts whenever the user opens a replay, so a debounced
+  // write still in flight is flushed rather than dropped.
+  useEffect(
+    () => () => {
+      if (persistTimeoutRef.current) {
+        clearTimeout(persistTimeoutRef.current);
+      }
+
+      if (pendingViewRef.current) {
+        sendMessage(CONSTANTS.API.POST_DASHBOARD_VIEW, pendingViewRef.current);
+        pendingViewRef.current = null;
+      }
+    },
+    [],
+  );
 
   useEffect(() => {
     if (replays && !hasReplaysResponded) {
@@ -218,22 +315,110 @@ export const useDashboardReplays = () => {
     }
   }, [replays, hasReplaysResponded]);
 
+  /*
+   * Read once on mount. Imported replays do not come from the game, so this
+   * neither waits for LMU nor triggers a sync.
+   */
   useEffect(() => {
-    if (!isConnected || hasCalledForReplays) {
+    requestImportedReplays();
+  }, [requestImportedReplays]);
+
+  // Restores persisted filters and sort exactly once per mount. Running again
+  // on later settings pushes would stomp on filters the user has since changed.
+  useEffect(() => {
+    if (hasHydratedViewRef.current || !hasUserSettingsResponse) {
+      return;
+    }
+
+    hasHydratedViewRef.current = true;
+
+    const restoredView = persistDashboardFiltersEnabled
+      ? deserializeDashboardView(persistedDashboardView)
+      : null;
+
+    if (restoredView) {
+      setFilters(restoredView.filters);
+      setSortBy(restoredView.sortBy);
+      setSortDirection(restoredView.sortDirection);
+    }
+
+    lastPersistedViewRef.current = JSON.stringify(
+      serializeDashboardView(
+        restoredView ?? {
+          filters: DEFAULT_FILTERS,
+          sortBy: DEFAULT_SORT_BY,
+          sortDirection: DEFAULT_SORT_DIRECTION,
+        },
+      ),
+    );
+    setHasHydratedView(true);
+  }, [
+    hasUserSettingsResponse,
+    persistDashboardFiltersEnabled,
+    persistedDashboardView,
+  ]);
+
+  useEffect(() => {
+    if (!hasHydratedView || !persistDashboardFiltersEnabled) {
+      return undefined;
+    }
+
+    const nextView = serializeDashboardView({ filters, sortBy, sortDirection });
+    const serializedView = JSON.stringify(nextView);
+
+    if (serializedView === lastPersistedViewRef.current) {
+      return undefined;
+    }
+
+    if (persistTimeoutRef.current) {
+      clearTimeout(persistTimeoutRef.current);
+    }
+
+    pendingViewRef.current = nextView;
+    persistTimeoutRef.current = setTimeout(() => {
+      lastPersistedViewRef.current = serializedView;
+      pendingViewRef.current = null;
+      sendMessage(CONSTANTS.API.POST_DASHBOARD_VIEW, nextView);
+    }, PERSIST_DEBOUNCE_MS);
+
+    return () => {
+      if (persistTimeoutRef.current) {
+        clearTimeout(persistTimeoutRef.current);
+      }
+    };
+  }, [
+    filters,
+    sortBy,
+    sortDirection,
+    hasHydratedView,
+    persistDashboardFiltersEnabled,
+  ]);
+
+  // Gated on hydration so the initial fetch carries the restored gameType,
+  // which is resolved in the main process rather than client-side.
+  useEffect(() => {
+    if (!isConnected || hasCalledForReplays || !hasHydratedView) {
       return;
     }
 
     setHasCalledForReplays(true);
     requestReplays(getReplayRequest(filters));
-  }, [isConnected, hasCalledForReplays, requestReplays, filters]);
+  }, [
+    isConnected,
+    hasCalledForReplays,
+    hasHydratedView,
+    requestReplays,
+    filters,
+  ]);
 
   const replayGroups = useMemo(() => {
-    if (!replays?.data) {
-      return [];
-    }
-
-    const filteredReplays = replays.data.filter((replay) =>
-      matchesFilters(replay, filters),
+    /*
+     * Deliberately not gated on the replay cache having responded. Imported
+     * replays come from their own store and are readable with LMU closed and
+     * no sync ever having run.
+     */
+    const filteredReplays = allReplays.filter((replay) =>
+      matchesFilters(replay, filters, dashboardView),
     );
 
     const groupedReplays = Object.groupBy(
@@ -246,24 +431,44 @@ export const useDashboardReplays = () => {
     );
 
     return sortReplays(groupsArray, sortBy, sortDirection);
-  }, [replays, filters, sortBy, sortDirection]);
+  }, [allReplays, filters, sortBy, sortDirection, dashboardView]);
 
-  const totalReplayCount = replays?.data?.length ?? 0;
+  // Totals describe the view the user is in, so the archived and imported
+  // counts don't make the active dashboard look like it is hiding replays.
+  const viewReplays = useMemo(
+    () =>
+      allReplays.filter((replay) =>
+        dashboardView === 'imported'
+          ? Boolean(replay.imported)
+          : !replay.imported &&
+            Boolean(replay.archived) === (dashboardView === 'archived'),
+      ),
+    [allReplays, dashboardView],
+  );
+
+  const archivedCount = useMemo(
+    () =>
+      allReplays.filter((replay) => replay.archived && !replay.imported).length,
+    [allReplays],
+  );
+
+  const importedCount = useMemo(
+    () => allReplays.filter((replay) => replay.imported).length,
+    [allReplays],
+  );
+
+  const totalReplayCount = viewReplays.length;
 
   const totalSessionCount = useMemo(() => {
-    if (!replays?.data) {
-      return 0;
-    }
-
     const groupedReplays = Object.groupBy(
-      replays.data,
+      viewReplays,
       (replay: LMUReplay) => replay.timestamp,
     );
 
     return Object.values(groupedReplays).filter(
       (group): group is LMUReplay[] => group !== undefined,
     ).length;
-  }, [replays]);
+  }, [viewReplays]);
 
   const totalPages = useMemo(
     () => Math.max(1, Math.ceil(replayGroups.length / REPLAYS_PER_PAGE)),
@@ -298,6 +503,49 @@ export const useDashboardReplays = () => {
     }
   }, [page, totalPages]);
 
+  // Bulk actions target the whole filtered set rather than the current page —
+  // "archive these 12 sessions" means the 12 the filters matched.
+  const filteredReplayHashes = useMemo(
+    () => replayGroups.flatMap((group) => group.map((replay) => replay.hash)),
+    [replayGroups],
+  );
+
+  const handleChangeDashboardView = useCallback(
+    (nextDashboardView: DashboardViewMode) => {
+      setDashboardView(nextDashboardView);
+      setPage(1);
+    },
+    [],
+  );
+
+  const handleDeleteImportedReplays = useCallback(
+    (hashes: string[]) => {
+      deleteImportedReplays(hashes);
+    },
+    [deleteImportedReplays],
+  );
+
+  const handleArchiveReplays = useCallback(
+    (hashes: string[], note?: string) => {
+      archiveReplays(hashes, note);
+    },
+    [archiveReplays],
+  );
+
+  const handleRestoreReplays = useCallback(
+    (hashes: string[]) => {
+      restoreReplays(hashes);
+    },
+    [restoreReplays],
+  );
+
+  const handleSetArchiveNote = useCallback(
+    (hashes: string[], note: string) => {
+      setArchiveNote(hashes, note);
+    },
+    [setArchiveNote],
+  );
+
   const currentReplays = useMemo(() => {
     const safePage = Math.min(page, totalPages);
     return replayGroups.slice(
@@ -306,14 +554,17 @@ export const useDashboardReplays = () => {
     );
   }, [replayGroups, page, totalPages]);
 
-  const handleApplyFilters = useCallback((nextFilters: Filters) => {
-    setFilters(nextFilters);
-    setPage(1);
+  const handleApplyFilters = useCallback(
+    (nextFilters: Filters) => {
+      setFilters(nextFilters);
+      setPage(1);
 
-    if (isConnected) {
-      requestReplays(getReplayRequest(nextFilters));
-    }
-  }, [isConnected, requestReplays]);
+      if (isConnected) {
+        requestReplays(getReplayRequest(nextFilters));
+      }
+    },
+    [isConnected, requestReplays],
+  );
 
   const handleRefreshReplays = useCallback(() => {
     if (!isConnected) {
@@ -339,10 +590,19 @@ export const useDashboardReplays = () => {
     sortBy,
     sortDirection,
     filters,
+    dashboardView,
+    archivedCount,
+    importedCount,
+    filteredReplayHashes,
     setPage,
     setSortBy,
     setSortDirection,
     handleApplyFilters,
     handleRefreshReplays,
+    handleChangeDashboardView,
+    handleDeleteImportedReplays,
+    handleArchiveReplays,
+    handleRestoreReplays,
+    handleSetArchiveNote,
   };
 };

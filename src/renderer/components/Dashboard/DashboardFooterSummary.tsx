@@ -37,7 +37,7 @@ export const DashboardFooterSummary: React.FC<DashboardFooterSummaryProps> = ({
         padding: '8px 16px',
         backgroundColor: 'background.paper',
         gap: 4,
-        mt: 'auto'
+        mt: 'auto',
       }}
     >
       <Box

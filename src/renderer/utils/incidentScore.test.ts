@@ -1,5 +1,8 @@
-import { getSessionIncidentScore, getDriverIncidentScore } from './incidentScore';
 import { SessionIncidents } from '@types';
+import {
+  getSessionIncidentScore,
+  getDriverIncidentScore,
+} from './incidentScore';
 
 describe('incidentScore', () => {
   describe('getSessionIncidentScore', () => {
@@ -137,7 +140,9 @@ describe('incidentScore', () => {
         incidents: 2,
         penalties: 1,
       };
-      expect(getDriverIncidentScore(incidents, undefined as unknown as number)).toBe(16);
+      expect(
+        getDriverIncidentScore(incidents, undefined as unknown as number),
+      ).toBe(16);
     });
 
     it('should weight penalties highest (5x)', () => {
@@ -242,9 +247,24 @@ describe('incidentScore', () => {
       expect(score).toBe(1 + 3 + 5); // 9 total
 
       // Verify each contribution
-      expect(getDriverIncidentScore({ trackLimits: 1, incidents: 0, penalties: 0 }, 1)).toBe(1);
-      expect(getDriverIncidentScore({ trackLimits: 0, incidents: 1, penalties: 0 }, 1)).toBe(3);
-      expect(getDriverIncidentScore({ trackLimits: 0, incidents: 0, penalties: 1 }, 1)).toBe(5);
+      expect(
+        getDriverIncidentScore(
+          { trackLimits: 1, incidents: 0, penalties: 0 },
+          1,
+        ),
+      ).toBe(1);
+      expect(
+        getDriverIncidentScore(
+          { trackLimits: 0, incidents: 1, penalties: 0 },
+          1,
+        ),
+      ).toBe(3);
+      expect(
+        getDriverIncidentScore(
+          { trackLimits: 0, incidents: 0, penalties: 1 },
+          1,
+        ),
+      ).toBe(5);
     });
 
     it('should score 5 track limits equal to 1 penalty', () => {
@@ -259,7 +279,7 @@ describe('incidentScore', () => {
         penalties: 1,
       };
       expect(getDriverIncidentScore(trackLimitsOnly, 1)).toBe(
-        getDriverIncidentScore(penaltiesOnly, 1)
+        getDriverIncidentScore(penaltiesOnly, 1),
       );
     });
 
@@ -275,7 +295,7 @@ describe('incidentScore', () => {
         penalties: 0,
       };
       expect(getDriverIncidentScore(trackLimitsOnly, 1)).toBe(
-        getDriverIncidentScore(incidentsOnly, 1)
+        getDriverIncidentScore(incidentsOnly, 1),
       );
     });
   });

@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import AppBar from '@mui/material/AppBar';
 import Box from '@mui/material/Box';
 import Toolbar from '@mui/material/Toolbar';
@@ -9,12 +9,11 @@ import Avatar from '@mui/material/Avatar';
 import Tooltip from '@mui/material/Tooltip';
 import SettingsRoundedIcon from '@mui/icons-material/SettingsRounded';
 import { useNavigate } from 'react-router-dom';
-import { useEffect, useState } from 'react';
 import { CONSTANTS } from '@constants';
+import { useNavbar } from '@/renderer/providers/NavbarContext';
 import { sendMessage } from '../../utils/postMessage';
 import { getProfileInitials } from '../../utils/profileInitials';
 import navLogoIcon from '../../../../assets/icons/48x48.png';
-import { useNavbar } from '@/renderer/providers/NavbarContext';
 
 export const NavBar = () => {
   const navigate = useNavigate();
@@ -55,10 +54,17 @@ export const NavBar = () => {
   return (
     <AppBar
       position="fixed"
-      sx={{ borderBottom: 1, borderColor: isViewHeaderAttached ? 'transparent' : 'divider', height: '64px' }}
+      sx={{
+        borderBottom: 1,
+        borderColor: isViewHeaderAttached ? 'transparent' : 'divider',
+        height: '64px',
+      }}
     >
       <Container maxWidth={false}>
-        <Toolbar disableGutters sx={{ minHeight: '64px !important', height: '64px' }}>
+        <Toolbar
+          disableGutters
+          sx={{ minHeight: '64px !important', height: '64px' }}
+        >
           <Box
             component="img"
             src={navLogoIcon}

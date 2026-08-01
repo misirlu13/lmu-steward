@@ -81,7 +81,7 @@ describe('profileInitials', () => {
 
     it('should handle very long names', () => {
       expect(
-        getProfileInitials('Alexander Montgomery Christopher Wellington')
+        getProfileInitials('Alexander Montgomery Christopher Wellington'),
       ).toBe('AW');
     });
 

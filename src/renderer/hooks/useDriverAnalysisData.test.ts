@@ -22,7 +22,9 @@ describe('useDriverAnalysisData', () => {
         type: 'collision',
         timestampLabel: '00:00:10',
         lapLabel: 'Lap 1',
-        drivers: [{ displayName: 'Driver A', carNumber: '12', carClass: 'GT3' }],
+        drivers: [
+          { displayName: 'Driver A', carNumber: '12', carClass: 'GT3' },
+        ],
       },
       {
         id: 'penalty-1',
@@ -129,7 +131,9 @@ describe('useDriverAnalysisData', () => {
     expect(result.current.faultTotalIncidents).toBe(3);
     expect(result.current.topPenaltyReasonText).toContain('Cut Track');
 
-    const lap2Row = result.current.lapBreakdownRows.find((entry) => entry.lapNumber === 2);
+    const lap2Row = result.current.lapBreakdownRows.find(
+      (entry) => entry.lapNumber === 2,
+    );
     expect(lap2Row).toBeTruthy();
     expect(lap2Row?.hasTrackLimit).toBe(true);
     expect(lap2Row?.hasIncident).toBe(true);

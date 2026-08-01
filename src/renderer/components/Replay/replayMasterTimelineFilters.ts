@@ -1,4 +1,4 @@
-import { ReplayIncidentEvent, ReplayIncidentType } from './ReplayMasterIncidentTimeline';
+import { ReplayIncidentEvent, ReplayIncidentType } from './replayTimelineTypes';
 
 export const buildFilteredReplayTimelineEvents = ({
   events,

@@ -2,6 +2,29 @@ export interface LMUReplay {
   id?: string;
   hash: string;
   multiplayer?: boolean;
+  /**
+   * Archive state, applied when replays are read out of the cache. These are
+   * view-time decoration only and are never written back to the replay cache —
+   * the archive store is the single source of truth.
+   */
+  archived?: boolean;
+  archivedAt?: number;
+  archiveNote?: string;
+  /**
+   * View-time decoration for replays this app copied into the LMU install.
+   * Sourced from the imported_replays table, never written to the replay cache.
+   */
+  imported?: boolean;
+  importedAt?: number;
+  importMatchConfidence?: number | null;
+  importMatchMethod?: 'roster' | 'manual' | 'manifest';
+  importVcrFileName?: string;
+  importLogFileName?: string;
+  importVcrPath?: string;
+  importLogPath?: string;
+  importOriginInstallPath?: string;
+  /** The note written when this replay was imported. */
+  importNote?: string;
   metadata: {
     sceneDesc: string;
     session: SessionType;
@@ -40,6 +63,135 @@ export interface GetReplaysRequest {
   gameType?: ReplayGameType;
 }
 
+/**
+ * A replay the user has removed from the dashboard. Archiving never touches the
+ * replay or log files on disk — it only controls what the dashboard lists.
+ *
+ * Records live outside the `replays` cache key because that cache is wiped on
+ * schema bumps and forced resets, either of which would silently un-archive
+ * everything the user has cleared.
+ */
+export interface ArchivedReplayRecord {
+  hash: string;
+  /**
+   * Secondary identity, mirroring the replay cache's own fallback lookup, so a
+   * replay that re-hashes stays archived instead of reappearing.
+   */
+  identityKey: string;
+  archivedAt: number;
+  note?: string;
+}
+
+export type ArchivedReplayStore = Record<string, ArchivedReplayRecord>;
+
+/**
+ * A replay LMU Steward copied into the LMU installation on the user's behalf.
+ *
+ * These live in their own table rather than in the replay cache. That cache is
+ * wiped wholesale on schema bumps and forced resets, and losing this record
+ * would strand multiple GB of files on disk with nothing in the app able to
+ * find or remove them. It is also the only record of which exact files an
+ * import wrote, which is what makes deleting them safe.
+ */
+export interface ImportedReplayRecord {
+  hash: string;
+  /**
+   * Name as written into the LMU install. May differ from the file the user
+   * chose, because a colliding name is given an "(imported)" marker — and this
+   * is the name LMU reports, so it is what the hash is built from.
+   */
+  replayName: string;
+  /** Name of the file the user picked, kept for display and provenance. */
+  originalReplayName: string;
+  sceneDesc: string;
+  session: SessionType;
+  /** The stamped creation time, equal to the matched log's root DateTime. */
+  timestamp: number;
+  vcrFileName: string;
+  vcrPath: string;
+  /** Byte size of the copied .Vcr, so the UI can report scale without a stat. */
+  size: number;
+  logFileName: string;
+  logPath: string;
+  /**
+   * Whether this import actually wrote the log, or found it already there.
+   *
+   * Delete depends on it. A steward who raced in the event already has its
+   * result log, so importing another driver's replay of that race copies
+   * nothing — and removing the log on delete would destroy a file the app never
+   * placed.
+   */
+  logWasWritten: boolean;
+  /** Guards delete against a file having been replaced since import. */
+  vcrFingerprint: string;
+  logFingerprint: string;
+  importedAt: number;
+  /**
+   * What the steward wrote about this hand-off when importing it.
+   *
+   * Provenance, not review state — who sent it, which protest it belongs to,
+   * what to look for. Kept on the imported record rather than in the archive
+   * store because an imported replay is never archived, so the archive note has
+   * nowhere to live for it.
+   */
+  note?: string;
+  logData: unknown;
+  origin: {
+    trackFolder: string;
+    trackVersion: string;
+    trackContentHash: string;
+    installPath: string;
+  };
+  match: {
+    method: 'roster' | 'manual' | 'manifest';
+    confidence: number | null;
+    rosterOverlap: {
+      intersection: number;
+      vcrCount: number;
+      logCount: number;
+    } | null;
+  };
+}
+
+export type ImportedReplayStore = Record<string, ImportedReplayRecord>;
+
+export interface ArchiveReplaysRequest {
+  hashes: string[];
+  note?: string;
+  gameType?: ReplayGameType;
+}
+
+/**
+ * The dashboard's three mutually exclusive lists. Imported replays are not
+ * archivable, which this expresses structurally: an imported replay is never in
+ * the active list where the archive action lives.
+ */
+export type DashboardViewMode = 'active' | 'archived' | 'imported';
+
+export type DashboardSortByOptions = 'date' | 'track' | 'incidents';
+
+export type DashboardSortDirection = 'asc' | 'desc';
+
+/**
+ * Dashboard filter and sort state as written to persistent storage. Dates are
+ * stored as ISO strings because Dayjs instances do not survive serialization.
+ */
+export interface PersistedDashboardView {
+  filters: {
+    dateRange: [string | null, string | null];
+    track: string;
+    sessionType: string;
+    sessionLength: string;
+    gameType: ReplayGameTypeFilter;
+    carClass: string;
+    fieldSize: string;
+    multiSingleClass: string;
+    incidentCount: string;
+  };
+  sortBy: DashboardSortByOptions;
+  sortDirection: DashboardSortDirection;
+}
+
 export type LMUReplayCommands =
   | 'VCRCOMMAND_REVERSESCAN'
   | 'VCRCOMMAND_PLAYBACKWARDS'
@@ -48,7 +200,6 @@ export type LMUReplayCommands =
   | 'VCRCOMMAND_SLOW'
   | 'VCRCOMMAND_PLAY'
   | 'VCRCOMMAND_FORWARDSCAN';
-
 
 export interface LMUStewardAPIResponse<T> {
   status: 'success' | 'error';

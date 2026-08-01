@@ -1,8 +1,8 @@
 import React from 'react';
 import { act, fireEvent, render, screen } from '@testing-library/react';
 import { CONSTANTS } from '@constants';
-import { ReplayJumpBar } from './ReplayJumpBar';
 import { sendMessage } from '@/renderer/utils/postMessage';
+import { ReplayJumpBar } from './ReplayJumpBar';
 import { ReplayIncidentEvent } from './ReplayMasterIncidentTimeline';
 
 jest.mock('@/renderer/utils/postMessage', () => ({

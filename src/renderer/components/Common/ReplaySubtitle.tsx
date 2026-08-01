@@ -9,7 +9,7 @@ export const ReplaySubtitle: React.FC<{
   gameType?: string;
 }> = ({ timestamp, location, gameType }) => {
   const _ts = Number(timestamp);
-  const _date = new Date(isNaN(_ts) ? 0 : _ts < 1e12 ? _ts * 1000 : _ts);
+  const _date = new Date(Number.isNaN(_ts) ? 0 : _ts < 1e12 ? _ts * 1000 : _ts);
   const localizedDate = _date.toLocaleString(undefined, {
     year: 'numeric',
     month: 'long',
@@ -20,55 +20,53 @@ export const ReplaySubtitle: React.FC<{
   });
 
   return (
-    <>
-      <Box
-        sx={{
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'flex-start',
-          flexDirection: 'row',
-          gap: 2,
-        }}
-      >
-        <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
-          <LocationOnIcon
-            sx={{
-              width: '16px',
-              height: '16px',
-              color: 'text.secondary',
-            }}
-          />
-          <Typography color="text.secondary" variant="body2">
-            {location}
-          </Typography>
-        </Box>
-        <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
-          <CalendarMonthIcon
-            sx={{
-              width: '16px',
-              height: '16px',
-              color: 'text.secondary',
-            }}
-          />
-          <Typography color="text.secondary" variant="body2">
-            {localizedDate}
-          </Typography>
-        </Box>
-        {gameType && (
-          <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
-            <EmojiFlagsIcon
-              sx={{
-                width: '16px',
-                height: '16px',
-                color: 'text.secondary',
-              }}
-            />
-            <Typography color="text.secondary" variant="body2">
-              {gameType}
-            </Typography>
-          </Box>
-        )}
+    <Box
+      sx={{
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'flex-start',
+        flexDirection: 'row',
+        gap: 2,
+      }}
+    >
+      <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
+        <LocationOnIcon
+          sx={{
+            width: '16px',
+            height: '16px',
+            color: 'text.secondary',
+          }}
+        />
+        <Typography color="text.secondary" variant="body2">
+          {location}
+        </Typography>
       </Box>
-    </>
+      <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
+        <CalendarMonthIcon
+          sx={{
+            width: '16px',
+            height: '16px',
+            color: 'text.secondary',
+          }}
+        />
+        <Typography color="text.secondary" variant="body2">
+          {localizedDate}
+        </Typography>
+      </Box>
+      {gameType && (
+        <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
+          <EmojiFlagsIcon
+            sx={{
+              width: '16px',
+              height: '16px',
+              color: 'text.secondary',
+            }}
+          />
+          <Typography color="text.secondary" variant="body2">
+            {gameType}
+          </Typography>
+        </Box>
+      )}
+    </Box>
   );
 };

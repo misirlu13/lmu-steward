@@ -12,6 +12,11 @@ import path from 'path';
 import { app, BrowserWindow, shell, ipcMain } from 'electron';
 import { autoUpdater } from 'electron-updater';
 import log from 'electron-log';
+import {
+  ArchiveReplaysRequest,
+  GetReplaysRequest,
+  PersistedDashboardView,
+} from '@types';
 import MenuBuilder from './menu';
 import { resolveHtmlPath } from './util';
 import { CONSTANTS } from '../../constants';
@@ -19,13 +24,37 @@ import { getApiStatus } from './api/api-status';
 import {
   getReplays,
   getIsReplayActive,
+  postArchiveNote,
+  postArchiveReplays,
   postCloseReplay,
+  postRestoreReplays,
   postToggleUIElement,
   postWatchReplay,
   putReplayCommand,
   putReplayTime,
   syncReplayData,
 } from './api/replay';
+import {
+  DeleteImportedReplaysRequest,
+  ExportReplayRequest,
+  ExportWeekendRequest,
+  getImportedReplays,
+  ImportPairRequest,
+  ImportReplaysRequest,
+  postDeleteImportedReplays,
+  postDiscardImportPreview,
+  postExportReplay,
+  postExportWeekend,
+  postImportReplayPair,
+  postImportReplays,
+  postSelectImportFile,
+  postSelectImportSource,
+  postSetImportedNote,
+  postValidateImportPair,
+  SelectImportFileRequest,
+  SelectImportSourceRequest,
+  SetImportedNoteRequest,
+} from './api/replay-import-handlers';
 import {
   getTrackThumbnail,
   getStandings,
@@ -42,6 +71,7 @@ import {
 import {
   getUserSettings,
   postClearLocalStorage,
+  postDashboardView,
   postUserSettings,
   readUserSettings,
   UserSettings,
@@ -58,7 +88,6 @@ import {
 } from './api/lmu-launch';
 import { isDevModeEnabled, replyWithMockData } from './api/mock-api-data';
 import { getLocalDataDebugInfo } from './storage/local-data-store';
-import { GetReplaysRequest } from '@types';
 
 class AppUpdater {
   constructor() {
@@ -104,6 +133,9 @@ const handleRendererError = async (
     .filter(Boolean)
     .join('\n');
 
+  // Forward reference to a handler defined further down with the rest of the
+  // crash-reporting helpers; only invoked once a renderer error arrives.
+  // eslint-disable-next-line @typescript-eslint/no-use-before-define
   await handleFatalError(details, 'renderer');
 };
 
@@ -144,12 +176,24 @@ const CHANNEL_CALLBACK_HANDLERS: Partial<
   [CONSTANTS.API.POST_REPLAY_COMMAND_UI]: withEventAndData<
     string | { all: boolean }
   >(postToggleUIElement),
-  [CONSTANTS.API.POST_USER_SETTINGS]: withEventAndData<UserSettings>(postUserSettings),
+  [CONSTANTS.API.POST_USER_SETTINGS]:
+    withEventAndData<UserSettings>(postUserSettings),
+  [CONSTANTS.API.POST_DASHBOARD_VIEW]:
+    withEventAndData<PersistedDashboardView | null>(postDashboardView),
   [CONSTANTS.API.POST_WATCH_REPLAY]: withEventAndData<string>(postWatchReplay),
-  [CONSTANTS.API.POST_CAMERA_ANGLE]: withEventAndData<CameraAngleRequestBody>(postSetCameraAngle),
+  [CONSTANTS.API.POST_ARCHIVE_REPLAYS]:
+    withEventAndData<ArchiveReplaysRequest>(postArchiveReplays),
+  [CONSTANTS.API.POST_RESTORE_REPLAYS]:
+    withEventAndData<ArchiveReplaysRequest>(postRestoreReplays),
+  [CONSTANTS.API.POST_ARCHIVE_NOTE]:
+    withEventAndData<ArchiveReplaysRequest>(postArchiveNote),
+  [CONSTANTS.API.POST_CAMERA_ANGLE]:
+    withEventAndData<CameraAngleRequestBody>(postSetCameraAngle),
   [CONSTANTS.API.POST_CLOSE_REPLAY]: withEventOnly(postCloseReplay),
   [CONSTANTS.API.POST_CLOSE_LMU]: withEventOnly(postCloseLmu),
-  [CONSTANTS.API.POST_CLEAR_LOCAL_STORAGE]: withEventOnly(postClearLocalStorage),
+  [CONSTANTS.API.POST_CLEAR_LOCAL_STORAGE]: withEventOnly(
+    postClearLocalStorage,
+  ),
   [CONSTANTS.API.POST_LAUNCH_LMU]: withEventOnly(postLaunchLmu),
   [CONSTANTS.API.POST_OPEN_SETTINGS]: withEventOnly(postOpenSettings),
   [CONSTANTS.API.POST_SELECT_LMU_EXECUTABLE]: withEventOnly(
@@ -158,9 +202,8 @@ const CHANNEL_CALLBACK_HANDLERS: Partial<
   [CONSTANTS.API.POST_SELECT_LMU_REPLAY_DIRECTORY]: withEventOnly(
     postSelectLmuReplayDirectory,
   ),
-  [CONSTANTS.API.POST_RENDERER_ERROR]: withEventAndData<RendererErrorPayload>(
-    handleRendererError,
-  ),
+  [CONSTANTS.API.POST_RENDERER_ERROR]:
+    withEventAndData<RendererErrorPayload>(handleRendererError),
   // PUT REQUESTS
   [CONSTANTS.API.PUT_REPLAY_COMMAND_SCAN]:
     withEventAndData<string>(putReplayCommand),
@@ -169,27 +212,60 @@ const CHANNEL_CALLBACK_HANDLERS: Partial<
   [CONSTANTS.API.PUT_REPLAY_COMMAND_FOCUS_CAR]:
     withEventAndData<string>(putFocusCar),
   [CONSTANTS.API.PUT_FOCUS_CAR]: withEventAndData<string>(putFocusCar),
+
+  // REPLAY IMPORT / EXPORT
+  [CONSTANTS.API.GET_IMPORTED_REPLAYS]: withEventOnly(getImportedReplays),
+  [CONSTANTS.API.POST_SELECT_IMPORT_SOURCE]:
+    withEventAndData<SelectImportSourceRequest>(postSelectImportSource),
+  [CONSTANTS.API.POST_DISCARD_IMPORT_PREVIEW]: withEventOnly(
+    postDiscardImportPreview,
+  ),
+  [CONSTANTS.API.POST_IMPORT_REPLAYS]:
+    withEventAndData<ImportReplaysRequest>(postImportReplays),
+  [CONSTANTS.API.POST_DELETE_IMPORTED_REPLAYS]:
+    withEventAndData<DeleteImportedReplaysRequest>(postDeleteImportedReplays),
+  [CONSTANTS.API.POST_SET_IMPORTED_NOTE]:
+    withEventAndData<SetImportedNoteRequest>(postSetImportedNote),
+  [CONSTANTS.API.POST_EXPORT_REPLAY]:
+    withEventAndData<ExportReplayRequest>(postExportReplay),
+  [CONSTANTS.API.POST_EXPORT_WEEKEND]:
+    withEventAndData<ExportWeekendRequest>(postExportWeekend),
+  [CONSTANTS.API.POST_SELECT_IMPORT_FILE]:
+    withEventAndData<SelectImportFileRequest>(postSelectImportFile),
+  [CONSTANTS.API.POST_VALIDATE_IMPORT_PAIR]:
+    withEventAndData<ImportPairRequest>(postValidateImportPair),
+  [CONSTANTS.API.POST_IMPORT_REPLAY_PAIR]:
+    withEventAndData<ImportPairRequest>(postImportReplayPair),
 };
 
 const devModeEnabled = isDevModeEnabled();
 
 if (devModeEnabled) {
-  log.info('LMU_DEVMODE enabled: backend API calls are being served from mock data.');
+  log.info(
+    'LMU_DEVMODE enabled: backend API calls are being served from mock data.',
+  );
 }
 
 let crashWindow: BrowserWindow | null = null;
 let crashReported = false;
 
 const escapeHtml = (value: string): string =>
-  value.replace(/&/g, '&amp;')
+  value
+    .replace(/&/g, '&amp;')
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;')
     .replace(/'/g, '&#39;');
 
 const getCrashReportText = (error: unknown, source: string): string => {
-  const errorText = error instanceof Error ? error.stack || error.message : String(error);
-  return [`Source: ${source}`, `Timestamp: ${new Date().toISOString()}`, '', errorText].join('\n');
+  const errorText =
+    error instanceof Error ? error.stack || error.message : String(error);
+  return [
+    `Source: ${source}`,
+    `Timestamp: ${new Date().toISOString()}`,
+    '',
+    errorText,
+  ].join('\n');
 };
 
 const createCrashReportHtml = (details: string): string => {
@@ -279,7 +355,9 @@ const showCrashReportWindow = async (details: string) => {
       app.exit(1);
     });
 
-    crashWindow.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(createCrashReportHtml(details))}`);
+    crashWindow.loadURL(
+      `data:text/html;charset=utf-8,${encodeURIComponent(createCrashReportHtml(details))}`,
+    );
     crashWindow.show();
   };
 
@@ -392,7 +470,9 @@ const configureReplayAutoSync = async () => {
   const firstRun = Boolean(settings.firstRun ?? true);
   const automaticSyncEnabled = Boolean(settings.automaticSyncEnabled ?? true);
   const syncOnAppLaunch = Boolean(settings.syncOnAppLaunch ?? true);
-  const syncOnIntervalMinutes = Number.isFinite(Number(settings.syncOnIntervalMinutes))
+  const syncOnIntervalMinutes = Number.isFinite(
+    Number(settings.syncOnIntervalMinutes),
+  )
     ? Math.max(1, Number(settings.syncOnIntervalMinutes))
     : 5;
 
@@ -404,9 +484,12 @@ const configureReplayAutoSync = async () => {
     void runReplayAutoSync('launch');
   }
 
-  replayAutoSyncIntervalId = setInterval(() => {
-    void runReplayAutoSync('interval');
-  }, syncOnIntervalMinutes * 60 * 1000);
+  replayAutoSyncIntervalId = setInterval(
+    () => {
+      void runReplayAutoSync('interval');
+    },
+    syncOnIntervalMinutes * 60 * 1000,
+  );
 };
 
 // Initialize IPC handlers for all channels defined in CONSTANTS.IPC_CHANNELS
@@ -419,10 +502,6 @@ Object.entries(CHANNEL_CALLBACK_HANDLERS).forEach(([channel, handler]) => {
         arg,
       );
 
-
-    ipcMain.handle(CONSTANTS.API.GET_STORAGE_DEBUG_INFO, async () => {
-      return getLocalDataDebugInfo();
-    });
       if (didReplyWithMock) {
         return;
       }
@@ -520,7 +599,9 @@ const createWindow = async () => {
 
     try {
       const settings = await readUserSettings();
-      const closeLmuWhenStewardExits = Boolean(settings.closeLmuWhenStewardExits);
+      const closeLmuWhenStewardExits = Boolean(
+        settings.closeLmuWhenStewardExits,
+      );
       const closeLmuOnExitAlwaysPerformAction = Boolean(
         settings.closeLmuOnExitAlwaysPerformAction,
       );

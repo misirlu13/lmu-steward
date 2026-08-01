@@ -23,14 +23,18 @@ describe('replaySubscriptions', () => {
       CONSTANTS.API.GET_IS_REPLAY_ACTIVE,
     ]);
 
-    subscriptions.find((entry) => entry.channel === CONSTANTS.API.GET_SESSION_INFO)?.callback({
-      status: 'success',
-      data: { maximumLaps: 20 },
-    });
-    subscriptions.find((entry) => entry.channel === CONSTANTS.API.GET_STANDINGS)?.callback({
-      status: 'success',
-      data: [{ driverName: 'A' }],
-    });
+    subscriptions
+      .find((entry) => entry.channel === CONSTANTS.API.GET_SESSION_INFO)
+      ?.callback({
+        status: 'success',
+        data: { maximumLaps: 20 },
+      });
+    subscriptions
+      .find((entry) => entry.channel === CONSTANTS.API.GET_STANDINGS)
+      ?.callback({
+        status: 'success',
+        data: [{ driverName: 'A' }],
+      });
     subscriptions
       .find((entry) => entry.channel === CONSTANTS.API.GET_STANDINGS_HISTORY)
       ?.callback({
@@ -62,18 +66,24 @@ describe('replaySubscriptions', () => {
       onError,
     });
 
-    subscriptions.find((entry) => entry.channel === CONSTANTS.API.GET_TRACK_MAP)?.callback({
-      status: 'error',
-      message: 'no map',
-    });
-    subscriptions.find((entry) => entry.channel === CONSTANTS.API.GET_SESSION_INFO)?.callback({
-      status: 'error',
-      message: 'session failed',
-    });
-    subscriptions.find((entry) => entry.channel === CONSTANTS.API.GET_STANDINGS)?.callback({
-      status: 'error',
-      message: 'standings failed',
-    });
+    subscriptions
+      .find((entry) => entry.channel === CONSTANTS.API.GET_TRACK_MAP)
+      ?.callback({
+        status: 'error',
+        message: 'no map',
+      });
+    subscriptions
+      .find((entry) => entry.channel === CONSTANTS.API.GET_SESSION_INFO)
+      ?.callback({
+        status: 'error',
+        message: 'session failed',
+      });
+    subscriptions
+      .find((entry) => entry.channel === CONSTANTS.API.GET_STANDINGS)
+      ?.callback({
+        status: 'error',
+        message: 'standings failed',
+      });
     subscriptions
       .find((entry) => entry.channel === CONSTANTS.API.GET_STANDINGS_HISTORY)
       ?.callback({

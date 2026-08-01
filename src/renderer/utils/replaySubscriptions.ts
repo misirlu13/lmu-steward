@@ -42,7 +42,9 @@ export const buildReplayApiSubscriptions = ({
   setIsReplayActiveForRoute: (value: boolean | null) => void;
   onError?: (message: string, error: unknown) => void;
 }): ReplayApiSubscription[] => {
-  const reportError = onError ?? ((message: string, error: unknown) => console.error(message, error));
+  const reportError =
+    onError ??
+    ((message: string, error: unknown) => console.error(message, error));
 
   return [
     {
@@ -63,7 +65,9 @@ export const buildReplayApiSubscriptions = ({
     {
       channel: CONSTANTS.API.GET_SESSION_INFO,
       callback: (data: unknown) => {
-        const response = toReplayApiResponse(data) as ReplayApiResponse<SessionInfoPayload>;
+        const response = toReplayApiResponse(
+          data,
+        ) as ReplayApiResponse<SessionInfoPayload>;
 
         if (response.status !== 'success') {
           reportError(
@@ -79,7 +83,9 @@ export const buildReplayApiSubscriptions = ({
     {
       channel: CONSTANTS.API.GET_STANDINGS,
       callback: (data: unknown) => {
-        const response = toReplayApiResponse(data) as ReplayApiResponse<StandingsPayload>;
+        const response = toReplayApiResponse(
+          data,
+        ) as ReplayApiResponse<StandingsPayload>;
 
         if (response.status !== 'success') {
           reportError(
@@ -95,7 +101,9 @@ export const buildReplayApiSubscriptions = ({
     {
       channel: CONSTANTS.API.GET_STANDINGS_HISTORY,
       callback: (data: unknown) => {
-        const response = toReplayApiResponse(data) as ReplayApiResponse<StandingsHistoryPayload>;
+        const response = toReplayApiResponse(
+          data,
+        ) as ReplayApiResponse<StandingsHistoryPayload>;
 
         if (response.status !== 'success') {
           reportError(
@@ -111,7 +119,9 @@ export const buildReplayApiSubscriptions = ({
     {
       channel: CONSTANTS.API.GET_IS_REPLAY_ACTIVE,
       callback: (data: unknown) => {
-        const response = toReplayApiResponse(data) as ReplayApiResponse<ReplayActivePayload>;
+        const response = toReplayApiResponse(
+          data,
+        ) as ReplayApiResponse<ReplayActivePayload>;
 
         if (response.status !== 'success') {
           setIsReplayActiveForRoute(null);

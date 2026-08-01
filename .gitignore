@@ -29,3 +29,7 @@ npm-debug.log.*
 *.scss.d.ts
 
 /fixture-test-set
+
+# Working design and implementation plans. Local-only so they survive branch
+# switches and never reach origin.
+/plans

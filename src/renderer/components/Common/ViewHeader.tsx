@@ -32,9 +32,10 @@ export const ViewHeader: React.FC<ViewHeaderProps> = ({
         return;
       }
 
-      const isCompact = sentinel.getBoundingClientRect().top <= NAVBAR_HEIGHT;
-      setIsCompact(isCompact);
-      setIsViewHeaderAttached(isCompact);
+      const isNowCompact =
+        sentinel.getBoundingClientRect().top <= NAVBAR_HEIGHT;
+      setIsCompact(isNowCompact);
+      setIsViewHeaderAttached(isNowCompact);
     };
 
     updateCompactState();
@@ -45,7 +46,7 @@ export const ViewHeader: React.FC<ViewHeaderProps> = ({
       window.removeEventListener('scroll', updateCompactState);
       window.removeEventListener('resize', updateCompactState);
     };
-  }, []);
+  }, [setIsViewHeaderAttached]);
 
   return (
     <>
@@ -57,8 +58,7 @@ export const ViewHeader: React.FC<ViewHeaderProps> = ({
           pointerEvents: 'none',
           visibility: 'hidden',
         }}
-      >
-      </Box>
+      />
 
       <Box
         sx={{
@@ -88,7 +88,14 @@ export const ViewHeader: React.FC<ViewHeaderProps> = ({
             backdropFilter: isCompact ? 'blur(12px)' : 'none',
             transition: (theme) =>
               theme.transitions.create(
-                ['padding', 'margin', 'gap', 'background-color', 'border-color', 'backdrop-filter'],
+                [
+                  'padding',
+                  'margin',
+                  'gap',
+                  'background-color',
+                  'border-color',
+                  'backdrop-filter',
+                ],
                 {
                   duration: theme.transitions.duration.shorter,
                 },
@@ -114,12 +121,13 @@ export const ViewHeader: React.FC<ViewHeaderProps> = ({
             '& .view-header-breadcrumb .MuiTypography-caption': {
               fontSize: isCompact ? '0.7rem' : undefined,
             },
-            '& .view-header-title .MuiTypography-root, & .view-header-subtitle .MuiTypography-root, & .view-header-breadcrumb .MuiTypography-root': {
-              transition: (theme) =>
-                theme.transitions.create(['font-size', 'line-height'], {
-                  duration: theme.transitions.duration.shorter,
-                }),
-            },
+            '& .view-header-title .MuiTypography-root, & .view-header-subtitle .MuiTypography-root, & .view-header-breadcrumb .MuiTypography-root':
+              {
+                transition: (theme) =>
+                  theme.transitions.create(['font-size', 'line-height'], {
+                    duration: theme.transitions.duration.shorter,
+                  }),
+              },
             '& .view-header-actions': {
               transform: isCompact ? 'scale(0.94)' : 'scale(1)',
               transformOrigin: 'right center',
@@ -133,7 +141,11 @@ export const ViewHeader: React.FC<ViewHeaderProps> = ({
           {onBack && (
             <ArrowBackIcon
               className="view-header-back"
-              sx={{ cursor: 'pointer', color: 'text.secondary', ':hover': { color: 'text.primary' } }}
+              sx={{
+                cursor: 'pointer',
+                color: 'text.secondary',
+                ':hover': { color: 'text.primary' },
+              }}
               onClick={onBack}
             />
           )}

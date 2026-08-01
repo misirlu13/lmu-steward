@@ -1,7 +1,13 @@
 import React, { useEffect, useState } from 'react';
-import { render, screen, fireEvent, waitFor, act } from '@testing-library/react';
-import { ApiProvider, useApi } from './ApiContext';
+import {
+  render,
+  screen,
+  fireEvent,
+  waitFor,
+  act,
+} from '@testing-library/react';
 import { CONSTANTS } from '@constants';
+import { ApiProvider, useApi } from './ApiContext';
 import { initializeMessageBus, sendMessage } from '../utils/postMessage';
 
 jest.mock('../utils/postMessage', () => ({
@@ -10,9 +16,12 @@ jest.mock('../utils/postMessage', () => ({
 }));
 
 describe('ApiContext integration', () => {
-  const initializeMessageBusMock =
-    initializeMessageBus as jest.MockedFunction<typeof initializeMessageBus>;
-  const sendMessageMock = sendMessage as jest.MockedFunction<typeof sendMessage>;
+  const initializeMessageBusMock = initializeMessageBus as jest.MockedFunction<
+    typeof initializeMessageBus
+  >;
+  const sendMessageMock = sendMessage as jest.MockedFunction<
+    typeof sendMessage
+  >;
 
   let handlers: Record<string, (data: unknown) => void> = {};
 
@@ -39,10 +48,13 @@ describe('ApiContext integration', () => {
     const [sessionInfoStatus, setSessionInfoStatus] = useState('none');
 
     useEffect(() => {
-      return subscribeToApiChannel(CONSTANTS.API.GET_SESSION_INFO, (data: unknown) => {
-        const payload = data as { status?: string } | null;
-        setSessionInfoStatus(String(payload?.status ?? 'unknown'));
-      });
+      return subscribeToApiChannel(
+        CONSTANTS.API.GET_SESSION_INFO,
+        (data: unknown) => {
+          const payload = data as { status?: string } | null;
+          setSessionInfoStatus(String(payload?.status ?? 'unknown'));
+        },
+      );
     }, [subscribeToApiChannel]);
 
     return (
@@ -50,15 +62,26 @@ describe('ApiContext integration', () => {
         <div data-testid="connected">{String(isConnected)}</div>
         <div data-testid="quick-view">{String(quickViewEnabled)}</div>
         <div data-testid="syncing">{String(isReplaySyncInProgress)}</div>
-        <div data-testid="sync-progress">{String(replaySyncStatus.percentage)}</div>
+        <div data-testid="sync-progress">
+          {String(replaySyncStatus.percentage)}
+        </div>
         <div data-testid="sync-counts">
           {`${replaySyncStatus.processed}/${replaySyncStatus.total}`}
         </div>
-        <div data-testid="api-status-response">{String(hasApiStatusResponse)}</div>
+        <div data-testid="api-status-response">
+          {String(hasApiStatusResponse)}
+        </div>
         <div data-testid="session-info-status">{sessionInfoStatus}</div>
-        <button onClick={markReplayCacheResetRequired}>mark replay cache reset</button>
-        <button onClick={() => requestReplays()}>request replays</button>
-        <button onClick={() => requestReplays({ gameType: 'multiplayer' })}>
+        <button type="button" onClick={markReplayCacheResetRequired}>
+          mark replay cache reset
+        </button>
+        <button type="button" onClick={() => requestReplays()}>
+          request replays
+        </button>
+        <button
+          type="button"
+          onClick={() => requestReplays({ gameType: 'multiplayer' })}
+        >
           request multiplayer replays
         </button>
       </>
@@ -75,8 +98,12 @@ describe('ApiContext integration', () => {
     expect(initializeMessageBusMock).toHaveBeenCalledTimes(1);
 
     await waitFor(() => {
-      expect(sendMessageMock).toHaveBeenCalledWith(CONSTANTS.API.GET_API_STATUS);
-      expect(sendMessageMock).toHaveBeenCalledWith(CONSTANTS.API.GET_USER_SETTINGS);
+      expect(sendMessageMock).toHaveBeenCalledWith(
+        CONSTANTS.API.GET_API_STATUS,
+      );
+      expect(sendMessageMock).toHaveBeenCalledWith(
+        CONSTANTS.API.GET_USER_SETTINGS,
+      );
     });
   });
 
@@ -109,7 +136,9 @@ describe('ApiContext integration', () => {
     await waitFor(() => {
       expect(screen.getByTestId('connected').textContent).toBe('true');
       expect(screen.getByTestId('quick-view').textContent).toBe('true');
-      expect(screen.getByTestId('api-status-response').textContent).toBe('true');
+      expect(screen.getByTestId('api-status-response').textContent).toBe(
+        'true',
+      );
     });
   });
 
@@ -155,7 +184,9 @@ describe('ApiContext integration', () => {
       expect(screen.getByTestId('syncing').textContent).toBe('false');
       expect(screen.getByTestId('sync-progress').textContent).toBe('1');
       expect(screen.getByTestId('sync-counts').textContent).toBe('5/10');
-      expect(screen.getByTestId('session-info-status').textContent).toBe('success');
+      expect(screen.getByTestId('session-info-status').textContent).toBe(
+        'success',
+      );
     });
   });
 
@@ -166,7 +197,9 @@ describe('ApiContext integration', () => {
       </ApiProvider>,
     );
 
-    fireEvent.click(screen.getByRole('button', { name: /mark replay cache reset/i }));
+    fireEvent.click(
+      screen.getByRole('button', { name: /mark replay cache reset/i }),
+    );
     fireEvent.click(screen.getByRole('button', { name: /request replays/i }));
 
     await waitFor(() => {

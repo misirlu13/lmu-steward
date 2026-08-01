@@ -1,5 +1,4 @@
-import Typography from '@mui/material/Typography';
-import { TypographyProps } from '@mui/material/Typography';
+import Typography, { TypographyProps } from '@mui/material/Typography';
 
 export const SessionIncidentSeverityLabel = ({
   scorePerDriver,

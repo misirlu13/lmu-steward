@@ -44,7 +44,12 @@ export const getTrackMapBounds = (
   const minY = Math.min(...ys);
   const maxY = Math.max(...ys);
 
-  if (!isFinite(minX) || !isFinite(maxX) || !isFinite(minY) || !isFinite(maxY)) {
+  if (
+    !Number.isFinite(minX) ||
+    !Number.isFinite(maxX) ||
+    !Number.isFinite(minY) ||
+    !Number.isFinite(maxY)
+  ) {
     return null;
   }
 
@@ -60,14 +65,19 @@ export const normalizeTrackWorldPointToSvg = (
   const width = bounds.maxX - bounds.minX;
   const height = bounds.maxY - bounds.minY;
 
-  if (!isFinite(width) || !isFinite(height) || width === 0 || height === 0) {
+  if (
+    !Number.isFinite(width) ||
+    !Number.isFinite(height) ||
+    width === 0 ||
+    height === 0
+  ) {
     return null;
   }
 
   const clampedPadding = Math.max(0, Math.min(viewBoxSize / 4, padding));
   const drawableSize = viewBoxSize - clampedPadding * 2;
 
-  if (!isFinite(drawableSize) || drawableSize <= 0) {
+  if (!Number.isFinite(drawableSize) || drawableSize <= 0) {
     return null;
   }
 
@@ -77,13 +87,19 @@ export const normalizeTrackWorldPointToSvg = (
     viewBoxSize -
     (clampedPadding + ((point.z - bounds.minY) / height) * drawableSize);
 
-  if (!isFinite(normalizedX) || !isFinite(normalizedY)) {
+  if (!Number.isFinite(normalizedX) || !Number.isFinite(normalizedY)) {
     return null;
   }
 
   return {
-    x: Math.max(clampedPadding, Math.min(viewBoxSize - clampedPadding, normalizedX)),
-    y: Math.max(clampedPadding, Math.min(viewBoxSize - clampedPadding, normalizedY)),
+    x: Math.max(
+      clampedPadding,
+      Math.min(viewBoxSize - clampedPadding, normalizedX),
+    ),
+    y: Math.max(
+      clampedPadding,
+      Math.min(viewBoxSize - clampedPadding, normalizedY),
+    ),
   };
 };
 
@@ -120,7 +136,10 @@ export const trackMapToSVG = (
     `;
   }
 
-  const rawPoints: Point[] = primaryTrackPoints.map((p) => ({ x: p.x, y: p.z }));
+  const rawPoints: Point[] = primaryTrackPoints.map((p) => ({
+    x: p.x,
+    y: p.z,
+  }));
 
   // -----------------------------
   // Normalize
@@ -136,7 +155,12 @@ export const trackMapToSVG = (
   const width = bounds.maxX - bounds.minX;
   const height = bounds.maxY - bounds.minY;
 
-  if (!isFinite(width) || !isFinite(height) || width === 0 || height === 0) {
+  if (
+    !Number.isFinite(width) ||
+    !Number.isFinite(height) ||
+    width === 0 ||
+    height === 0
+  ) {
     return `
       <svg style="width: 100%; height: 100%;" viewBox="0 0 ${viewBoxSize} ${viewBoxSize}" xmlns="http://www.w3.org/2000/svg"></svg>
     `;
@@ -144,7 +168,7 @@ export const trackMapToSVG = (
 
   const drawableSize = viewBoxSize - padding * 2;
 
-  if (!isFinite(drawableSize) || drawableSize <= 0) {
+  if (!Number.isFinite(drawableSize) || drawableSize <= 0) {
     return `
       <svg style="width: 100%; height: 100%;" viewBox="0 0 ${viewBoxSize} ${viewBoxSize}" xmlns="http://www.w3.org/2000/svg"></svg>
     `;

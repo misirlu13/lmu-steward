@@ -3,6 +3,7 @@ import {
   Menu,
   shell,
   BrowserWindow,
+  MenuItemConstructorOptions,
 } from 'electron';
 import path from 'path';
 import {
@@ -48,8 +49,8 @@ export default class MenuBuilder {
     });
   }
 
-  buildDefaultTemplate() {
-    const templateDefault = [
+  buildDefaultTemplate(): MenuItemConstructorOptions[] {
+    const templateDefault: MenuItemConstructorOptions[] = [
       {
         label: '&File',
         submenu: [
@@ -141,7 +142,7 @@ export default class MenuBuilder {
       },
       ...(process.env.NODE_ENV === 'development' ||
       process.env.DEBUG_PROD === 'true'
-        ? [
+        ? ([
             {
               label: '&Debug',
               submenu: [
@@ -194,7 +195,7 @@ export default class MenuBuilder {
                 },
               ],
             },
-          ]
+          ] as MenuItemConstructorOptions[])
         : []),
     ];
 

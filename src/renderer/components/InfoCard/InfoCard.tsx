@@ -41,7 +41,7 @@ export const InfoCard = ({
   };
 
   return (
-    <Card variant="outlined" sx={{borderRadius: '4px'}}>
+    <Card variant="outlined" sx={{ borderRadius: '4px' }}>
       <CardContent>
         <Grid
           container

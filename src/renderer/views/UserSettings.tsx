@@ -13,7 +13,6 @@ import {
   Tooltip,
   Typography,
 } from '@mui/material';
-import InfoOutlinedIcon from '@mui/icons-material/InfoOutlined';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { CONSTANTS } from '@constants';
 import { useNavigate } from 'react-router-dom';
@@ -32,8 +31,6 @@ import { useUserSettingsDerivedState } from '../hooks/useUserSettingsDerivedStat
 // import { UserSettingsReplayThresholdDialog } from '../components/UserSettings/UserSettingsReplayThresholdDialog';
 import { UserSettingsReplaySyncDefaultsDialog } from '../components/UserSettings/UserSettingsReplaySyncDefaultsDialog';
 
-const DEFAULT_REPLAY_LOG_MATCH_THRESHOLD_MS = 120_000;
-const REPLAY_LOG_MATCH_THRESHOLD_MINUTES_OPTIONS = [1, 2, 3, 5, 10, 15];
 const DEFAULT_REPLAY_SYNC_SETTINGS = {
   automaticSyncEnabled: true,
   syncOnAppLaunch: true,
@@ -62,6 +59,8 @@ interface ApiResponse {
     syncOnAppLaunch?: boolean;
     syncOnIntervalMinutes?: number;
     replayLogMatchThresholdMs?: number;
+    persistDashboardFiltersEnabled?: boolean;
+    experimentalFeaturesEnabled?: boolean;
     anonymizeDriverData?: boolean;
     telemetryCacheEnabled?: boolean;
     clearCacheOnExit?: boolean;
@@ -86,6 +85,9 @@ export const UserSettingsView: React.FC = () => {
     lastReplaySyncAt,
     requestReplays,
     markReplayCacheResetRequired,
+    importedReplays,
+    requestImportedReplays,
+    deleteImportedReplays,
   } = useApi();
   const [lmuExecutablePath, setLmuExecutablePath] = useState<string>(
     CONSTANTS.LMU_DEFAULT_EXECUTABLE_PATH,
@@ -98,9 +100,11 @@ export const UserSettingsView: React.FC = () => {
   const [profileSteamId, setProfileSteamId] = useState('N/A');
   const [profileNationalityCode, setProfileNationalityCode] = useState('');
   const [profileLanguage, setProfileLanguage] = useState('');
-  const [profileSource, setProfileSource] = useState<'live' | 'cache' | 'none'>('none');
-  const [hasFetchedProfileInfo, setHasFetchedProfileInfo] = useState(false);
-  const [lastProfileSyncAt, setLastProfileSyncAt] = useState<number | null>(null);
+  const [, setProfileSource] = useState<'live' | 'cache' | 'none'>('none');
+  const [, setHasFetchedProfileInfo] = useState(false);
+  const [lastProfileSyncAt, setLastProfileSyncAt] = useState<number | null>(
+    null,
+  );
   const [isProfileSyncing, setIsProfileSyncing] = useState(false);
   const [automaticSyncEnabled, setAutomaticSyncEnabled] = useState(true);
   const [quickViewEnabled, setQuickViewEnabled] = useState(false);
@@ -108,37 +112,57 @@ export const UserSettingsView: React.FC = () => {
   const [syncOnIntervalMinutes, setSyncOnIntervalMinutes] = useState(5);
   const [replayLogMatchThresholdMinutes, setReplayLogMatchThresholdMinutes] =
     useState(2);
-  const [pendingReplayLogMatchThresholdMinutes, setPendingReplayLogMatchThresholdMinutes] =
-    useState(2);
+  const [
+    pendingReplayLogMatchThresholdMinutes,
+    setPendingReplayLogMatchThresholdMinutes,
+  ] = useState(2);
+  const [persistDashboardFiltersEnabled, setPersistDashboardFiltersEnabled] =
+    useState(false);
+  const [experimentalFeaturesEnabled, setExperimentalFeaturesEnabled] =
+    useState(false);
+  /*
+   * Defaults to keeping the files. Clearing a cache should not destroy
+   * multi-GB replays as a side effect — the destructive option is the one the
+   * user actively picks.
+   */
+  const [deleteImportedFilesOnClear, setDeleteImportedFilesOnClear] =
+    useState(false);
+  const [importedReplayBytes, setImportedReplayBytes] = useState(0);
   const [anonymizeDriverData, setAnonymizeDriverData] = useState(false);
   const [telemetryCacheEnabled, setTelemetryCacheEnabled] = useState(true);
   const [clearCacheOnExit, setClearCacheOnExit] = useState(false);
-  const [closeLmuWhenStewardExits, setCloseLmuWhenStewardExits] = useState(false);
-  const [persistedLastReplaySyncAt, setPersistedLastReplaySyncAt] = useState<number | null>(
-    null,
-  );
+  const [closeLmuWhenStewardExits, setCloseLmuWhenStewardExits] =
+    useState(false);
+  const [persistedLastReplaySyncAt, setPersistedLastReplaySyncAt] = useState<
+    number | null
+  >(null);
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
   const [isAutosaving, setIsAutosaving] = useState(false);
   const [isClearingLocalStorage, setIsClearingLocalStorage] = useState(false);
   const [isClearLocalStorageDialogOpen, setIsClearLocalStorageDialogOpen] =
     useState(false);
-  const [isReplayThresholdDialogOpen, setIsReplayThresholdDialogOpen] =
-    useState(false);
+  const [, setIsReplayThresholdDialogOpen] = useState(false);
   const [isReplaySyncDefaultsDialogOpen, setIsReplaySyncDefaultsDialogOpen] =
     useState(false);
   const [autosaveStatus, setAutosaveStatus] = useState<AutosaveStatus>('idle');
   const [autosaveError, setAutosaveError] = useState('');
   const [isLaunching, setIsLaunching] = useState(false);
   const [isLaunchCooldownActive, setIsLaunchCooldownActive] = useState(false);
-  const [manualSaveTone, setManualSaveTone] = useState<'error' | 'success'>('success');
+  const [manualSaveTone, setManualSaveTone] = useState<'error' | 'success'>(
+    'success',
+  );
   const [manualSaveMessage, setManualSaveMessage] = useState('');
-  const [statusTone, setStatusTone] = useState<'error' | 'success' | 'info'>('info');
+  const [statusTone, setStatusTone] = useState<'error' | 'success' | 'info'>(
+    'info',
+  );
   const [statusMessage, setStatusMessage] = useState('');
   const saveModeRef = useRef<SaveMode>('none');
   const hasInitializedSettingsRef = useRef(false);
   const autosaveTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const launchCooldownTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const launchCooldownTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(
+    null,
+  );
   const lastAutosavedPayloadRef = useRef('');
   const lastManualSavedPayloadRef = useRef('');
   const shouldForceReplayResyncAfterSaveRef = useRef(false);
@@ -155,7 +179,6 @@ export const UserSettingsView: React.FC = () => {
     lastProfileSyncLabel,
     autosavePayload,
     manualSavePayload,
-    hasManualUnsavedChanges,
     manualSaveDisabled,
     areSystemPathsAtDefaults,
   } = useUserSettingsDerivedState({
@@ -173,6 +196,8 @@ export const UserSettingsView: React.FC = () => {
     quickViewEnabled,
     syncOnAppLaunch,
     syncOnIntervalMinutes,
+    persistDashboardFiltersEnabled,
+    experimentalFeaturesEnabled,
     // replayLogMatchThresholdMinutes,
     anonymizeDriverData,
     telemetryCacheEnabled,
@@ -187,10 +212,12 @@ export const UserSettingsView: React.FC = () => {
 
   const isReplaySyncDefaultsApplied = useMemo(() => {
     return (
-      automaticSyncEnabled === DEFAULT_REPLAY_SYNC_SETTINGS.automaticSyncEnabled &&
+      automaticSyncEnabled ===
+        DEFAULT_REPLAY_SYNC_SETTINGS.automaticSyncEnabled &&
       syncOnAppLaunch === DEFAULT_REPLAY_SYNC_SETTINGS.syncOnAppLaunch &&
       quickViewEnabled === DEFAULT_REPLAY_SYNC_SETTINGS.quickViewEnabled &&
-      syncOnIntervalMinutes === DEFAULT_REPLAY_SYNC_SETTINGS.syncOnIntervalMinutes &&
+      syncOnIntervalMinutes ===
+        DEFAULT_REPLAY_SYNC_SETTINGS.syncOnIntervalMinutes &&
       replayLogMatchThresholdMinutes ===
         DEFAULT_REPLAY_SYNC_SETTINGS.replayLogMatchThresholdMinutes
     );
@@ -202,7 +229,10 @@ export const UserSettingsView: React.FC = () => {
     syncOnIntervalMinutes,
   ]);
 
-  const persistUserSettings = (mode: SaveMode, payload: Record<string, unknown>) => {
+  const persistUserSettings = (
+    mode: SaveMode,
+    payload: Record<string, unknown>,
+  ) => {
     const payloadForPersistence = { ...payload };
     if (
       Object.prototype.hasOwnProperty.call(
@@ -215,10 +245,8 @@ export const UserSettingsView: React.FC = () => {
       );
 
       if (Number.isFinite(thresholdMinutes)) {
-        payloadForPersistence.replayLogMatchThresholdMs = Math.max(
-          1,
-          thresholdMinutes,
-        ) * 60_000;
+        payloadForPersistence.replayLogMatchThresholdMs =
+          Math.max(1, thresholdMinutes) * 60_000;
       }
 
       delete payloadForPersistence.replayLogMatchThresholdMinutes;
@@ -260,13 +288,16 @@ export const UserSettingsView: React.FC = () => {
 
       setLmuExecutablePath(resolvedPath);
       setLmuReplayDirectoryPath(resolvedReplayDirectoryPath);
-      setAutomaticSyncEnabled(Boolean(response?.data?.automaticSyncEnabled ?? true));
+      setAutomaticSyncEnabled(
+        Boolean(response?.data?.automaticSyncEnabled ?? true),
+      );
       setQuickViewEnabled(Boolean(response?.data?.quickViewEnabled ?? false));
       setSyncOnAppLaunch(Boolean(response?.data?.syncOnAppLaunch ?? true));
-      const resolvedSyncIntervalMinutes =
-        Number.isFinite(Number(response?.data?.syncOnIntervalMinutes))
-          ? Math.max(1, Number(response?.data?.syncOnIntervalMinutes))
-          : 5;
+      const resolvedSyncIntervalMinutes = Number.isFinite(
+        Number(response?.data?.syncOnIntervalMinutes),
+      )
+        ? Math.max(1, Number(response?.data?.syncOnIntervalMinutes))
+        : 5;
       // const resolvedReplayLogMatchThresholdMs = Number.isFinite(
       //   Number(response?.data?.replayLogMatchThresholdMs),
       // )
@@ -276,20 +307,26 @@ export const UserSettingsView: React.FC = () => {
       //   1,
       //   Math.round(resolvedReplayLogMatchThresholdMs / 60_000),
       // );
-      setSyncOnIntervalMinutes(
-        resolvedSyncIntervalMinutes,
-      );
+      setSyncOnIntervalMinutes(resolvedSyncIntervalMinutes);
       // setReplayLogMatchThresholdMinutes(resolvedReplayLogMatchThresholdMinutes);
       // setPendingReplayLogMatchThresholdMinutes(
       //   resolvedReplayLogMatchThresholdMinutes,
       // );
+      const resolvedPersistDashboardFiltersEnabled = Boolean(
+        response?.data?.persistDashboardFiltersEnabled ?? false,
+      );
+      const resolvedExperimentalFeaturesEnabled = Boolean(
+        response?.data?.experimentalFeaturesEnabled ?? false,
+      );
       const resolvedAnonymizeDriverData = Boolean(
         response?.data?.anonymizeDriverData ?? false,
       );
       const resolvedTelemetryCacheEnabled = Boolean(
         response?.data?.telemetryCacheEnabled ?? true,
       );
-      const resolvedClearCacheOnExit = Boolean(response?.data?.clearCacheOnExit ?? false);
+      const resolvedClearCacheOnExit = Boolean(
+        response?.data?.clearCacheOnExit ?? false,
+      );
       const resolvedCloseLmuWhenStewardExits = Boolean(
         response?.data?.closeLmuWhenStewardExits ?? false,
       );
@@ -299,6 +336,8 @@ export const UserSettingsView: React.FC = () => {
         ? Number(response?.data?.lastReplaySyncAt)
         : null;
 
+      setPersistDashboardFiltersEnabled(resolvedPersistDashboardFiltersEnabled);
+      setExperimentalFeaturesEnabled(resolvedExperimentalFeaturesEnabled);
       setAnonymizeDriverData(resolvedAnonymizeDriverData);
       setTelemetryCacheEnabled(resolvedTelemetryCacheEnabled);
       setClearCacheOnExit(resolvedClearCacheOnExit);
@@ -306,10 +345,14 @@ export const UserSettingsView: React.FC = () => {
       setPersistedLastReplaySyncAt(resolvedLastReplaySyncAt);
 
       lastAutosavedPayloadRef.current = JSON.stringify({
-        automaticSyncEnabled: Boolean(response?.data?.automaticSyncEnabled ?? true),
+        automaticSyncEnabled: Boolean(
+          response?.data?.automaticSyncEnabled ?? true,
+        ),
         quickViewEnabled: Boolean(response?.data?.quickViewEnabled ?? false),
         syncOnAppLaunch: Boolean(response?.data?.syncOnAppLaunch ?? true),
         syncOnIntervalMinutes: resolvedSyncIntervalMinutes,
+        persistDashboardFiltersEnabled: resolvedPersistDashboardFiltersEnabled,
+        experimentalFeaturesEnabled: resolvedExperimentalFeaturesEnabled,
         // replayLogMatchThresholdMinutes: resolvedReplayLogMatchThresholdMinutes,
         anonymizeDriverData: resolvedAnonymizeDriverData,
         telemetryCacheEnabled: resolvedTelemetryCacheEnabled,
@@ -366,10 +409,14 @@ export const UserSettingsView: React.FC = () => {
         if (response?.status !== 'success') {
           if (currentSaveMode === 'auto') {
             setAutosaveStatus('failed');
-            setAutosaveError(response?.message || 'Unable to auto-save settings.');
+            setAutosaveError(
+              response?.message || 'Unable to auto-save settings.',
+            );
           } else {
             setManualSaveTone('error');
-            setManualSaveMessage(response?.message || 'Unable to save settings.');
+            setManualSaveMessage(
+              response?.message || 'Unable to save settings.',
+            );
           }
           return;
         }
@@ -412,14 +459,32 @@ export const UserSettingsView: React.FC = () => {
           );
         }
 
-        if (Number.isFinite(Number(response?.data?.replayLogMatchThresholdMs))) {
+        if (
+          Number.isFinite(Number(response?.data?.replayLogMatchThresholdMs))
+        ) {
           const nextReplayLogMatchThresholdMinutes = Math.max(
             1,
-            Math.round(Number(response?.data?.replayLogMatchThresholdMs) / 60_000),
+            Math.round(
+              Number(response?.data?.replayLogMatchThresholdMs) / 60_000,
+            ),
           );
           setReplayLogMatchThresholdMinutes(nextReplayLogMatchThresholdMinutes);
           setPendingReplayLogMatchThresholdMinutes(
             nextReplayLogMatchThresholdMinutes,
+          );
+        }
+
+        if (
+          typeof response?.data?.persistDashboardFiltersEnabled === 'boolean'
+        ) {
+          setPersistDashboardFiltersEnabled(
+            response.data.persistDashboardFiltersEnabled,
+          );
+        }
+
+        if (typeof response?.data?.experimentalFeaturesEnabled === 'boolean') {
+          setExperimentalFeaturesEnabled(
+            response.data.experimentalFeaturesEnabled,
           );
         }
 
@@ -485,7 +550,9 @@ export const UserSettingsView: React.FC = () => {
 
         if (response?.status !== 'success') {
           setStatusTone('error');
-          setStatusMessage(response?.message || 'Unable to clear local storage.');
+          setStatusMessage(
+            response?.message || 'Unable to clear local storage.',
+          );
           return;
         }
 
@@ -574,7 +641,9 @@ export const UserSettingsView: React.FC = () => {
         }, LMU_LAUNCH_COOLDOWN_MS);
 
         setStatusTone('info');
-        setStatusMessage('Launch request sent. Waiting for LMU to become available…');
+        setStatusMessage(
+          'Launch request sent. Waiting for LMU to become available…',
+        );
       },
     );
 
@@ -597,12 +666,20 @@ export const UserSettingsView: React.FC = () => {
           return;
         }
 
-        setHasFetchedProfileInfo(Boolean(response?.data?.hasFetchedProfileInfo));
+        setHasFetchedProfileInfo(
+          Boolean(response?.data?.hasFetchedProfileInfo),
+        );
         setProfileSource(response?.data?.source ?? 'none');
-        setProfileName(String(profileInfo?.name ?? '').trim() || 'Unknown Steward');
+        setProfileName(
+          String(profileInfo?.name ?? '').trim() || 'Unknown Steward',
+        );
         setProfileNickname(String(profileInfo?.nick ?? '').trim() || 'N/A');
         setProfileSteamId(String(profileInfo?.steamID ?? '').trim() || 'N/A');
-        setProfileNationalityCode(String(profileInfo?.nationality ?? '').trim().toUpperCase());
+        setProfileNationalityCode(
+          String(profileInfo?.nationality ?? '')
+            .trim()
+            .toUpperCase(),
+        );
         setProfileLanguage(String(profileInfo?.language ?? '').trim() || '');
 
         if (Number.isFinite(Number(response?.data?.lastFetchedAt))) {
@@ -628,16 +705,23 @@ export const UserSettingsView: React.FC = () => {
         clearTimeout(launchCooldownTimeoutRef.current);
       }
     };
-  }, []);
+    // markReplayCacheResetRequired is a stable useCallback, so this still runs
+    // only on mount.
+  }, [markReplayCacheResetRequired]);
 
   useEffect(() => {
-    if (!hasInitializedSettingsRef.current || isLoading || isSaving || isLaunching) {
-      return;
+    if (
+      !hasInitializedSettingsRef.current ||
+      isLoading ||
+      isSaving ||
+      isLaunching
+    ) {
+      return undefined;
     }
 
     const nextAutosavePayload = JSON.stringify(autosavePayload);
     if (nextAutosavePayload === lastAutosavedPayloadRef.current) {
-      return;
+      return undefined;
     }
 
     if (autosaveTimeoutRef.current) {
@@ -671,7 +755,9 @@ export const UserSettingsView: React.FC = () => {
     setLmuExecutablePath(CONSTANTS.LMU_DEFAULT_EXECUTABLE_PATH);
     setLmuReplayDirectoryPath(CONSTANTS.LMU_DEFAULT_REPLAY_DIRECTORY_PATH);
     setManualSaveTone('success');
-    setManualSaveMessage('Default LMU paths restored. Click Save Changes to persist.');
+    setManualSaveMessage(
+      'Default LMU paths restored. Click Save Changes to persist.',
+    );
   };
 
   const onSelectExecutablePath = () => {
@@ -705,7 +791,7 @@ export const UserSettingsView: React.FC = () => {
     setIsClearLocalStorageDialogOpen(true);
   };
 
-  const onReplayLogThresholdMinutesChangeRequest = (nextValue: number) => {
+  const _onReplayLogThresholdMinutesChangeRequest = (nextValue: number) => {
     if (!Number.isFinite(nextValue)) {
       return;
     }
@@ -719,12 +805,12 @@ export const UserSettingsView: React.FC = () => {
     setIsReplayThresholdDialogOpen(true);
   };
 
-  const onCancelReplayThresholdChange = () => {
+  const _onCancelReplayThresholdChange = () => {
     setPendingReplayLogMatchThresholdMinutes(replayLogMatchThresholdMinutes);
     setIsReplayThresholdDialogOpen(false);
   };
 
-  const onConfirmReplayThresholdChange = () => {
+  const _onConfirmReplayThresholdChange = () => {
     setReplayLogMatchThresholdMinutes(pendingReplayLogMatchThresholdMinutes);
     shouldForceReplayResyncAfterSaveRef.current = true;
     setIsReplayThresholdDialogOpen(false);
@@ -746,7 +832,9 @@ export const UserSettingsView: React.FC = () => {
     setAutomaticSyncEnabled(DEFAULT_REPLAY_SYNC_SETTINGS.automaticSyncEnabled);
     setSyncOnAppLaunch(DEFAULT_REPLAY_SYNC_SETTINGS.syncOnAppLaunch);
     setQuickViewEnabled(DEFAULT_REPLAY_SYNC_SETTINGS.quickViewEnabled);
-    setSyncOnIntervalMinutes(DEFAULT_REPLAY_SYNC_SETTINGS.syncOnIntervalMinutes);
+    setSyncOnIntervalMinutes(
+      DEFAULT_REPLAY_SYNC_SETTINGS.syncOnIntervalMinutes,
+    );
     setReplayLogMatchThresholdMinutes(
       DEFAULT_REPLAY_SYNC_SETTINGS.replayLogMatchThresholdMinutes,
     );
@@ -771,9 +859,37 @@ export const UserSettingsView: React.FC = () => {
     setIsClearLocalStorageDialogOpen(false);
   };
 
+  useEffect(() => {
+    requestImportedReplays();
+  }, [requestImportedReplays]);
+
+  /*
+   * Sizes are not carried on the record, so this is an estimate from the
+   * replay's own size rather than a stat of each file. It is only used to give
+   * the confirmation a sense of scale.
+   */
+  useEffect(() => {
+    setImportedReplayBytes(
+      (importedReplays ?? []).reduce(
+        (total, replay) => total + Number(replay.size ?? 0),
+        0,
+      ),
+    );
+  }, [importedReplays]);
+
   const onConfirmClearLocalStorage = () => {
     setIsClearingLocalStorage(true);
     setStatusMessage('');
+
+    /*
+     * Files first, then storage. Clearing storage destroys the rows holding the
+     * paths, so a failure the other way round would orphan exactly what this
+     * prompt exists to prevent.
+     */
+    if (deleteImportedFilesOnClear && (importedReplays?.length ?? 0) > 0) {
+      deleteImportedReplays(importedReplays.map((replay) => replay.hash));
+    }
+
     sendMessage(CONSTANTS.API.POST_CLEAR_LOCAL_STORAGE);
   };
 
@@ -805,12 +921,20 @@ export const UserSettingsView: React.FC = () => {
 
       <Box sx={{ mt: 3 }}>
         <Stack spacing={2}>
-          <Paper variant="outlined" sx={{ borderColor: 'divider', borderRadius: 1, p: 3 }}>
+          <Paper
+            variant="outlined"
+            sx={{ borderColor: 'divider', borderRadius: 1, p: 3 }}
+          >
             <Stack spacing={2}>
               <Typography variant="h6" fontWeight={700}>
                 Profile Information
               </Typography>
-              <Stack direction="row" spacing={2} alignItems="center" marginBottom="12px !important">
+              <Stack
+                direction="row"
+                spacing={2}
+                alignItems="center"
+                marginBottom="12px !important"
+              >
                 <Avatar sx={{ width: 44, height: 44, fontSize: '1.25rem' }}>
                   {getProfileInitials(profileName)}
                 </Avatar>
@@ -855,7 +979,12 @@ export const UserSettingsView: React.FC = () => {
                             component="img"
                             src={profileNationalityFlagImageUrl}
                             alt={`${profileNationalityName} flag`}
-                            sx={{ width: 24, height: 18, borderRadius: '2px', objectFit: 'cover' }}
+                            sx={{
+                              width: 24,
+                              height: 18,
+                              borderRadius: '2px',
+                              objectFit: 'cover',
+                            }}
                           />
                         ) : (
                           <Typography
@@ -888,7 +1017,11 @@ export const UserSettingsView: React.FC = () => {
 
               <Divider sx={{ borderColor: 'divider' }} />
 
-              <Stack direction="row" justifyContent="space-between" alignItems="center">
+              <Stack
+                direction="row"
+                justifyContent="space-between"
+                alignItems="center"
+              >
                 <Typography variant="caption" color="text.secondary">
                   {`Last profile sync: ${lastProfileSyncLabel}`}
                 </Typography>
@@ -904,7 +1037,12 @@ export const UserSettingsView: React.FC = () => {
                       variant="outlined"
                       size="small"
                       onClick={onSyncProfileNow}
-                      disabled={isLoading || isSaving || isProfileSyncing || !isLmuRunning}
+                      disabled={
+                        isLoading ||
+                        isSaving ||
+                        isProfileSyncing ||
+                        !isLmuRunning
+                      }
                     >
                       Sync Now
                     </Button>
@@ -914,9 +1052,16 @@ export const UserSettingsView: React.FC = () => {
             </Stack>
           </Paper>
 
-          <Paper variant="outlined" sx={{ borderColor: 'divider', borderRadius: 1, p: 3 }}>
+          <Paper
+            variant="outlined"
+            sx={{ borderColor: 'divider', borderRadius: 1, p: 3 }}
+          >
             <Stack spacing={2}>
-              <Stack direction="row" justifyContent="space-between" alignItems="center">
+              <Stack
+                direction="row"
+                justifyContent="space-between"
+                alignItems="center"
+              >
                 <Typography variant="h6" fontWeight={700}>
                   System Configuration
                 </Typography>
@@ -925,7 +1070,11 @@ export const UserSettingsView: React.FC = () => {
                     variant="outlined"
                     onClick={onReturnPathsToDefault}
                     disabled={
-                      isLoading || isSaving || isLaunching || isAutosaving || areSystemPathsAtDefaults
+                      isLoading ||
+                      isSaving ||
+                      isLaunching ||
+                      isAutosaving ||
+                      areSystemPathsAtDefaults
                     }
                   >
                     Return to Defaults
@@ -943,20 +1092,27 @@ export const UserSettingsView: React.FC = () => {
                 Configure LMU paths used for launching and replay discovery.
               </Typography>
               <Typography variant="caption" color="text.secondary">
-                Executable path must target Le Mans Ultimate.exe inside the Le Mans Ultimate folder.
-                Replay directory must include UserData\Replays in the same installation path.
+                Executable path must target Le Mans Ultimate.exe inside the Le
+                Mans Ultimate folder. Replay directory must include
+                UserData\Replays in the same installation path.
               </Typography>
 
               {manualSaveMessage ? (
                 <Typography
                   variant="caption"
-                  color={manualSaveTone === 'error' ? 'error.main' : 'success.main'}
+                  color={
+                    manualSaveTone === 'error' ? 'error.main' : 'success.main'
+                  }
                 >
                   {manualSaveMessage}
                 </Typography>
               ) : null}
 
-              <Stack direction={{ xs: 'column', md: 'row' }} spacing={1.5} alignItems="center">
+              <Stack
+                direction={{ xs: 'column', md: 'row' }}
+                spacing={1.5}
+                alignItems="center"
+              >
                 <TextField
                   fullWidth
                   label="LMU Executable Path"
@@ -975,12 +1131,18 @@ export const UserSettingsView: React.FC = () => {
                 </Button>
               </Stack>
 
-              <Stack direction={{ xs: 'column', md: 'row' }} spacing={1.5} alignItems="center">
+              <Stack
+                direction={{ xs: 'column', md: 'row' }}
+                spacing={1.5}
+                alignItems="center"
+              >
                 <TextField
                   fullWidth
                   label="Path to LMU Replay Directory"
                   value={lmuReplayDirectoryPath}
-                  onChange={(event) => setLmuReplayDirectoryPath(event.target.value)}
+                  onChange={(event) =>
+                    setLmuReplayDirectoryPath(event.target.value)
+                  }
                   placeholder={CONSTANTS.LMU_DEFAULT_REPLAY_DIRECTORY_PATH}
                   disabled={isLoading || isSaving || isLaunching}
                 />
@@ -1016,15 +1178,20 @@ export const UserSettingsView: React.FC = () => {
                 control={
                   <Switch
                     checked={closeLmuWhenStewardExits}
-                    onChange={(_, checked) => setCloseLmuWhenStewardExits(checked)}
-                    disabled={isLoading || isSaving || isLaunching || isAutosaving}
+                    onChange={(_, checked) =>
+                      setCloseLmuWhenStewardExits(checked)
+                    }
+                    disabled={
+                      isLoading || isSaving || isLaunching || isAutosaving
+                    }
                   />
                 }
                 label="Close LMU when LMU Steward exits"
               />
 
               <Typography variant="caption" color="text.secondary">
-                When enabled, LMU can be closed automatically during LMU Steward shutdown.
+                When enabled, LMU can be closed automatically during LMU Steward
+                shutdown.
               </Typography>
 
               <Typography variant="caption" color="text.secondary">
@@ -1035,7 +1202,10 @@ export const UserSettingsView: React.FC = () => {
             </Stack>
           </Paper>
 
-          <Paper variant="outlined" sx={{ borderColor: 'divider', borderRadius: 1, p: 3 }}>
+          <Paper
+            variant="outlined"
+            sx={{ borderColor: 'divider', borderRadius: 1, p: 3 }}
+          >
             <Stack spacing={1.5}>
               <Typography variant="h6" fontWeight={700}>
                 Replay Sync
@@ -1057,7 +1227,8 @@ export const UserSettingsView: React.FC = () => {
                 </Button>
               </Box>
               <Typography color="text.secondary" variant="body2">
-                Configure automatic sync behavior and run manual sync when needed.
+                Configure automatic sync behavior and run manual sync when
+                needed.
               </Typography>
 
               <Box
@@ -1069,25 +1240,38 @@ export const UserSettingsView: React.FC = () => {
                 }}
               >
                 <Stack spacing={1.5}>
-                  <Stack direction="row" justifyContent="space-between" alignItems="center">
+                  <Stack
+                    direction="row"
+                    justifyContent="space-between"
+                    alignItems="center"
+                  >
                     <Box>
                       <Typography variant="subtitle2" fontWeight={600}>
                         Enable Automatic Sync
                       </Typography>
                       <Typography variant="caption" color="text.secondary">
-                        Automatically sync replay metadata while LMU Steward is running.
+                        Automatically sync replay metadata while LMU Steward is
+                        running.
                       </Typography>
                     </Box>
                     <Switch
                       checked={automaticSyncEnabled}
-                      onChange={(_, checked) => setAutomaticSyncEnabled(checked)}
-                      disabled={isLoading || isSaving || isLaunching || isAutosaving}
+                      onChange={(_, checked) =>
+                        setAutomaticSyncEnabled(checked)
+                      }
+                      disabled={
+                        isLoading || isSaving || isLaunching || isAutosaving
+                      }
                     />
                   </Stack>
 
                   <Divider sx={{ borderColor: 'divider' }} />
 
-                  <Stack direction="row" justifyContent="space-between" alignItems="center">
+                  <Stack
+                    direction="row"
+                    justifyContent="space-between"
+                    alignItems="center"
+                  >
                     <Box>
                       <Typography variant="subtitle2" fontWeight={600}>
                         Sync on App Launch
@@ -1111,21 +1295,28 @@ export const UserSettingsView: React.FC = () => {
 
                   <Divider sx={{ borderColor: 'divider' }} />
 
-                  <Stack direction="row" justifyContent="space-between" alignItems="center">
+                  <Stack
+                    direction="row"
+                    justifyContent="space-between"
+                    alignItems="center"
+                  >
                     <Box>
                       <Typography variant="subtitle2" fontWeight={600}>
                         Quick View Mode
                       </Typography>
                       <Typography variant="caption" color="text.secondary">
-                        Open replay analysis pages without loading replay playback in LMU. Some
-                        replay-dependent data (such as live replay controls and full API-backed
-                        details) will be unavailable until you load the replay.
+                        Open replay analysis pages without loading replay
+                        playback in LMU. Some replay-dependent data (such as
+                        live replay controls and full API-backed details) will
+                        be unavailable until you load the replay.
                       </Typography>
                     </Box>
                     <Switch
                       checked={quickViewEnabled}
                       onChange={(_, checked) => setQuickViewEnabled(checked)}
-                      disabled={isLoading || isSaving || isLaunching || isAutosaving}
+                      disabled={
+                        isLoading || isSaving || isLaunching || isAutosaving
+                      }
                     />
                   </Stack>
 
@@ -1153,7 +1344,9 @@ export const UserSettingsView: React.FC = () => {
                       onChange={(event) => {
                         const nextValue = Number(event.target.value);
                         setSyncOnIntervalMinutes(
-                          Number.isFinite(nextValue) ? Math.max(1, nextValue) : 5,
+                          Number.isFinite(nextValue)
+                            ? Math.max(1, nextValue)
+                            : 5,
                         );
                       }}
                       disabled={
@@ -1236,7 +1429,11 @@ export const UserSettingsView: React.FC = () => {
 
                   {/* <Divider sx={{ borderColor: 'divider' }} /> */}
 
-                  <Stack direction="row" justifyContent="space-between" alignItems="center">
+                  <Stack
+                    direction="row"
+                    justifyContent="space-between"
+                    alignItems="center"
+                  >
                     <Typography variant="caption" color="text.secondary">
                       {`Last sync: ${lastSyncLabel}`}
                     </Typography>
@@ -1258,7 +1455,142 @@ export const UserSettingsView: React.FC = () => {
             </Stack>
           </Paper>
 
-          <Paper variant="outlined" sx={{ borderColor: 'divider', borderRadius: 1, p: 3 }}>
+          <Paper
+            variant="outlined"
+            sx={{ borderColor: 'divider', borderRadius: 1, p: 3 }}
+          >
+            <Stack spacing={1.5}>
+              <Typography variant="h6" fontWeight={700}>
+                Session Replays
+              </Typography>
+              <Typography color="text.secondary" variant="body2">
+                Configure how the session replay list behaves between visits.
+              </Typography>
+
+              <Box
+                sx={{
+                  border: '1px solid',
+                  borderColor: 'divider',
+                  borderRadius: 1,
+                  p: 2,
+                }}
+              >
+                <Stack
+                  direction="row"
+                  justifyContent="space-between"
+                  alignItems="center"
+                >
+                  <Box>
+                    <Typography variant="subtitle2" fontWeight={600}>
+                      Remember Filters and Sorting
+                    </Typography>
+                    <Typography variant="caption" color="text.secondary">
+                      Restore the filters and sort order you last used on the
+                      session replay list when LMU Steward starts. When
+                      disabled, the list opens unfiltered and sorted by newest
+                      session.
+                    </Typography>
+                  </Box>
+                  <Switch
+                    checked={persistDashboardFiltersEnabled}
+                    onChange={(_, checked) =>
+                      setPersistDashboardFiltersEnabled(checked)
+                    }
+                    disabled={
+                      isLoading || isSaving || isLaunching || isAutosaving
+                    }
+                  />
+                </Stack>
+              </Box>
+            </Stack>
+          </Paper>
+
+          <Paper
+            variant="outlined"
+            sx={{ borderColor: 'divider', borderRadius: 1, p: 3 }}
+          >
+            <Stack spacing={1.5}>
+              <Typography variant="h6" fontWeight={700}>
+                Experimental Features
+              </Typography>
+              <Box
+                sx={{
+                  border: '1px solid',
+                  borderColor: 'divider',
+                  borderRadius: 1,
+                  p: 2,
+                }}
+              >
+                <Stack
+                  direction="row"
+                  justifyContent="space-between"
+                  alignItems="center"
+                >
+                  <Box>
+                    <Typography variant="subtitle2" fontWeight={600}>
+                      Enable Experimental Features
+                    </Typography>
+                    <Typography variant="caption" color="text.secondary">
+                      Turn on features that are still being tested. They may
+                      change, behave incorrectly on some setups, or be removed
+                      in a later release. Everything already in LMU Steward
+                      keeps working either way.
+                    </Typography>
+                  </Box>
+                  <Switch
+                    checked={experimentalFeaturesEnabled}
+                    onChange={(_, checked) =>
+                      setExperimentalFeaturesEnabled(checked)
+                    }
+                    disabled={
+                      isLoading || isSaving || isLaunching || isAutosaving
+                    }
+                  />
+                </Stack>
+              </Box>
+
+              {/*
+                Rendered whether the toggle is on or off — someone deciding
+                whether to enable it needs to see what they would be enabling.
+              */}
+              <Box
+                sx={{
+                  border: '1px solid',
+                  borderColor: 'divider',
+                  borderRadius: 1,
+                  p: 2,
+                }}
+              >
+                <Stack spacing={1.5}>
+                  <Typography variant="subtitle2" fontWeight={600}>
+                    What&apos;s experimental right now
+                  </Typography>
+                  {CONSTANTS.EXPERIMENTAL_FEATURES.length === 0 ? (
+                    <Typography variant="caption" color="text.secondary">
+                      No experimental features at the moment. Everything in LMU
+                      Steward is fully released.
+                    </Typography>
+                  ) : (
+                    CONSTANTS.EXPERIMENTAL_FEATURES.map((feature) => (
+                      <Box key={feature.id}>
+                        <Typography variant="body2" fontWeight={600}>
+                          {feature.name}
+                        </Typography>
+                        <Typography variant="caption" color="text.secondary">
+                          {feature.description}
+                        </Typography>
+                      </Box>
+                    ))
+                  )}
+                </Stack>
+              </Box>
+            </Stack>
+          </Paper>
+
+          <Paper
+            variant="outlined"
+            sx={{ borderColor: 'divider', borderRadius: 1, p: 3 }}
+          >
             <Stack spacing={1.5}>
               <Typography variant="h6" fontWeight={700}>
                 Local Storage
@@ -1273,8 +1605,9 @@ export const UserSettingsView: React.FC = () => {
               >
                 <Stack spacing={1.5}>
                   <Typography variant="body2" color="text.secondary">
-                    Clearing local storage removes LMU Steward data saved on this device, such as
-                    replay metadata and cached app state. This does not uninstall LMU.
+                    Clearing local storage removes LMU Steward data saved on
+                    this device, such as replay metadata and cached app state.
+                    This does not uninstall LMU.
                   </Typography>
                   <Box>
                     <Button
@@ -1289,7 +1622,9 @@ export const UserSettingsView: React.FC = () => {
                         isClearingLocalStorage
                       }
                     >
-                      {isClearingLocalStorage ? 'Clearing…' : 'Clear Local Storage'}
+                      {isClearingLocalStorage
+                        ? 'Clearing…'
+                        : 'Clear Local Storage'}
                     </Button>
                   </Box>
                 </Stack>
@@ -1300,6 +1635,10 @@ export const UserSettingsView: React.FC = () => {
           <UserSettingsClearStorageDialog
             open={isClearLocalStorageDialogOpen}
             isClearingLocalStorage={isClearingLocalStorage}
+            importedReplayCount={importedReplays?.length ?? 0}
+            importedReplayBytes={importedReplayBytes}
+            deleteImportedFiles={deleteImportedFilesOnClear}
+            onDeleteImportedFilesChange={setDeleteImportedFilesOnClear}
             onClose={onCloseClearLocalStorageDialog}
             onConfirm={onConfirmClearLocalStorage}
           />

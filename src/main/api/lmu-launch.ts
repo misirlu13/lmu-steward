@@ -8,7 +8,11 @@ import {
   readUserSettings,
 } from './user-settings';
 
-const LMU_EXECUTABLE_KEYS = ['lmuExecutablePath', 'lmuPath', 'executablePath'] as const;
+const LMU_EXECUTABLE_KEYS = [
+  'lmuExecutablePath',
+  'lmuPath',
+  'executablePath',
+] as const;
 const LMU_EXECUTABLE_FILE_NAME = 'Le Mans Ultimate.exe';
 
 const toErrorMessage = (error: unknown, fallback: string): string => {
@@ -98,7 +102,10 @@ export const postLaunchLmu = async (event: Electron.IpcMainEvent) => {
       }
 
       launchMethod = 'shell.openPath';
-      console.warn('Spawn launch failed. LMU launched using shell.openPath fallback.', spawnError);
+      console.warn(
+        'Spawn launch failed. LMU launched using shell.openPath fallback.',
+        spawnError,
+      );
     }
 
     event.reply(CONSTANTS.API.POST_LAUNCH_LMU, {
@@ -189,7 +196,9 @@ export const postSelectLmuExecutable = async (event: Electron.IpcMainEvent) => {
   }
 };
 
-export const postSelectLmuReplayDirectory = async (event: Electron.IpcMainEvent) => {
+export const postSelectLmuReplayDirectory = async (
+  event: Electron.IpcMainEvent,
+) => {
   try {
     const response = await dialog.showOpenDialog({
       title: 'Select Le Mans Ultimate replay directory',

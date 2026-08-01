@@ -41,7 +41,10 @@ export const deriveReplayHeatmapWorldSpots = ({
   for (let index = 1; index < heatmapTrackPoints.length; index += 1) {
     const previous = heatmapTrackPoints[index - 1];
     const current = heatmapTrackPoints[index];
-    polylineLength += Math.hypot(current.x - previous.x, current.z - previous.z);
+    polylineLength += Math.hypot(
+      current.x - previous.x,
+      current.z - previous.z,
+    );
     cumulativeDistances.push(polylineLength);
   }
 
@@ -54,9 +57,12 @@ export const deriveReplayHeatmapWorldSpots = ({
     0,
   );
 
-  const mapDistanceToPoint = (distanceMeters: number): { x: number; z: number } | null => {
+  const mapDistanceToPoint = (
+    distanceMeters: number,
+  ): { x: number; z: number } | null => {
     const normalizedDistanceMeters =
-      ((distanceMeters % trackLengthMeters) + trackLengthMeters) % trackLengthMeters;
+      ((distanceMeters % trackLengthMeters) + trackLengthMeters) %
+      trackLengthMeters;
     const targetArcDistance =
       (normalizedDistanceMeters / trackLengthMeters) * polylineLength;
 
@@ -65,7 +71,10 @@ export const deriveReplayHeatmapWorldSpots = ({
       const currentArc = cumulativeDistances[index];
 
       if (targetArcDistance <= currentArc) {
-        const segmentLength = Math.max(currentArc - previousArc, Number.EPSILON);
+        const segmentLength = Math.max(
+          currentArc - previousArc,
+          Number.EPSILON,
+        );
         const localRatio = (targetArcDistance - previousArc) / segmentLength;
         const previousPoint = heatmapTrackPoints[index - 1];
         const currentPoint = heatmapTrackPoints[index];
