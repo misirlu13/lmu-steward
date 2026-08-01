@@ -76,6 +76,7 @@ export const CONSTANTS = {
     POST_IMPORT_REPLAY_PAIR: 'post.import-replay-pair',
     POST_IMPORT_REPLAYS: 'post.import-replays',
     POST_DELETE_IMPORTED_REPLAYS: 'post.delete-imported-replays',
+    POST_SET_IMPORTED_NOTE: 'post.set-imported-note',
     POST_EXPORT_REPLAY: 'post.export-replay',
     POST_EXPORT_WEEKEND: 'post.export-weekend',
     PUSH_IMPORT_PROGRESS: 'push.import-progress',

@@ -67,7 +67,14 @@ interface DashboardReplayTableRow {
   incidents: SessionIncidents;
   duration: string;
   sessionMetaData: SessionMetaData;
-  archiveNote: string;
+  /**
+   * The note shown on this row.
+   *
+   * Archived replays carry an archive note; imported ones carry the note
+   * written at import. A replay is never both — the three views are mutually
+   * exclusive — so one field renders either.
+   */
+  note: string;
   /**
    * The replay this row was built from, so row actions can work on it without
    * looking it back up out of the group by hash.
@@ -159,7 +166,7 @@ export const DashboardReplay: React.FC<DashboardReplayProps> = ({
         incidents: getSessionIncidents(groupReplay),
         duration: getSessionDuration(groupReplay),
         sessionMetaData: getSessionMetaData(groupReplay),
-        archiveNote: groupReplay.archiveNote ?? '',
+        note: groupReplay.archiveNote ?? groupReplay.importNote ?? '',
         replay: groupReplay,
       }));
 
@@ -711,10 +718,10 @@ export const DashboardReplay: React.FC<DashboardReplayProps> = ({
                           gap: 1,
                         }}
                       >
-                        {row.archiveNote ? (
-                          <ToolTip title={row.archiveNote}>
+                        {row.note ? (
+                          <ToolTip title={row.note}>
                             <StickyNote2Icon
-                              aria-label={`Archive note: ${row.archiveNote}`}
+                              aria-label={`Note: ${row.note}`}
                               sx={{
                                 width: '18px',
                                 height: '18px',
@@ -773,6 +780,28 @@ export const DashboardReplay: React.FC<DashboardReplayProps> = ({
                 </ListItemIcon>
                 <ListItemText>Delete from disk</ListItemText>
               </MenuItem>,
+              /*
+                Imported replays get note editing too. Without it the note
+                written at import would be permanent, since an imported replay
+                is never in the archived view where this action otherwise
+                lives.
+              */
+              <MenuItem
+                key="imported-note"
+                onClick={() => {
+                  closeRowMenu();
+                  if (rowMenu) {
+                    onEditNote(rowMenu.row.hash, rowMenu.row.note);
+                  }
+                }}
+              >
+                <ListItemIcon>
+                  <EditNoteIcon fontSize="small" />
+                </ListItemIcon>
+                <ListItemText>
+                  {rowMenu?.row.note ? 'Edit note' : 'Add note'}
+                </ListItemText>
+              </MenuItem>,
             ]
           : isArchivedView
             ? [
@@ -795,7 +824,7 @@ export const DashboardReplay: React.FC<DashboardReplayProps> = ({
                   onClick={() => {
                     closeRowMenu();
                     if (rowMenu) {
-                      onEditNote(rowMenu.row.hash, rowMenu.row.archiveNote);
+                      onEditNote(rowMenu.row.hash, rowMenu.row.note);
                     }
                   }}
                 >
@@ -803,7 +832,7 @@ export const DashboardReplay: React.FC<DashboardReplayProps> = ({
                     <EditNoteIcon fontSize="small" />
                   </ListItemIcon>
                   <ListItemText>
-                    {rowMenu?.row.archiveNote ? 'Edit note' : 'Add note'}
+                    {rowMenu?.row.note ? 'Edit note' : 'Add note'}
                   </ListItemText>
                 </MenuItem>,
               ]

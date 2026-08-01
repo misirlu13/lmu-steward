@@ -92,6 +92,7 @@ export const DashboardView: React.FC = () => {
     isImportingPair,
     selectImportFile,
     importReplayPair,
+    setImportedNote,
     resetImportPair,
     selectImportSource,
     importPreview,
@@ -143,8 +144,19 @@ export const DashboardView: React.FC = () => {
     setLastArchivedHashes([]);
   };
 
+  /*
+   * The two note stores are separate on purpose: an imported replay is never
+   * archived, so its note has nowhere to live in the archive store. The view
+   * the user is in says which one this edit belongs to.
+   */
   const saveNote = (note: string) => {
     if (!pendingNote) {
+      return;
+    }
+
+    if (dashboardView === 'imported') {
+      setImportedNote([pendingNote.hash], note);
+      setPendingNote(null);
       return;
     }
 
@@ -366,6 +378,7 @@ export const DashboardView: React.FC = () => {
       <ArchiveNoteDialog
         open={Boolean(pendingNote)}
         initialNote={pendingNote?.note ?? ''}
+        viewLabel={dashboardView === 'imported' ? 'Imported' : 'Archived'}
         onCancel={() => setPendingNote(null)}
         onSave={saveNote}
       />

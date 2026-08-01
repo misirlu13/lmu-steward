@@ -517,6 +517,63 @@ export const postDeleteImportedReplays = async (
   }
 };
 
+export interface SetImportedNoteRequest {
+  hashes: string[];
+  note: string;
+}
+
+/**
+ * Rewrites the note on imported replays.
+ *
+ * Without this an import note would be permanent: an imported replay is never
+ * in the archived view, which is the only place note editing lives today. A
+ * typo on a hand-off a steward keeps for a season is a poor place to have no
+ * second chance.
+ */
+export const postSetImportedNote = async (
+  event: Electron.IpcMainEvent,
+  request?: SetImportedNoteRequest,
+) => {
+  try {
+    const hashes = (request?.hashes ?? [])
+      .map((hash) => String(hash ?? '').trim())
+      .filter(Boolean);
+
+    if (hashes.length === 0) {
+      throw new Error('No replays were provided.');
+    }
+
+    const note = String(request?.note ?? '').trim();
+    const imported = { ...readImportedStore() };
+
+    for (const hash of hashes) {
+      const record = imported[hash];
+
+      if (record) {
+        // An empty note removes it rather than storing a blank string, so the
+        // row's note marker disappears with it.
+        imported[hash] = { ...record, note: note || undefined };
+      }
+    }
+
+    writeImportedStore(imported);
+
+    event.reply(CONSTANTS.API.POST_SET_IMPORTED_NOTE, {
+      status: 'success',
+      data: {
+        replays: Object.values(imported).sort(
+          (a, b) => Number(b.timestamp ?? 0) - Number(a.timestamp ?? 0),
+        ),
+      },
+    });
+  } catch (error: unknown) {
+    event.reply(CONSTANTS.API.POST_SET_IMPORTED_NOTE, {
+      status: 'error',
+      message: toErrorMessage(error),
+    });
+  }
+};
+
 /**
  * Where a replay's files actually are.
  *
@@ -1045,6 +1102,8 @@ export const postSelectImportFile = async (
 export interface ImportPairRequest {
   vcrPath: string;
   logPath: string;
+  /** Optional note about where this hand-off came from. */
+  note?: string;
 }
 
 const buildPairValidation = async ({ vcrPath, logPath }: ImportPairRequest) => {
@@ -1145,6 +1204,7 @@ export const postImportReplayPair = async (
           logPath: candidate.filePath,
           method: 'manual',
           confidence: validation.confidence,
+          note: request.note,
         },
       ],
       replayDirectory,

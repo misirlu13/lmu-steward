@@ -107,7 +107,7 @@ describe('DashboardReplay archive actions', () => {
     expect(screen.getByText('Add note')).toBeInTheDocument();
   });
 
-  it('surfaces an existing note on the row', () => {
+  it('surfaces an existing archive note on the row', () => {
     setup('archived', [
       buildReplay('race-hash', 'RACE', {
         archived: true,
@@ -116,7 +116,7 @@ describe('DashboardReplay archive actions', () => {
     ]);
 
     expect(
-      screen.getByLabelText('Archive note: reviewed, no action'),
+      screen.getByLabelText('Note: reviewed, no action'),
     ).toBeInTheDocument();
   });
 
@@ -219,5 +219,50 @@ describe('DashboardReplay archive actions', () => {
     fireEvent.click(screen.getByText('Export weekend (2)'));
 
     expect(onExportWeekend).toHaveBeenCalledTimes(1);
+  });
+
+  /**
+   * The note written at import shows on the row through the same affordance an
+   * archive note does. A replay is never both — the three views are mutually
+   * exclusive — so one field renders either.
+   */
+  it('surfaces an import note on the row', () => {
+    setup('imported', [
+      buildReplay('race-hash', 'RACE', {
+        imported: true,
+        importNote: 'Protest 12, sent by Team Foxtrot',
+      }),
+    ]);
+
+    expect(
+      screen.getByLabelText('Note: Protest 12, sent by Team Foxtrot'),
+    ).toBeInTheDocument();
+  });
+
+  /**
+   * Without this the note written at import would be permanent: an imported
+   * replay is never in the archived view, which is where note editing
+   * otherwise lives.
+   */
+  it('lets an imported replay note be edited afterwards', () => {
+    const { onEditNote } = setup('imported', [
+      buildReplay('race-hash', 'RACE', {
+        imported: true,
+        importNote: 'Protest 12',
+      }),
+    ]);
+
+    fireEvent.click(screen.getByLabelText('Actions for Race'));
+    fireEvent.click(screen.getByText('Edit note'));
+
+    expect(onEditNote).toHaveBeenCalledWith('race-hash', 'Protest 12');
+  });
+
+  it('offers to add a note to an imported replay that has none', () => {
+    setup('imported', [buildReplay('race-hash', 'RACE', { imported: true })]);
+
+    fireEvent.click(screen.getByLabelText('Actions for Race'));
+
+    expect(screen.getByText('Add note')).toBeInTheDocument();
   });
 });

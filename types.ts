@@ -23,6 +23,8 @@ export interface LMUReplay {
   importVcrPath?: string;
   importLogPath?: string;
   importOriginInstallPath?: string;
+  /** The note written when this replay was imported. */
+  importNote?: string;
   metadata: {
     sceneDesc: string;
     session: SessionType;
@@ -124,6 +126,15 @@ export interface ImportedReplayRecord {
   vcrFingerprint: string;
   logFingerprint: string;
   importedAt: number;
+  /**
+   * What the steward wrote about this hand-off when importing it.
+   *
+   * Provenance, not review state — who sent it, which protest it belongs to,
+   * what to look for. Kept on the imported record rather than in the archive
+   * store because an imported replay is never archived, so the archive note has
+   * nowhere to live for it.
+   */
+  note?: string;
   logData: unknown;
   origin: {
     trackFolder: string;

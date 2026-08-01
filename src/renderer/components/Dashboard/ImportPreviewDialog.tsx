@@ -18,6 +18,7 @@ import TableCell from '@mui/material/TableCell';
 import TableContainer from '@mui/material/TableContainer';
 import TableHead from '@mui/material/TableHead';
 import TableRow from '@mui/material/TableRow';
+import TextField from '@mui/material/TextField';
 import Tooltip from '@mui/material/Tooltip';
 import Typography from '@mui/material/Typography';
 import {
@@ -116,10 +117,25 @@ export const ImportPreviewDialog: React.FC<ImportPreviewDialogProps> = ({
 }) => {
   const rows = useMemo(() => preview?.rows ?? [], [preview]);
   const [decisions, setDecisions] = useState<Record<string, RowDecision>>({});
+  /*
+   * One note for the whole run, applied to every replay it imports.
+   *
+   * A hand-off is one thing that arrived from one person for one reason —
+   * "Protest 12, sent by Team Foxtrot" describes all nine replays in it, and
+   * asking a steward to retype that nine times would mean it gets typed none.
+   * It is stored per replay, so per-row notes are a UI change later rather than
+   * a data migration.
+   */
+  const [note, setNote] = useState('');
 
   useEffect(() => {
     setDecisions(buildInitialDecisions(rows));
   }, [rows]);
+
+  // A new source is a new hand-off; its note should not be the last one's.
+  useEffect(() => {
+    setNote('');
+  }, [preview?.sourceLabel]);
 
   /*
    * A log the user browsed to is adopted as that row's choice. Done here rather
@@ -171,6 +187,7 @@ export const ImportPreviewDialog: React.FC<ImportPreviewDialogProps> = ({
           ? (row.pairing.proposed?.confidence ?? null)
           : null,
         ...(isManifestChoice ? { timestamp: row.manifest?.timestamp } : {}),
+        ...(note.trim() ? { note: note.trim() } : {}),
       };
     });
 
@@ -205,6 +222,23 @@ export const ImportPreviewDialog: React.FC<ImportPreviewDialogProps> = ({
         >
           {preview?.sourceLabel}
         </Typography>
+
+        {rows.length > 0 ? (
+          <TextField
+            label="Note (optional)"
+            value={note}
+            onChange={(changeEvent) => setNote(changeEvent.target.value)}
+            placeholder="Protest 12 — sent by Team Foxtrot, contact on lap 7"
+            helperText="Where this hand-off came from and why you have it. Applied to every replay imported below, and shown on them in the Imported view."
+            multiline
+            minRows={2}
+            fullWidth
+            size="small"
+            disabled={isImporting}
+            sx={{ mb: 2 }}
+            slotProps={{ htmlInput: { 'aria-label': 'Import note' } }}
+          />
+        ) : null}
 
         {rows.length === 0 ? (
           <Alert severity="info">

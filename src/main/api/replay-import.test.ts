@@ -234,6 +234,57 @@ describe('main/replay import', () => {
   });
 
   /*
+   * The steward's note about the hand-off — who sent it, which protest it
+   * belongs to. Stored on the imported record rather than in the archive store,
+   * because an imported replay is never archived and the archive note has
+   * nowhere to live for it.
+   */
+  describe('import notes', () => {
+    const importWithNote = async (note?: string) => {
+      const rows = await scan();
+      const result = await importReplays({
+        rows,
+        selections: [
+          {
+            id: rows[0].id,
+            logPath: rows[0].pairing.proposed!.candidate.filePath,
+            method: 'roster',
+            confidence: 0.8,
+            note,
+          },
+        ],
+        replayDirectory,
+        logDirectory,
+        imported: {},
+      });
+
+      return Object.values(result.imported)[0];
+    };
+
+    it('stores the note on the imported record', async () => {
+      const record = await importWithNote('Protest 12, sent by Team Foxtrot');
+
+      expect(record.note).toBe('Protest 12, sent by Team Foxtrot');
+    });
+
+    it('leaves the note unset when none was given', async () => {
+      expect((await importWithNote()).note).toBeUndefined();
+    });
+
+    /*
+     * A whitespace-only note would otherwise put an empty note marker on the
+     * dashboard row, which reads as "there is something here" when there is not.
+     */
+    it('treats a whitespace-only note as no note', async () => {
+      expect((await importWithNote('   \n  ')).note).toBeUndefined();
+    });
+
+    it('trims surrounding whitespace', async () => {
+      expect((await importWithNote('  Protest 12  ')).note).toBe('Protest 12');
+    });
+  });
+
+  /*
    * Collisions are the normal case, not an edge case: LMU counts replay names
    * per install, so any steward who has raced at a track already holds the
    * names an incoming league replay from that track arrives with.

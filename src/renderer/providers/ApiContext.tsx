@@ -43,6 +43,8 @@ export interface ImportSelectionPayload {
   confidence: number | null;
   /** Event time from a manifest, preferred over the log's own when present. */
   timestamp?: number;
+  /** The steward's note about this hand-off. */
+  note?: string;
 }
 
 export interface ExportReplayPayload {
@@ -276,7 +278,8 @@ interface ApiContextType {
   importPairError: string;
   isImportingPair: boolean;
   selectImportFile: (kind: 'replay' | 'log', rowId?: string) => void;
-  importReplayPair: () => void;
+  importReplayPair: (note?: string) => void;
+  setImportedNote: (hashes: string[], note: string) => void;
   resetImportPair: () => void;
   clearImportPreview: () => void;
   importSelectedReplays: (
@@ -334,6 +337,7 @@ const ApiContext = createContext<ApiContextType>({
   isImportingPair: false,
   selectImportFile: () => {},
   importReplayPair: () => {},
+  setImportedNote: () => {},
   resetImportPair: () => {},
   clearImportPreview: () => {},
   importSelectedReplays: () => {},
@@ -622,18 +626,30 @@ export const ApiProvider: React.FC<{ children: React.ReactNode }> = ({
     [],
   );
 
-  const importReplayPair = useCallback(() => {
-    if (!importReplayFile || !importLogFile) {
+  const importReplayPair = useCallback(
+    (note?: string) => {
+      if (!importReplayFile || !importLogFile) {
+        return;
+      }
+
+      setIsImportingPair(true);
+      setImportPairError('');
+      sendMessage(CONSTANTS.API.POST_IMPORT_REPLAY_PAIR, {
+        vcrPath: importReplayFile.filePath,
+        logPath: importLogFile.filePath,
+        note,
+      });
+    },
+    [importReplayFile, importLogFile],
+  );
+
+  const setImportedNote = useCallback((hashes: string[], note: string) => {
+    if (hashes.length === 0) {
       return;
     }
 
-    setIsImportingPair(true);
-    setImportPairError('');
-    sendMessage(CONSTANTS.API.POST_IMPORT_REPLAY_PAIR, {
-      vcrPath: importReplayFile.filePath,
-      logPath: importLogFile.filePath,
-    });
-  }, [importReplayFile, importLogFile]);
+    sendMessage(CONSTANTS.API.POST_SET_IMPORTED_NOTE, { hashes, note });
+  }, []);
 
   const resetImportPair = useCallback(() => {
     setImportReplayFile(null);
@@ -922,6 +938,23 @@ export const ApiProvider: React.FC<{ children: React.ReactNode }> = ({
           console.error('Failed to import replays:', payload?.message);
         },
       ),
+      [CONSTANTS.API.POST_SET_IMPORTED_NOTE]: createHandler(
+        CONSTANTS.API.POST_SET_IMPORTED_NOTE,
+        (data: unknown) => {
+          const payload = data as {
+            status?: string;
+            data?: { replays?: ImportedReplayRecord[] };
+            message?: string;
+          };
+
+          if (payload?.status === 'success') {
+            setImportedReplays(payload.data?.replays ?? []);
+            return;
+          }
+
+          console.error('Failed to save the note:', payload?.message);
+        },
+      ),
       [CONSTANTS.API.POST_DELETE_IMPORTED_REPLAYS]: createHandler(
         CONSTANTS.API.POST_DELETE_IMPORTED_REPLAYS,
         (data: unknown) => {
@@ -1130,6 +1163,7 @@ export const ApiProvider: React.FC<{ children: React.ReactNode }> = ({
       isImportingPair,
       selectImportFile,
       importReplayPair,
+      setImportedNote,
       resetImportPair,
       clearImportPreview,
       importSelectedReplays,
@@ -1177,6 +1211,7 @@ export const ApiProvider: React.FC<{ children: React.ReactNode }> = ({
       isImportingPair,
       selectImportFile,
       importReplayPair,
+      setImportedNote,
       resetImportPair,
       clearImportPreview,
       importSelectedReplays,

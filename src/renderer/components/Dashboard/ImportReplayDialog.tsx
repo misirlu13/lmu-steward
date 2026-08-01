@@ -1,3 +1,4 @@
+import { useEffect, useState } from 'react';
 import {
   Alert,
   Box,
@@ -8,6 +9,7 @@ import {
   DialogContentText,
   DialogTitle,
   Stack,
+  TextField,
   Typography,
 } from '@mui/material';
 import InsertDriveFileOutlinedIcon from '@mui/icons-material/InsertDriveFileOutlined';
@@ -26,7 +28,7 @@ interface ImportReplayDialogProps {
   onChooseReplay: () => void;
   onChooseLog: () => void;
   onCancel: () => void;
-  onConfirm: () => void;
+  onConfirm: (note: string) => void;
 }
 
 const formatDriverCount = (count: number | undefined): string =>
@@ -128,8 +130,17 @@ export const ImportReplayDialog: React.FC<ImportReplayDialogProps> = ({
   onCancel,
   onConfirm,
 }) => {
+  const [note, setNote] = useState('');
   const hasBothFiles = Boolean(replayFile && logFile);
   const canImport = hasBothFiles && validation?.canImport !== false;
+
+  // Cleared when the dialog closes, so the next import does not inherit the
+  // last one's note.
+  useEffect(() => {
+    if (!open) {
+      setNote('');
+    }
+  }, [open]);
 
   return (
     <Dialog open={open} onClose={onCancel} maxWidth="sm" fullWidth>
@@ -159,6 +170,22 @@ export const ImportReplayDialog: React.FC<ImportReplayDialogProps> = ({
             disabled={isImporting}
           />
         </Stack>
+
+        <Box sx={{ mt: 2 }}>
+          <TextField
+            label="Note (optional)"
+            value={note}
+            onChange={(event) => setNote(event.target.value)}
+            placeholder="Protest 12 — sent by Team Foxtrot, contact on lap 7"
+            helperText="Where this came from and why you have it. Shown on the replay in the Imported view."
+            multiline
+            minRows={2}
+            fullWidth
+            size="small"
+            disabled={isImporting}
+            slotProps={{ htmlInput: { 'aria-label': 'Import note' } }}
+          />
+        </Box>
 
         {errorMessage ? (
           <Alert severity="error" sx={{ mt: 2 }}>
@@ -192,7 +219,7 @@ export const ImportReplayDialog: React.FC<ImportReplayDialogProps> = ({
           Cancel
         </Button>
         <Button
-          onClick={onConfirm}
+          onClick={() => onConfirm(note)}
           variant="contained"
           disabled={!canImport || isImporting}
         >

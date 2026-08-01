@@ -70,6 +70,15 @@ export interface ImportSelection {
    * Steward-to-Steward round trip land on the identity it started with.
    */
   timestamp?: number;
+  /**
+   * The steward's note for this replay.
+   *
+   * Per selection rather than per run, even though the bulk preview writes one
+   * value across all of them: the note belongs to the replay once it is
+   * imported, and carrying it here means per-row notes become a UI change
+   * rather than a data migration.
+   */
+  note?: string;
 }
 
 export interface ImportOutcome {
@@ -653,6 +662,9 @@ export const importReplays = async ({
         vcrFingerprint: await fingerprintFile(destinationVcrPath),
         logFingerprint: await fingerprintFile(destinationLogPath),
         importedAt: Date.now(),
+        // Trimmed here rather than in the renderer, so a note that is only
+        // whitespace does not put an empty note marker on the row.
+        note: selection.note?.trim() || undefined,
         logData: parseLogSummary
           ? ((await parseLogSummary(destinationLogPath)) ?? null)
           : null,

@@ -41,6 +41,7 @@ export const importedRecordToReplay = (
     importVcrPath: record.vcrPath,
     importLogPath: record.logPath,
     importOriginInstallPath: record.origin?.installPath,
+    importNote: record.note,
   }) as LMUReplay;
 
 export const importedRecordsToReplays = (
