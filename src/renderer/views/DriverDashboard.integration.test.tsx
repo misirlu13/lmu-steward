@@ -366,13 +366,46 @@ describe('DriverDashboardView', () => {
       data: { aggregate: buildAggregate() },
     });
 
-    // MUI renders the closed Select as a combobox showing the current label.
-    fireEvent.mouseDown(screen.getAllByRole('combobox')[0]);
+    // Each filter carries a label, so it can be reached by what it filters
+    // rather than by its position in the bar.
+    fireEvent.mouseDown(screen.getByRole('combobox', { name: 'Sessions' }));
     fireEvent.click(screen.getByRole('option', { name: 'Multiplayer' }));
 
     expect(sendMessage).toHaveBeenLastCalledWith(
       CONSTANTS.API.GET_CAREER_SUMMARY,
       expect.objectContaining({ gameType: 'multiplayer' }),
+    );
+  });
+
+  it('labels every filter with what it narrows', () => {
+    render(<DriverDashboardView />);
+
+    reply(CONSTANTS.API.GET_CAREER_SUMMARY, {
+      status: 'success',
+      data: { aggregate: buildAggregate() },
+    });
+
+    for (const label of ['Sessions', 'Car class', 'Track', 'Season']) {
+      expect(screen.getByRole('combobox', { name: label })).toBeInTheDocument();
+    }
+  });
+
+  it('narrows by track through its own filter', () => {
+    render(<DriverDashboardView />);
+
+    reply(CONSTANTS.API.GET_CAREER_SUMMARY, {
+      status: 'success',
+      data: { aggregate: buildAggregate() },
+    });
+
+    fireEvent.mouseDown(screen.getByRole('combobox', { name: 'Track' }));
+    fireEvent.click(
+      screen.getByRole('option', { name: 'Autodromo Nazionale Monza' }),
+    );
+
+    expect(sendMessage).toHaveBeenLastCalledWith(
+      CONSTANTS.API.GET_CAREER_SUMMARY,
+      expect.objectContaining({ trackFolder: 'Monza_2023' }),
     );
   });
 
