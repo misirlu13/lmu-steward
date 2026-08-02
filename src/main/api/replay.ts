@@ -29,9 +29,11 @@ import {
 } from './result-log';
 import {
   createCareerLogParser,
+  enrichCareerFromReplays,
   ensureCareerIdentity,
   scanCareer,
 } from './career';
+import { readVcrTrailer } from './vcr-metadata';
 
 const FIRST_RUN_GET_REPLAYS_DELAY_MS = 3000;
 const DEFAULT_REPLAY_LOG_MATCH_THRESHOLD_MS = 120_000;
@@ -721,6 +723,28 @@ export const syncReplayData = async (
             .filter((path): path is string => Boolean(path)),
         ),
       });
+
+      /*
+       * Official-event identity, which only the replay knows — a log for an
+       * "LMGT3 Sprint Cup split 3" session says nothing but `Multiplayer` and
+       * the track's name. Runs here as well as on an explicit rescan, or a
+       * driver who never opens the career page and presses a button would never
+       * get it. Each replay's trailer is read once and the session marked, so
+       * this costs nothing on subsequent syncs.
+       */
+      await enrichCareerFromReplays(
+        getCachedReplaysForCareer(),
+        async (filePath) => {
+          const trailer = await readVcrTrailer(filePath);
+          return trailer
+            ? {
+                eventTitle: trailer.eventTitle,
+                eventType: trailer.eventType,
+                splitNo: trailer.splitNo,
+              }
+            : null;
+        },
+      );
     } catch {
       // Career data is rebuilt on demand; a failure here is not a sync failure.
     }

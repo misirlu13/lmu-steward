@@ -22,6 +22,7 @@ import {
   buildCareerAggregate,
   buildCareerLogIndex,
   claimCareerIdentity,
+  enrichCareerFromReplays,
   ensureCareerIdentity,
   normalizeIdentityName,
   readCareerIdentity,
@@ -372,6 +373,86 @@ describe('main/career', () => {
     await scan({ rebuild: true });
 
     expect(readCareerSessions()[sessionKey].excluded).toBe(true);
+  });
+
+  /*
+   * Official-event identity is the one thing only the replay knows: the log for
+   * an "LMGT3 Sprint Cup split 3" session records nothing but `Multiplayer` and
+   * the track's name.
+   */
+  describe('official-event enrichment', () => {
+    const cachedReplay = (logDataFileName: string) => ({
+      logDataFileName,
+      replayDirectory: 'C:/replays',
+      replayName: 'Monza R1 1',
+    });
+
+    beforeEach(() => {
+      writeFileSync(
+        join(logDir, 'event-31R1.xml'),
+        buildLog({ player: 'Bradley Drake', sessionStartedAt: 2000 }),
+      );
+      ensureCareerIdentity();
+    });
+
+    it('attaches the event a replay names to the session its log describes', async () => {
+      await scan();
+
+      const enriched = await enrichCareerFromReplays(
+        [cachedReplay('event-31R1.xml')],
+        async () => ({
+          eventTitle: 'LMGT3 Sprint Cup',
+          eventType: 'daily',
+          splitNo: 3,
+        }),
+      );
+
+      expect(enriched).toBe(1);
+      expect(Object.values(readCareerSessions())[0]).toMatchObject({
+        eventTitle: 'LMGT3 Sprint Cup',
+        eventType: 'daily',
+        splitNo: 3,
+      });
+    });
+
+    /*
+     * Only the newest replay format carries an event — 22 of 193 in a real
+     * library — so without marking the rest as looked at, every scan re-reads
+     * 171 trailers to find nothing again.
+     */
+    it('reads a replay trailer once, even when it holds no event', async () => {
+      await scan();
+
+      let reads = 0;
+      const readTrailer = async () => {
+        reads += 1;
+        return null;
+      };
+
+      await enrichCareerFromReplays(
+        [cachedReplay('event-31R1.xml')],
+        readTrailer,
+      );
+      expect(reads).toBe(1);
+
+      await enrichCareerFromReplays(
+        [cachedReplay('event-31R1.xml')],
+        readTrailer,
+      );
+      expect(reads).toBe(1);
+    });
+
+    it('leaves a session untouched when no replay pairs to its log', async () => {
+      await scan();
+
+      const enriched = await enrichCareerFromReplays(
+        [cachedReplay('some-other-log-31R1.xml')],
+        async () => ({ eventType: 'daily' }),
+      );
+
+      expect(enriched).toBe(0);
+      expect(Object.values(readCareerSessions())[0].eventType).toBeUndefined();
+    });
   });
 
   it('skips re-parsing a log whose fingerprint is unchanged', async () => {
@@ -815,6 +896,35 @@ describe('main/career aggregate', () => {
     expect(aids).toContain('ABS=2');
     expect(aids).toContain('ABS=1');
     expect(aids).not.toContain('PlayerControl');
+  });
+
+  /*
+   * Most official events carry a type and no title — 18 of 22 in a real library
+   * — so reporting only titles would hide the majority of what the replays know.
+   */
+  it('counts official events by type as well as by title', () => {
+    const aggregate = buildCareerAggregate(
+      [
+        session({ eventType: 'quick-race' }),
+        session({ eventType: 'quick-race' }),
+        session({
+          eventType: 'daily',
+          eventTitle: 'LMGT3 Sprint Cup',
+          splitNo: 3,
+        }),
+      ],
+      identity,
+      null,
+    );
+
+    expect(aggregate.events.byType).toEqual([
+      { type: 'quick-race', sessions: 2 },
+      { type: 'daily', sessions: 1 },
+    ]);
+    expect(aggregate.events.byTitle).toEqual([
+      { title: 'LMGT3 Sprint Cup', type: 'daily', sessions: 1 },
+    ]);
+    expect(aggregate.events.averageSplit).toBe(3);
   });
 
   it('reports the best single-race comeback', () => {

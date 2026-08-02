@@ -291,6 +291,15 @@ export interface CareerSessionRecord {
   eventTitle?: string;
   eventType?: string;
   splitNo?: number;
+  /**
+   * Whether a paired replay has already been read for event identity.
+   *
+   * Most replays carry none — only the newest format does — so without this the
+   * enrichment pass re-reads the same trailers on every scan forever, finding
+   * nothing each time. Cleared by a re-parse, which is when a fresh look is
+   * actually warranted.
+   */
+  eventChecked?: boolean;
 }
 
 /**
@@ -444,6 +453,16 @@ export interface CareerAggregate {
   events: {
     /** Official events, from paired replays. Empty when none are known. */
     byTitle: { title: string; type: string; sessions: number }[];
+    /**
+     * Sessions by event type — `daily`, `quick-race`.
+     *
+     * Kept separate from `byTitle` because most events carry a type and no
+     * title: 18 of 22 in a real library. Listing only titles would make the
+     * majority of what the replays know invisible, and the type is the part
+     * that distinguishes a quick race from a full weekend, which the result log
+     * calls the same thing.
+     */
+    byType: { type: string; sessions: number }[];
     averageSplit: number | null;
   };
   activity: {

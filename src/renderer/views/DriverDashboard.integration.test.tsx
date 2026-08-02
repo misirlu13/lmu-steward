@@ -121,7 +121,14 @@ const buildAggregate = (
       averageFieldSize: 22.4,
       humanShare: 0.86,
     },
-    events: { byTitle: [], averageSplit: null },
+    events: {
+      byTitle: [{ title: 'LMGT3 Sprint Cup', type: 'daily', sessions: 4 }],
+      byType: [
+        { type: 'quick-race', sessions: 18 },
+        { type: 'daily', sessions: 4 },
+      ],
+      averageSplit: 3,
+    },
     activity: {
       byDay: [{ day: 1785000000, sessions: 3 }],
       byHour: Array.from({ length: 24 }, () => 1),
@@ -386,6 +393,25 @@ describe('DriverDashboardView', () => {
     expect(screen.getByText('Milestones')).toBeInTheDocument();
     expect(screen.getByText('First win')).toBeInTheDocument();
     expect(screen.getByText('Cars & classes')).toBeInTheDocument();
+  });
+
+  /*
+   * Most official events carry a type and no title, so a card listing only
+   * titles hides the majority of what the replays know.
+   */
+  it('shows official events by type as well as by title', () => {
+    render(<DriverDashboardView />);
+
+    reply(CONSTANTS.API.GET_CAREER_SUMMARY, {
+      status: 'success',
+      data: { aggregate: buildAggregate() },
+    });
+
+    expect(screen.getByText('Quick races')).toBeInTheDocument();
+    expect(screen.getByText('18')).toBeInTheDocument();
+    expect(screen.getByText('Daily races')).toBeInTheDocument();
+    expect(screen.getByText('LMGT3 Sprint Cup')).toBeInTheDocument();
+    expect(screen.getByText('Average split 3.0')).toBeInTheDocument();
   });
 
   it('lets a session be excluded without removing it', () => {

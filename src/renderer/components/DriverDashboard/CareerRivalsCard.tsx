@@ -13,6 +13,12 @@ interface CareerRivalsCardProps {
   aggregate: CareerAggregate;
 }
 
+/** The event types LMU writes, in words a driver would use. */
+const EVENT_TYPE_LABELS: Record<string, string> = {
+  daily: 'Daily races',
+  'quick-race': 'Quick races',
+};
+
 const RivalList = ({
   title,
   rivals,
@@ -111,15 +117,24 @@ export const CareerRivalsCard = ({ aggregate }: CareerRivalsCardProps) => {
           hint="Who you have actually hit, from the incident reports naming you both"
         />
 
-        {aggregate.events.byTitle.length ? (
+        {aggregate.events.byType.length || aggregate.events.byTitle.length ? (
           <>
             <Divider sx={{ my: 1 }} />
-            <Typography variant="caption" color="text.secondary">
-              Official events
-            </Typography>
-            {aggregate.events.byTitle.slice(0, 4).map((entry) => (
+            <Tooltip
+              title="Read from the replay. A result log records only the track and whether the session was online, so this is the one thing the replay knows and the log does not."
+              placement="top-start"
+            >
+              <Typography variant="caption" color="text.secondary">
+                Official events
+              </Typography>
+            </Tooltip>
+            {/*
+              Types first: most events carry a type and no title — 18 of 22 in a
+              real library — so listing only titles hides the majority of them.
+            */}
+            {aggregate.events.byType.map((entry) => (
               <Box
-                key={entry.title}
+                key={entry.type}
                 sx={{
                   display: 'flex',
                   justifyContent: 'space-between',
@@ -127,9 +142,32 @@ export const CareerRivalsCard = ({ aggregate }: CareerRivalsCardProps) => {
                 }}
               >
                 <Typography variant="body2" noWrap sx={{ pr: 1 }}>
-                  {entry.title}
+                  {EVENT_TYPE_LABELS[entry.type] ?? entry.type}
                 </Typography>
                 <Typography variant="body2" sx={{ fontWeight: 600 }}>
+                  {entry.sessions}
+                </Typography>
+              </Box>
+            ))}
+            {aggregate.events.byTitle.slice(0, 4).map((entry) => (
+              <Box
+                key={entry.title}
+                sx={{
+                  display: 'flex',
+                  justifyContent: 'space-between',
+                  py: 0.25,
+                  pl: 1,
+                }}
+              >
+                <Typography
+                  variant="caption"
+                  noWrap
+                  color="text.secondary"
+                  sx={{ pr: 1 }}
+                >
+                  {entry.title}
+                </Typography>
+                <Typography variant="caption" color="text.secondary">
                   {entry.sessions}
                 </Typography>
               </Box>

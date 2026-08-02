@@ -445,7 +445,7 @@ export const enrichCareerFromReplays = async (
   const byLogName = new Map<string, CareerSessionRecord>();
 
   for (const record of Object.values(sessions)) {
-    if (!record.eventTitle && !record.eventType && record.sourceFileName) {
+    if (!record.eventChecked && record.sourceFileName) {
       byLogName.set(record.sourceFileName.toLowerCase(), record);
     }
   }
@@ -456,6 +456,7 @@ export const enrichCareerFromReplays = async (
 
   const next = { ...sessions };
   let enriched = 0;
+  let checked = 0;
 
   for (const replay of replays) {
     const logName = String(replay.logDataFileName ?? '').toLowerCase();
@@ -469,20 +470,32 @@ export const enrichCareerFromReplays = async (
       join(String(replay.replayDirectory ?? ''), `${replay.replayName}.Vcr`),
     );
 
-    if (!trailer?.eventType && !trailer?.eventTitle) {
-      continue;
-    }
+    /*
+     * Marked as looked at either way. Only the newest replay format carries an
+     * event at all — 22 of 193 in a real library — so without this the other
+     * 171 trailers are re-read on every scan to find nothing again.
+     */
+    checked += 1;
+    const hasEvent = Boolean(trailer?.eventType || trailer?.eventTitle);
 
     next[record.sessionKey] = {
       ...record,
-      eventTitle: trailer.eventTitle,
-      eventType: trailer.eventType,
-      splitNo: trailer.splitNo,
+      eventChecked: true,
+      ...(hasEvent
+        ? {
+            eventTitle: trailer?.eventTitle,
+            eventType: trailer?.eventType,
+            splitNo: trailer?.splitNo,
+          }
+        : {}),
     };
-    enriched += 1;
+
+    if (hasEvent) {
+      enriched += 1;
+    }
   }
 
-  if (enriched > 0) {
+  if (checked > 0) {
     writeCareerSessions(next);
   }
 
@@ -1107,6 +1120,7 @@ export const buildCareerAggregate = (
   });
 
   const eventTitles = new Map<string, { type: string; sessions: number }>();
+  const eventTypes = new Map<string, number>();
   const splits: number[] = [];
   for (const record of counted) {
     if (record.eventTitle) {
@@ -1116,6 +1130,12 @@ export const buildCareerAggregate = (
       };
       entry.sessions += 1;
       eventTitles.set(record.eventTitle, entry);
+    }
+    if (record.eventType) {
+      eventTypes.set(
+        record.eventType,
+        (eventTypes.get(record.eventType) ?? 0) + 1,
+      );
     }
     if (typeof record.splitNo === 'number') {
       splits.push(record.splitNo);
@@ -1345,6 +1365,9 @@ export const buildCareerAggregate = (
           type: entry.type,
           sessions: entry.sessions,
         }))
+        .sort((left, right) => right.sessions - left.sessions),
+      byType: [...eventTypes.entries()]
+        .map(([type, sessionCount]) => ({ type, sessions: sessionCount }))
         .sort((left, right) => right.sessions - left.sessions),
       averageSplit: average(splits),
     },
