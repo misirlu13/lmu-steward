@@ -18,6 +18,7 @@ This file is intentionally focused on development workflows so the README can st
 - Run tests: `npm test`
 - Run lint: `npm run lint`
 - Fix lint issues: `npm run lint:fix`
+- Audit replay files after an LMU update: `npm run audit:replays`
 - Build app bundles: `npm run build`
 - Build distributable package locally: `npm run package`
 
@@ -140,3 +141,54 @@ Expected coverage:
 7. If legacy JSON files already existed, confirm the app still launches and previous data is available.
 8. To verify replay cache busting, increment `REPLAY_CACHE_SCHEMA_VERSION` and relaunch.
 9. If you want to observe an empty replay cache before repopulation, temporarily disable `syncOnAppLaunch` or `automaticSyncEnabled` in settings.
+
+---
+
+## Replay File Format
+
+LMU writes a metadata trailer into every `.Vcr`: the track, the session, the
+content the replay needs, and the full driver roster. `src/main/api/vcr-metadata.ts`
+reads it, and replay import depends on it entirely — a `.Vcr` copied from another
+PC has to be identified before LMU has ever seen it, and its file timestamps say
+nothing useful.
+
+**The format is not stable.** A single library routinely holds several header
+versions at once, and the metadata blob has changed shape between them. Each
+change has broken the reader in a way no fixture caught, because fixtures are a
+snapshot of whatever the format looked like when they were captured.
+
+### After an LMU update, audit the replay library
+
+```bash
+npm run audit:replays
+```
+
+It parses every `.Vcr` in the LMU replay folder and reports the header versions
+and metadata blob shapes it saw, along with anything it could not read. Pass one
+or more directories to check somewhere else. It exits non-zero if any replay
+fails.
+
+A new header version or blob shape in the output is the signal that
+`vcr-metadata.ts` needs attention.
+
+### Why an empty roster counts as a failure
+
+The audit treats "parsed, but zero drivers" as a failure rather than a curiosity,
+because that is the damaging case. A replay with an empty roster still imports
+and still looks fine — it just silently stops verifying that the replay and the
+result log belong together, which is the whole point of the roster. A reader that
+returns nothing is obvious; one that returns a valid-looking record with no
+drivers is not.
+
+This is not hypothetical. Three separate format details have caused it:
+
+- The metadata blob gained an enclosing object, so anchoring on it starting with
+  `{"sceneDesc"` rejected every replay from a current build.
+- Trailer strings are UTF-8 and driver and team names carry accents routinely
+  ("Racing Spirit of Léman"). Validating them as ASCII emptied the roster on any
+  session containing one, because a single rejected field ends the entry walk.
+- Content ids vary in length. Pinning the length seen in the fixtures discarded
+  every driver after the first entry that differed.
+
+The last two together accounted for 161 of 341 replays in one library, none of
+which reported an error.

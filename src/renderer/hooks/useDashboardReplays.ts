@@ -3,6 +3,7 @@ import { CONSTANTS } from '@constants';
 import {
   DashboardSortByOptions,
   DashboardSortDirection,
+  DashboardViewMode,
   GetReplaysRequest,
   LMUReplay,
   PersistedDashboardView,
@@ -14,6 +15,7 @@ import {
   getTotalSessionIncidents,
 } from '../utils/sessionUtils';
 import { DEFAULT_FILTERS, Filters } from '../utils/dashboardFilters';
+import { importedRecordsToReplays } from '../utils/importedReplays';
 import {
   DEFAULT_SORT_BY,
   DEFAULT_SORT_DIRECTION,
@@ -132,12 +134,19 @@ const getReplayRequest = (filters: Filters): GetReplaysRequest | undefined => {
 const matchesFilters = (
   replay: LMUReplay,
   filters: Filters,
-  showArchived: boolean,
+  dashboardView: DashboardViewMode,
 ): boolean => {
-  // Active and archived are mutually exclusive views. Every replay is already
-  // in memory with its archive state attached, so switching between them costs
-  // nothing — no request, no sync.
-  if (Boolean(replay.archived) !== showArchived) {
+  // Active, archived and imported are mutually exclusive views. Active and
+  // archived replays are already in memory with their archive state attached,
+  // so switching between them costs nothing — no request, no sync.
+  if (dashboardView === 'imported') {
+    if (!replay.imported) {
+      return false;
+    }
+  } else if (
+    replay.imported ||
+    Boolean(replay.archived) !== (dashboardView === 'archived')
+  ) {
     return false;
   }
 
@@ -240,15 +249,36 @@ export const useDashboardReplays = () => {
     persistDashboardFiltersEnabled,
     persistedDashboardView,
     replays,
+    importedReplays,
+    requestImportedReplays,
+    deleteImportedReplays,
     requestReplays,
     archiveReplays,
     restoreReplays,
     setArchiveNote,
   } = useApi();
 
-  // Deliberately not persisted across restarts: archived is somewhere you go on
-  // purpose, and reopening the app into it would read as missing replays.
-  const [showArchived, setShowArchived] = useState(false);
+  /*
+   * Imported replays are presented as ordinary replays so grouping, filtering
+   * and the session cards all work on them unchanged. They come from their own
+   * store rather than the replay cache, which is why they are merged here
+   * rather than arriving with the rest.
+   */
+  const allReplays = useMemo(
+    () => [
+      ...(replays?.data ?? []),
+      ...importedRecordsToReplays(importedReplays ?? []),
+    ],
+    [replays, importedReplays],
+  );
+
+  /*
+   * Deliberately not persisted across restarts: archived and imported are both
+   * somewhere you go on purpose, and reopening the app into either would read
+   * as missing replays.
+   */
+  const [dashboardView, setDashboardView] =
+    useState<DashboardViewMode>('active');
   const [hasCalledForReplays, setHasCalledForReplays] = useState(false);
   const [hasReplaysResponded, setHasReplaysResponded] = useState(false);
   const [hasHydratedView, setHasHydratedView] = useState(false);
@@ -284,6 +314,14 @@ export const useDashboardReplays = () => {
       setHasReplaysResponded(true);
     }
   }, [replays, hasReplaysResponded]);
+
+  /*
+   * Read once on mount. Imported replays do not come from the game, so this
+   * neither waits for LMU nor triggers a sync.
+   */
+  useEffect(() => {
+    requestImportedReplays();
+  }, [requestImportedReplays]);
 
   // Restores persisted filters and sort exactly once per mount. Running again
   // on later settings pushes would stomp on filters the user has since changed.
@@ -374,12 +412,13 @@ export const useDashboardReplays = () => {
   ]);
 
   const replayGroups = useMemo(() => {
-    if (!replays?.data) {
-      return [];
-    }
-
-    const filteredReplays = replays.data.filter((replay) =>
-      matchesFilters(replay, filters, showArchived),
+    /*
+     * Deliberately not gated on the replay cache having responded. Imported
+     * replays come from their own store and are readable with LMU closed and
+     * no sync ever having run.
+     */
+    const filteredReplays = allReplays.filter((replay) =>
+      matchesFilters(replay, filters, dashboardView),
     );
 
     const groupedReplays = Object.groupBy(
@@ -392,21 +431,30 @@ export const useDashboardReplays = () => {
     );
 
     return sortReplays(groupsArray, sortBy, sortDirection);
-  }, [replays, filters, sortBy, sortDirection, showArchived]);
+  }, [allReplays, filters, sortBy, sortDirection, dashboardView]);
 
-  // Totals describe the view the user is in, so the archived count doesn't make
-  // the active dashboard look like it is hiding replays.
+  // Totals describe the view the user is in, so the archived and imported
+  // counts don't make the active dashboard look like it is hiding replays.
   const viewReplays = useMemo(
     () =>
-      (replays?.data ?? []).filter(
-        (replay) => Boolean(replay.archived) === showArchived,
+      allReplays.filter((replay) =>
+        dashboardView === 'imported'
+          ? Boolean(replay.imported)
+          : !replay.imported &&
+            Boolean(replay.archived) === (dashboardView === 'archived'),
       ),
-    [replays, showArchived],
+    [allReplays, dashboardView],
   );
 
   const archivedCount = useMemo(
-    () => (replays?.data ?? []).filter((replay) => replay.archived).length,
-    [replays],
+    () =>
+      allReplays.filter((replay) => replay.archived && !replay.imported).length,
+    [allReplays],
+  );
+
+  const importedCount = useMemo(
+    () => allReplays.filter((replay) => replay.imported).length,
+    [allReplays],
   );
 
   const totalReplayCount = viewReplays.length;
@@ -462,10 +510,20 @@ export const useDashboardReplays = () => {
     [replayGroups],
   );
 
-  const handleToggleArchivedView = useCallback((nextShowArchived: boolean) => {
-    setShowArchived(nextShowArchived);
-    setPage(1);
-  }, []);
+  const handleChangeDashboardView = useCallback(
+    (nextDashboardView: DashboardViewMode) => {
+      setDashboardView(nextDashboardView);
+      setPage(1);
+    },
+    [],
+  );
+
+  const handleDeleteImportedReplays = useCallback(
+    (hashes: string[]) => {
+      deleteImportedReplays(hashes);
+    },
+    [deleteImportedReplays],
+  );
 
   const handleArchiveReplays = useCallback(
     (hashes: string[], note?: string) => {
@@ -532,15 +590,17 @@ export const useDashboardReplays = () => {
     sortBy,
     sortDirection,
     filters,
-    showArchived,
+    dashboardView,
     archivedCount,
+    importedCount,
     filteredReplayHashes,
     setPage,
     setSortBy,
     setSortDirection,
     handleApplyFilters,
     handleRefreshReplays,
-    handleToggleArchivedView,
+    handleChangeDashboardView,
+    handleDeleteImportedReplays,
     handleArchiveReplays,
     handleRestoreReplays,
     handleSetArchiveNote,

@@ -60,6 +60,7 @@ interface ApiResponse {
     syncOnIntervalMinutes?: number;
     replayLogMatchThresholdMs?: number;
     persistDashboardFiltersEnabled?: boolean;
+    experimentalFeaturesEnabled?: boolean;
     anonymizeDriverData?: boolean;
     telemetryCacheEnabled?: boolean;
     clearCacheOnExit?: boolean;
@@ -84,6 +85,9 @@ export const UserSettingsView: React.FC = () => {
     lastReplaySyncAt,
     requestReplays,
     markReplayCacheResetRequired,
+    importedReplays,
+    requestImportedReplays,
+    deleteImportedReplays,
   } = useApi();
   const [lmuExecutablePath, setLmuExecutablePath] = useState<string>(
     CONSTANTS.LMU_DEFAULT_EXECUTABLE_PATH,
@@ -114,6 +118,16 @@ export const UserSettingsView: React.FC = () => {
   ] = useState(2);
   const [persistDashboardFiltersEnabled, setPersistDashboardFiltersEnabled] =
     useState(false);
+  const [experimentalFeaturesEnabled, setExperimentalFeaturesEnabled] =
+    useState(false);
+  /*
+   * Defaults to keeping the files. Clearing a cache should not destroy
+   * multi-GB replays as a side effect — the destructive option is the one the
+   * user actively picks.
+   */
+  const [deleteImportedFilesOnClear, setDeleteImportedFilesOnClear] =
+    useState(false);
+  const [importedReplayBytes, setImportedReplayBytes] = useState(0);
   const [anonymizeDriverData, setAnonymizeDriverData] = useState(false);
   const [telemetryCacheEnabled, setTelemetryCacheEnabled] = useState(true);
   const [clearCacheOnExit, setClearCacheOnExit] = useState(false);
@@ -183,6 +197,7 @@ export const UserSettingsView: React.FC = () => {
     syncOnAppLaunch,
     syncOnIntervalMinutes,
     persistDashboardFiltersEnabled,
+    experimentalFeaturesEnabled,
     // replayLogMatchThresholdMinutes,
     anonymizeDriverData,
     telemetryCacheEnabled,
@@ -300,6 +315,9 @@ export const UserSettingsView: React.FC = () => {
       const resolvedPersistDashboardFiltersEnabled = Boolean(
         response?.data?.persistDashboardFiltersEnabled ?? false,
       );
+      const resolvedExperimentalFeaturesEnabled = Boolean(
+        response?.data?.experimentalFeaturesEnabled ?? false,
+      );
       const resolvedAnonymizeDriverData = Boolean(
         response?.data?.anonymizeDriverData ?? false,
       );
@@ -319,6 +337,7 @@ export const UserSettingsView: React.FC = () => {
         : null;
 
       setPersistDashboardFiltersEnabled(resolvedPersistDashboardFiltersEnabled);
+      setExperimentalFeaturesEnabled(resolvedExperimentalFeaturesEnabled);
       setAnonymizeDriverData(resolvedAnonymizeDriverData);
       setTelemetryCacheEnabled(resolvedTelemetryCacheEnabled);
       setClearCacheOnExit(resolvedClearCacheOnExit);
@@ -333,6 +352,7 @@ export const UserSettingsView: React.FC = () => {
         syncOnAppLaunch: Boolean(response?.data?.syncOnAppLaunch ?? true),
         syncOnIntervalMinutes: resolvedSyncIntervalMinutes,
         persistDashboardFiltersEnabled: resolvedPersistDashboardFiltersEnabled,
+        experimentalFeaturesEnabled: resolvedExperimentalFeaturesEnabled,
         // replayLogMatchThresholdMinutes: resolvedReplayLogMatchThresholdMinutes,
         anonymizeDriverData: resolvedAnonymizeDriverData,
         telemetryCacheEnabled: resolvedTelemetryCacheEnabled,
@@ -459,6 +479,12 @@ export const UserSettingsView: React.FC = () => {
         ) {
           setPersistDashboardFiltersEnabled(
             response.data.persistDashboardFiltersEnabled,
+          );
+        }
+
+        if (typeof response?.data?.experimentalFeaturesEnabled === 'boolean') {
+          setExperimentalFeaturesEnabled(
+            response.data.experimentalFeaturesEnabled,
           );
         }
 
@@ -833,9 +859,37 @@ export const UserSettingsView: React.FC = () => {
     setIsClearLocalStorageDialogOpen(false);
   };
 
+  useEffect(() => {
+    requestImportedReplays();
+  }, [requestImportedReplays]);
+
+  /*
+   * Sizes are not carried on the record, so this is an estimate from the
+   * replay's own size rather than a stat of each file. It is only used to give
+   * the confirmation a sense of scale.
+   */
+  useEffect(() => {
+    setImportedReplayBytes(
+      (importedReplays ?? []).reduce(
+        (total, replay) => total + Number(replay.size ?? 0),
+        0,
+      ),
+    );
+  }, [importedReplays]);
+
   const onConfirmClearLocalStorage = () => {
     setIsClearingLocalStorage(true);
     setStatusMessage('');
+
+    /*
+     * Files first, then storage. Clearing storage destroys the rows holding the
+     * paths, so a failure the other way round would orphan exactly what this
+     * prompt exists to prevent.
+     */
+    if (deleteImportedFilesOnClear && (importedReplays?.length ?? 0) > 0) {
+      deleteImportedReplays(importedReplays.map((replay) => replay.hash));
+    }
+
     sendMessage(CONSTANTS.API.POST_CLEAR_LOCAL_STORAGE);
   };
 
@@ -848,7 +902,7 @@ export const UserSettingsView: React.FC = () => {
               variant="caption"
               color="text.secondary"
               sx={{ cursor: 'pointer' }}
-              onClick={() => navigate('/')}
+              onClick={() => navigate('/replays')}
             >
               Dashboard
             </Typography>
@@ -862,7 +916,7 @@ export const UserSettingsView: React.FC = () => {
         }
         title="User Settings"
         subtitle="Configure your LMU Steward preferences and paths."
-        onBack={() => navigate('/')}
+        onBack={() => navigate('/replays')}
       />
 
       <Box sx={{ mt: 3 }}>
@@ -1457,6 +1511,88 @@ export const UserSettingsView: React.FC = () => {
           >
             <Stack spacing={1.5}>
               <Typography variant="h6" fontWeight={700}>
+                Experimental Features
+              </Typography>
+              <Box
+                sx={{
+                  border: '1px solid',
+                  borderColor: 'divider',
+                  borderRadius: 1,
+                  p: 2,
+                }}
+              >
+                <Stack
+                  direction="row"
+                  justifyContent="space-between"
+                  alignItems="center"
+                >
+                  <Box>
+                    <Typography variant="subtitle2" fontWeight={600}>
+                      Enable Experimental Features
+                    </Typography>
+                    <Typography variant="caption" color="text.secondary">
+                      Turn on features that are still being tested. They may
+                      change, behave incorrectly on some setups, or be removed
+                      in a later release. Everything already in LMU Steward
+                      keeps working either way.
+                    </Typography>
+                  </Box>
+                  <Switch
+                    checked={experimentalFeaturesEnabled}
+                    onChange={(_, checked) =>
+                      setExperimentalFeaturesEnabled(checked)
+                    }
+                    disabled={
+                      isLoading || isSaving || isLaunching || isAutosaving
+                    }
+                  />
+                </Stack>
+              </Box>
+
+              {/*
+                Rendered whether the toggle is on or off — someone deciding
+                whether to enable it needs to see what they would be enabling.
+              */}
+              <Box
+                sx={{
+                  border: '1px solid',
+                  borderColor: 'divider',
+                  borderRadius: 1,
+                  p: 2,
+                }}
+              >
+                <Stack spacing={1.5}>
+                  <Typography variant="subtitle2" fontWeight={600}>
+                    What&apos;s experimental right now
+                  </Typography>
+                  {CONSTANTS.EXPERIMENTAL_FEATURES.length === 0 ? (
+                    <Typography variant="caption" color="text.secondary">
+                      No experimental features at the moment. Everything in LMU
+                      Steward is fully released.
+                    </Typography>
+                  ) : (
+                    CONSTANTS.EXPERIMENTAL_FEATURES.map((feature) => (
+                      <Box key={feature.id}>
+                        <Typography variant="body2" fontWeight={600}>
+                          {feature.name}
+                        </Typography>
+                        <Typography variant="caption" color="text.secondary">
+                          {feature.description}
+                        </Typography>
+                      </Box>
+                    ))
+                  )}
+                </Stack>
+              </Box>
+            </Stack>
+          </Paper>
+
+          <Paper
+            variant="outlined"
+            sx={{ borderColor: 'divider', borderRadius: 1, p: 3 }}
+          >
+            <Stack spacing={1.5}>
+              <Typography variant="h6" fontWeight={700}>
                 Local Storage
               </Typography>
               <Box
@@ -1499,6 +1635,10 @@ export const UserSettingsView: React.FC = () => {
           <UserSettingsClearStorageDialog
             open={isClearLocalStorageDialogOpen}
             isClearingLocalStorage={isClearingLocalStorage}
+            importedReplayCount={importedReplays?.length ?? 0}
+            importedReplayBytes={importedReplayBytes}
+            deleteImportedFiles={deleteImportedFilesOnClear}
+            onDeleteImportedFilesChange={setDeleteImportedFilesOnClear}
             onClose={onCloseClearLocalStorageDialog}
             onConfirm={onConfirmClearLocalStorage}
           />

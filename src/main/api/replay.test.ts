@@ -27,10 +27,14 @@ import {
   postArchiveReplays,
   postRestoreReplays,
   postWatchReplay,
+  syncReplayData,
 } from './replay';
 /* eslint-enable import/first */
 
 jest.mock('../storage/local-data-store', () => ({
+  // The sync seeds the career identity from the cached profile before it builds
+  // the shared log index.
+  readProfileCache: () => ({ profileInfo: { name: 'Bradley Drake' } }),
   getMainPersistentStore: () => ({
     get(key: string) {
       return replayStoreData[key];
@@ -55,6 +59,8 @@ jest.mock('fs', () => ({
 jest.mock('fs/promises', () => ({
   readdir: jest.fn(),
   readFile: jest.fn(),
+  // Only refines a tiebreak; rejecting here exercises the fallback ordering.
+  stat: jest.fn().mockRejectedValue(new Error('stat unavailable')),
 }));
 
 jest.mock('xml2js', () => ({
@@ -279,9 +285,15 @@ describe('main/replay helpers', () => {
     });
   });
 
+  /*
+   * The track-limits element is <TrackLimits>, plural — this fixture used to say
+   * <TrackLimit>, matching a parser that compared the lowercased tag against
+   * 'tracklimit' and therefore never counted a real one. The count reached the
+   * dashboard as zero for every replay whose full log was not loaded.
+   */
   it('parseLogXml reads streamed XML and parses session summary counts', async () => {
     const xmlChunks = [
-      '<rFactorXML><RaceResults><DateTime>1000</DateTime><TrackVenue>Sebring</TrackVenue><Race><Minutes>60</Minutes><CarClass>LMP2</CarClass><CarClass>GTE</CarClass><Driver></Driver><Driver></Driver><Stream><Incident></Incident><Penalty></Penalty><TrackLimit></TrackLimit></Stream></Race></RaceResults></rFactorXML>',
+      '<rFactorXML><RaceResults><DateTime>1000</DateTime><TrackVenue>Sebring</TrackVenue><Race><Minutes>60</Minutes><CarClass>LMP2</CarClass><CarClass>GTE</CarClass><Driver></Driver><Driver></Driver><Stream><Incident></Incident><Penalty></Penalty><TrackLimits></TrackLimits></Stream></Race></RaceResults></rFactorXML>',
     ];
     const stream = Readable.from(xmlChunks, { objectMode: false });
     createReadStreamMock.mockReturnValueOnce(
@@ -320,6 +332,45 @@ describe('main/replay helpers', () => {
         },
       },
     });
+  });
+
+  /**
+   * The root <DateTime> is when LMU created the event, and it is what the replay
+   * API reports as a replay's timestamp. Each session carries its own <DateTime>
+   * at the same nesting depth this parser tracks, so a regression here silently
+   * shifts every log forward and mismatches replays recorded on the same evening.
+   */
+  it('keeps the root DateTime when a session carries its own (string parser)', async () => {
+    readFileMock.mockResolvedValue(
+      '<rFactorXML><RaceResults><DateTime>1784398360</DateTime><TrackVenue>Monza</TrackVenue><Race><DateTime>1784400388</DateTime><Minutes>20</Minutes></Race></RaceResults></rFactorXML>' as unknown as Awaited<
+        ReturnType<typeof readFile>
+      >,
+    );
+
+    const result = await parseLogXml('C:/logs/file.xml');
+
+    expect(result.rFactorXML?.RaceResults?.DateTime).toBe(1784398360);
+    expect(result.rFactorXML?.RaceResults?.Race?.Minutes).toBe(20);
+  });
+
+  it('keeps the root DateTime when a session carries its own (stream parser)', async () => {
+    const stream = Readable.from(
+      [
+        '<rFactorXML><RaceResults><DateTime>1784398360</DateTime><TrackVenue>Monza</TrackVenue>',
+        '<Race><DateTime>1784400388</DateTime><Minutes>20</Minutes></Race></RaceResults></rFactorXML>',
+      ],
+      { objectMode: false },
+    );
+    createReadStreamMock.mockReturnValueOnce(
+      stream as unknown as ReturnType<typeof createReadStream>,
+    );
+    readFileMock.mockRejectedValue(new Error('readFile should not be called'));
+
+    const result = await parseLogXml('C:/logs/file.xml');
+
+    expect(readFileMock).not.toHaveBeenCalled();
+    expect(result.rFactorXML?.RaceResults?.DateTime).toBe(1784398360);
+    expect(result.rFactorXML?.RaceResults?.Race?.Minutes).toBe(20);
   });
 
   it('detects log session type from RaceResults keys', () => {
@@ -689,6 +740,223 @@ describe('main/replay helpers', () => {
     });
 
     expect(replayStoreSetMock).toHaveBeenCalledTimes(1);
+  });
+
+  /**
+   * An imported replay was paired with its log when it was imported. Sending it
+   * back through findBestLogFile against the whole results directory is exactly
+   * the mismatch importing exists to avoid — the correct log is already known.
+   */
+  it('serves an imported replay from its recorded log, without re-matching', async () => {
+    const replyMock = jest.fn();
+    const event = { reply: replyMock } as unknown as Electron.IpcMainEvent;
+    const replay = {
+      id: 0,
+      metadata: { session: 'RACE', sceneDesc: 'MONZAWEC' },
+      replayDirectory: 'C:/replays',
+      replayName: 'Autodromo Nazionale Monza R1 2',
+      size: 456,
+      timestamp: 1784398360,
+    } as unknown as LMUReplay;
+    const replayHash = generateReplayHash(replay);
+
+    replayStoreData.importedReplays = {
+      [replayHash]: {
+        hash: replayHash,
+        replayName: 'Autodromo Nazionale Monza R1 2',
+        sceneDesc: 'MONZAWEC',
+        session: 'RACE',
+        timestamp: 1784398360,
+        vcrFileName: 'Autodromo Nazionale Monza R1 2.Vcr',
+        vcrPath: 'C:/replays/Autodromo Nazionale Monza R1 2.Vcr',
+        logFileName: 'event-two-race.xml',
+        logPath: 'C:/logs/event-two-race.xml',
+        vcrFingerprint: 'aaa',
+        logFingerprint: 'bbb',
+        importedAt: 1,
+        logData: null,
+        origin: {
+          trackFolder: 'Monza_2023',
+          trackVersion: '1.27',
+          trackContentHash: 'abc',
+          installPath: 'E:/LMU',
+        },
+        match: { method: 'roster', confidence: 0.84, rosterOverlap: null },
+      },
+    };
+
+    global.fetch = jest.fn().mockImplementation(async (url: string) => {
+      if (url.endsWith('/rest/watch/replays')) {
+        return { ok: true, status: 200, json: async () => [replay] };
+      }
+      return { ok: true, status: 200 };
+    }) as typeof global.fetch;
+
+    parseStringPromiseMock.mockResolvedValue({
+      rFactorXML: {
+        RaceResults: {
+          Setting: 'Multiplayer',
+          DateTime: 1784398360,
+          Race: { Minutes: 20 },
+        },
+      },
+    } as unknown as Awaited<ReturnType<typeof parseStringPromise>>);
+
+    await postWatchReplay(event, replayHash);
+
+    expect(readFileMock).toHaveBeenCalledWith(
+      'C:/logs/event-two-race.xml',
+      'utf-8',
+    );
+    // The whole point: the results directory is never scanned.
+    expect(readdirMock).not.toHaveBeenCalled();
+
+    expect(replyMock).toHaveBeenCalledWith(CONSTANTS.API.POST_WATCH_REPLAY, {
+      status: 'success',
+      data: expect.objectContaining({
+        imported: true,
+        timestamp: 1784398360,
+        logDataFileName: 'event-two-race.xml',
+        logDataLoaded: true,
+        multiplayer: true,
+      }),
+    });
+
+    delete replayStoreData.importedReplays;
+  });
+
+  /**
+   * An imported .Vcr sits in the replay folder, so the game lists it like any
+   * other. Without the exclusion it would be cached here as well and appear in
+   * both the active and the imported view — and, since the flag does not gate
+   * this, turning experimental features off must not change that.
+   */
+  it('does not cache a replay that was imported', async () => {
+    /*
+     * syncReplayData yields between replays via setImmediate, which jsdom does
+     * not provide. Nothing here depends on macrotask ordering, so a minimal
+     * stand-in is enough to exercise the loop.
+     */
+    const globalWithImmediate = globalThis as unknown as Record<
+      string,
+      unknown
+    >;
+    const originalSetImmediate = globalWithImmediate.setImmediate;
+    globalWithImmediate.setImmediate = (callback: () => void) =>
+      setTimeout(callback, 0);
+
+    const importedReplay = {
+      id: 0,
+      metadata: { session: 'RACE', sceneDesc: 'MONZAWEC' },
+      replayDirectory: 'C:/replays/',
+      replayName: 'Autodromo Nazionale Monza R1 2',
+      size: 456,
+      timestamp: 1784398360,
+    };
+    const ownReplay = {
+      id: 1,
+      metadata: { session: 'RACE', sceneDesc: 'SEBRINGWEC' },
+      replayDirectory: 'C:/replays/',
+      replayName: 'Sebring International Raceway R1 1',
+      size: 123,
+      timestamp: 1000,
+    };
+
+    replayStoreData.replays = {};
+    replayStoreData.importedReplays = {
+      'imported-hash': {
+        hash: 'imported-hash',
+        vcrPath: 'C:\\replays\\Autodromo Nazionale Monza R1 2.Vcr',
+        logPath: 'C:/logs/event-two-race.xml',
+        logFileName: 'event-two-race.xml',
+      },
+    };
+
+    global.fetch = jest.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => [importedReplay, ownReplay],
+    }) as typeof global.fetch;
+
+    readdirMock.mockResolvedValue(['own.xml'] as unknown as Awaited<
+      ReturnType<typeof readdir>
+    >);
+    readFileMock.mockResolvedValue(
+      '<rFactorXML><RaceResults><DateTime>1000</DateTime><TrackVenue>Sebring</TrackVenue><Race /></RaceResults></rFactorXML>' as unknown as Awaited<
+        ReturnType<typeof readFile>
+      >,
+    );
+
+    await syncReplayData();
+
+    const cached = Object.values(
+      replayStoreData.replays as Record<string, LMUReplay>,
+    );
+
+    expect(cached.map((entry) => entry.replayName)).toEqual([
+      'Sebring International Raceway R1 1',
+    ]);
+
+    globalWithImmediate.setImmediate = originalSetImmediate;
+    delete replayStoreData.importedReplays;
+    replayStoreData.replays = {};
+  });
+
+  /**
+   * Log matching used to rebuild the results directory for every replay, so a
+   * sync of N replays read and parsed every log N times. That was tolerable
+   * while a log was ~80 KB. LMU now records 24-hour races, where a single
+   * result log runs to tens of megabytes, and the same sync would read on the
+   * order of a terabyte.
+   *
+   * Asserted on readdir rather than on parse counts because it is the cheapest
+   * honest proxy: one listing per sync means one pass over the directory.
+   */
+  it('summarises the results directory once per sync, not once per replay', async () => {
+    const globalWithImmediate = globalThis as unknown as Record<
+      string,
+      unknown
+    >;
+    const originalSetImmediate = globalWithImmediate.setImmediate;
+    globalWithImmediate.setImmediate = (callback: () => void) =>
+      setTimeout(callback, 0);
+
+    const replays = Array.from({ length: 5 }, (_unused, index) => ({
+      id: index,
+      metadata: { session: 'RACE', sceneDesc: 'SEBRINGWEC' },
+      replayDirectory: 'C:/replays/',
+      replayName: `Sebring International Raceway R1 ${index + 1}`,
+      size: 123,
+      timestamp: 1000 + index,
+    }));
+
+    replayStoreData.replays = {};
+    global.fetch = jest.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => replays,
+    }) as typeof global.fetch;
+
+    readdirMock.mockClear();
+    readdirMock.mockResolvedValue([
+      'race.xml',
+      'quali.xml',
+    ] as unknown as Awaited<ReturnType<typeof readdir>>);
+    readFileMock.mockResolvedValue(
+      '<rFactorXML><RaceResults><DateTime>1000</DateTime><TrackVenue>Sebring</TrackVenue><Race /></RaceResults></rFactorXML>' as unknown as Awaited<
+        ReturnType<typeof readFile>
+      >,
+    );
+
+    await syncReplayData();
+
+    expect(
+      Object.keys(replayStoreData.replays as Record<string, LMUReplay>),
+    ).toHaveLength(5);
+    expect(readdirMock).toHaveBeenCalledTimes(1);
+
+    globalWithImmediate.setImmediate = originalSetImmediate;
+    replayStoreData.replays = {};
   });
 });
 

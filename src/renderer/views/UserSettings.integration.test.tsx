@@ -63,6 +63,9 @@ describe('UserSettingsView integration', () => {
       lastReplaySyncAt: null,
       requestReplays: requestReplaysMock,
       markReplayCacheResetRequired: markReplayCacheResetRequiredMock,
+      importedReplays: [],
+      requestImportedReplays: jest.fn(),
+      deleteImportedReplays: jest.fn(),
     } as unknown as ReturnType<typeof useApi>);
   });
 
@@ -170,6 +173,7 @@ describe('UserSettingsView integration', () => {
         syncOnAppLaunch: true,
         syncOnIntervalMinutes: 5,
         persistDashboardFiltersEnabled: false,
+        experimentalFeaturesEnabled: false,
         anonymizeDriverData: false,
         telemetryCacheEnabled: true,
         clearCacheOnExit: false,
@@ -277,10 +281,73 @@ describe('UserSettingsView integration', () => {
         syncOnAppLaunch: true,
         syncOnIntervalMinutes: 5,
         persistDashboardFiltersEnabled: false,
+        experimentalFeaturesEnabled: false,
         anonymizeDriverData: false,
         telemetryCacheEnabled: true,
         clearCacheOnExit: false,
       },
     );
+  });
+
+  it('defaults the experimental toggle to off and lists what is experimental', () => {
+    renderView();
+
+    emitIpc(CONSTANTS.API.GET_USER_SETTINGS, {
+      status: 'success',
+      data: {
+        lmuExecutablePath:
+          'C:/Program Files (x86)/Steam/steamapps/common/Le Mans Ultimate/Le Mans Ultimate.exe',
+        lmuReplayDirectoryPath:
+          'C:/Program Files (x86)/Steam/steamapps/common/Le Mans Ultimate/UserData/Replays',
+      },
+    });
+
+    const toggleLabel = screen.getByText('Enable Experimental Features');
+    const toggle = within(
+      toggleLabel.closest('div')?.parentElement as HTMLElement,
+    ).getByRole('switch');
+
+    // Settings that predate the key must not silently opt a user in.
+    expect((toggle as HTMLInputElement).checked).toBe(false);
+
+    /*
+     * Asserted against the constant rather than a hardcoded name, so graduating
+     * a feature cannot leave the card advertising it as experimental, and so
+     * emptying the list swaps in the empty state without this test needing to
+     * be rewritten.
+     */
+    const expectedNames = CONSTANTS.EXPERIMENTAL_FEATURES.map(
+      (feature) => feature.name,
+    );
+    const renderedNames = expectedNames.filter(
+      (name) => screen.queryByText(name) !== null,
+    );
+
+    expect(renderedNames).toEqual(expectedNames);
+    expect(
+      screen.queryByText(/No experimental features at the moment/i) !== null,
+    ).toBe(expectedNames.length === 0);
+  });
+
+  it('hydrates the experimental toggle from stored settings', () => {
+    renderView();
+
+    emitIpc(CONSTANTS.API.GET_USER_SETTINGS, {
+      status: 'success',
+      data: {
+        lmuExecutablePath:
+          'C:/Program Files (x86)/Steam/steamapps/common/Le Mans Ultimate/Le Mans Ultimate.exe',
+        lmuReplayDirectoryPath:
+          'C:/Program Files (x86)/Steam/steamapps/common/Le Mans Ultimate/UserData/Replays',
+        experimentalFeaturesEnabled: true,
+      },
+    });
+
+    const toggleLabel = screen.getByText('Enable Experimental Features');
+    const toggle = within(
+      toggleLabel.closest('div')?.parentElement as HTMLElement,
+    ).getByRole('switch');
+
+    expect((toggle as HTMLInputElement).checked).toBe(true);
   });
 });

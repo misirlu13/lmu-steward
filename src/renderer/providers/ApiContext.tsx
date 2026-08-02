@@ -10,6 +10,7 @@ import React, {
 import { CONSTANTS } from '@constants';
 import {
   GetReplaysRequest,
+  ImportedReplayRecord,
   LMUReplay,
   LoadingState,
   PersistedDashboardView,
@@ -26,6 +27,7 @@ interface UserSettingsResponse {
   status?: string;
   data?: {
     quickViewEnabled?: boolean;
+    experimentalFeaturesEnabled?: boolean;
     persistDashboardFiltersEnabled?: boolean;
     dashboardView?: PersistedDashboardView | null;
   };
@@ -34,11 +36,218 @@ interface UserSettingsResponse {
 type ApiChannel = (typeof CONSTANTS.API)[keyof typeof CONSTANTS.API];
 type ApiChannelCallback = (data: unknown) => void;
 
+export interface ImportSelectionPayload {
+  id: string;
+  logPath: string;
+  method: 'roster' | 'manual' | 'manifest';
+  confidence: number | null;
+  /** Event time from a manifest, preferred over the log's own when present. */
+  timestamp?: number;
+  /** The steward's note about this hand-off. */
+  note?: string;
+}
+
+export interface ExportReplayPayload {
+  hash: string;
+  replayName: string;
+  sceneDesc: string;
+  session: string;
+  timestamp: number;
+  logDataFileName: string;
+}
+
+export interface ExportWeekendPayload {
+  /** Track display name, used only to name the archive. Never a path. */
+  weekendLabel: string;
+  timestamp: number;
+  sessions: ExportReplayPayload[];
+}
+
+export interface ExportProgressState {
+  status: 'in-progress' | 'success' | 'error';
+  /** Sessions fully written. */
+  processed: number;
+  total: number;
+  bytesWritten: number;
+  totalBytes: number;
+  currentLabel: string;
+  message?: string;
+}
+
+/** Where a finished export landed, so the user can be told rather than guess. */
+export interface ExportResultState {
+  status: 'success' | 'error';
+  canceled: boolean;
+  filePath: string;
+  /** Sessions actually written. One for a session export. */
+  exported: number;
+  omitted: Array<{ replayName: string; session: string; reason: string }>;
+  message: string;
+}
+
+export interface ImportFileSelection {
+  kind: 'replay' | 'log';
+  /** Set when the bulk preview asked, naming the row that did. */
+  rowId?: string;
+  filePath: string;
+  fileName: string;
+  size?: number;
+  session?: string;
+  driverCount?: number;
+  trackVenue?: string;
+  trackFolder?: string;
+  eventDateTime?: number | null;
+  originInstallPath?: string;
+}
+
+export interface ImportPairIssueState {
+  severity: 'error' | 'warning';
+  code: string;
+  message: string;
+}
+
+export interface ImportPairValidationState {
+  issues: ImportPairIssueState[];
+  confidence: number | null;
+  rosterOverlap: {
+    intersection: number;
+    vcrCount: number;
+    logCount: number;
+  } | null;
+  canImport: boolean;
+}
+
+/**
+ * One scanned replay, as the preview renders it.
+ *
+ * Mirrors `ImportPreviewRow` in the main process. Paths are carried through
+ * untouched and handed back on import — the renderer reads them for display and
+ * never builds or edits one.
+ */
+export interface ImportPreviewRowState {
+  id: string;
+  vcrPath: string;
+  vcrFileName: string;
+  replayName: string;
+  sceneDesc: string;
+  session: string;
+  size: number;
+  alreadyImportedHash: string | null;
+  manifest: { logPath: string; timestamp: number } | null;
+  pairing: {
+    ranked: Array<{
+      candidate: {
+        fileName: string;
+        filePath: string;
+        session: string | null;
+        eventDateTime: number | null;
+        trackVenue: string;
+        driverNames: string[];
+      };
+      confidence: number;
+      intersection: number;
+      vcrCount: number;
+      logCount: number;
+    }>;
+    proposed: {
+      candidate: { fileName: string; filePath: string };
+      confidence: number;
+      intersection: number;
+      vcrCount: number;
+    } | null;
+    reason:
+      | 'proposed'
+      | 'manifest'
+      | 'only-candidate'
+      | 'roster-too-small'
+      | 'no-candidates'
+      | 'below-floor'
+      | 'ambiguous';
+  };
+}
+
+export interface ImportPreviewState {
+  kind: 'folder' | 'zip';
+  /** What the user picked. For a zip, not where it was unpacked. */
+  sourceLabel: string;
+  rows: ImportPreviewRowState[];
+  /** Rows a Steward manifest settled without scoring. */
+  manifestSessionCount: number;
+  omittedSessions: Array<{
+    replayName: string;
+    session: string;
+    reason: string;
+  }>;
+  /** Archive entries refused by the path guard. */
+  rejectedEntries: string[];
+}
+
+export interface ImportProgressState {
+  status: 'idle' | 'in-progress' | 'success' | 'error';
+  /** Unpacking counts bytes; importing counts replays. */
+  phase?: 'extracting' | 'scanning' | 'importing';
+  processed: number;
+  total: number;
+  currentLabel?: string;
+  message?: string;
+}
+
+export interface ImportOutcomeState {
+  id: string;
+  replayName: string;
+  status: 'imported' | 'skipped' | 'failed';
+  message?: string;
+}
+
+/**
+ * Normalises both export replies into one shape.
+ *
+ * A session export and a weekend export differ only in how many sessions they
+ * wrote and whether any were left out, so the UI that reports the outcome does
+ * not need to know which one it was watching.
+ */
+const toExportResult = (
+  data: unknown,
+  defaultExported = 0,
+): ExportResultState => {
+  const payload = data as {
+    status?: string;
+    data?: {
+      canceled?: boolean;
+      filePath?: string;
+      exported?: number;
+      omitted?: ExportResultState['omitted'];
+    };
+    message?: string;
+  };
+
+  if (payload?.status !== 'success') {
+    return {
+      status: 'error',
+      canceled: false,
+      filePath: '',
+      exported: 0,
+      omitted: [],
+      message: payload?.message ?? 'The export could not be completed.',
+    };
+  }
+
+  return {
+    status: 'success',
+    canceled: Boolean(payload.data?.canceled),
+    filePath: payload.data?.filePath ?? '',
+    exported: payload.data?.exported ?? defaultExported,
+    omitted: payload.data?.omitted ?? [],
+    message: '',
+  };
+};
+
 interface ApiContextType {
   isConnected: boolean;
   hasApiStatusResponse: boolean;
   hasUserSettingsResponse: boolean;
   quickViewEnabled: boolean;
+  experimentalFeaturesEnabled: boolean;
   persistDashboardFiltersEnabled: boolean;
   persistedDashboardView: PersistedDashboardView | null;
   lastReplaySyncAt: number | null;
@@ -47,6 +256,9 @@ interface ApiContextType {
   isReplayActive: boolean | null;
   currentTrackMap: { data?: unknown } | null;
   replays: ReplayResponse | null;
+  importedReplays: ImportedReplayRecord[];
+  importPreview: ImportPreviewState | null;
+  importProgress: ImportProgressState | null;
   currentReplay: LMUReplay | null;
   loadingState: LoadingState;
   markReplayCacheResetRequired: () => void;
@@ -54,6 +266,32 @@ interface ApiContextType {
   archiveReplays: (hashes: string[], note?: string) => void;
   restoreReplays: (hashes: string[]) => void;
   setArchiveNote: (hashes: string[], note: string) => void;
+  requestImportedReplays: () => void;
+  selectImportSource: (kind: 'folder' | 'zip') => void;
+  /** The log the user browsed to for one preview row, keyed by row id. */
+  importRowLogSelections: Record<string, ImportFileSelection>;
+  importOutcomes: ImportOutcomeState[] | null;
+  clearImportOutcomes: () => void;
+  importReplayFile: ImportFileSelection | null;
+  importLogFile: ImportFileSelection | null;
+  importPairValidation: ImportPairValidationState | null;
+  importPairError: string;
+  isImportingPair: boolean;
+  selectImportFile: (kind: 'replay' | 'log', rowId?: string) => void;
+  importReplayPair: (note?: string) => void;
+  setImportedNote: (hashes: string[], note: string) => void;
+  resetImportPair: () => void;
+  clearImportPreview: () => void;
+  importSelectedReplays: (
+    rows: unknown[],
+    selections: ImportSelectionPayload[],
+  ) => void;
+  deleteImportedReplays: (hashes: string[]) => void;
+  exportReplay: (request: ExportReplayPayload) => void;
+  exportWeekend: (request: ExportWeekendPayload) => void;
+  exportProgress: ExportProgressState | null;
+  exportResult: ExportResultState | null;
+  clearExportResult: () => void;
   subscribeToApiChannel: (
     channel: ApiChannel,
     callback: ApiChannelCallback,
@@ -65,6 +303,7 @@ const ApiContext = createContext<ApiContextType>({
   hasApiStatusResponse: false,
   hasUserSettingsResponse: false,
   quickViewEnabled: false,
+  experimentalFeaturesEnabled: false,
   persistDashboardFiltersEnabled: false,
   persistedDashboardView: null,
   lastReplaySyncAt: null,
@@ -78,11 +317,36 @@ const ApiContext = createContext<ApiContextType>({
   isReplayActive: null,
   currentTrackMap: null,
   replays: null,
+  importedReplays: [],
+  importPreview: null,
+  importProgress: null,
   currentReplay: null,
   loadingState: { loading: false, percentage: -1 },
   markReplayCacheResetRequired: () => {},
   requestReplays: () => {},
   archiveReplays: () => {},
+  requestImportedReplays: () => {},
+  selectImportSource: () => {},
+  importRowLogSelections: {},
+  importOutcomes: null,
+  clearImportOutcomes: () => {},
+  importReplayFile: null,
+  importLogFile: null,
+  importPairValidation: null,
+  importPairError: '',
+  isImportingPair: false,
+  selectImportFile: () => {},
+  importReplayPair: () => {},
+  setImportedNote: () => {},
+  resetImportPair: () => {},
+  clearImportPreview: () => {},
+  importSelectedReplays: () => {},
+  deleteImportedReplays: () => {},
+  exportReplay: () => {},
+  exportWeekend: () => {},
+  exportProgress: null,
+  exportResult: null,
+  clearExportResult: () => {},
   restoreReplays: () => {},
   setArchiveNote: () => {},
   subscribeToApiChannel: () => () => {},
@@ -95,6 +359,8 @@ export const ApiProvider: React.FC<{ children: React.ReactNode }> = ({
   const [hasApiStatusResponse, setHasApiStatusResponse] = useState(false);
   const [hasUserSettingsResponse, setHasUserSettingsResponse] = useState(false);
   const [quickViewEnabled, setQuickViewEnabled] = useState(false);
+  const [experimentalFeaturesEnabled, setExperimentalFeaturesEnabled] =
+    useState(false);
   const [persistDashboardFiltersEnabled, setPersistDashboardFiltersEnabled] =
     useState(false);
   const [persistedDashboardView, setPersistedDashboardView] =
@@ -115,6 +381,33 @@ export const ApiProvider: React.FC<{ children: React.ReactNode }> = ({
     data?: unknown;
   } | null>(null);
   const [replays, setReplays] = useState<ReplayResponse | null>(null);
+  const [importedReplays, setImportedReplays] = useState<
+    ImportedReplayRecord[]
+  >([]);
+  const [importPreview, setImportPreview] = useState<ImportPreviewState | null>(
+    null,
+  );
+  const [importRowLogSelections, setImportRowLogSelections] = useState<
+    Record<string, ImportFileSelection>
+  >({});
+  const [importOutcomes, setImportOutcomes] = useState<
+    ImportOutcomeState[] | null
+  >(null);
+  const [importProgress, setImportProgress] =
+    useState<ImportProgressState | null>(null);
+  const [exportProgress, setExportProgress] =
+    useState<ExportProgressState | null>(null);
+  const [exportResult, setExportResult] = useState<ExportResultState | null>(
+    null,
+  );
+  const [importReplayFile, setImportReplayFile] =
+    useState<ImportFileSelection | null>(null);
+  const [importLogFile, setImportLogFile] =
+    useState<ImportFileSelection | null>(null);
+  const [importPairValidation, setImportPairValidation] =
+    useState<ImportPairValidationState | null>(null);
+  const [importPairError, setImportPairError] = useState('');
+  const [isImportingPair, setIsImportingPair] = useState(false);
   const [currentReplay, setCurrentReplay] = useState<LMUReplay | null>(null);
   const [loadingState, setLoadingState] = useState<LoadingState>({
     loading: false,
@@ -167,6 +460,10 @@ export const ApiProvider: React.FC<{ children: React.ReactNode }> = ({
 
     if (payload?.status !== 'success') {
       return;
+    }
+
+    if (typeof payload?.data?.experimentalFeaturesEnabled === 'boolean') {
+      setExperimentalFeaturesEnabled(payload.data.experimentalFeaturesEnabled);
     }
 
     if (typeof payload?.data?.quickViewEnabled === 'boolean') {
@@ -260,6 +557,135 @@ export const ApiProvider: React.FC<{ children: React.ReactNode }> = ({
     [sendArchiveMessage],
   );
 
+  /*
+   * Validation is asked for as soon as both files are known rather than at
+   * confirm time, so a mismatched pairing is visible before the user commits
+   * to it.
+   */
+  useEffect(() => {
+    if (!importReplayFile || !importLogFile) {
+      setImportPairValidation(null);
+      return;
+    }
+
+    sendMessage(CONSTANTS.API.POST_VALIDATE_IMPORT_PAIR, {
+      vcrPath: importReplayFile.filePath,
+      logPath: importLogFile.filePath,
+    });
+  }, [importReplayFile, importLogFile]);
+
+  const requestImportedReplays = useCallback(() => {
+    sendMessage(CONSTANTS.API.GET_IMPORTED_REPLAYS);
+  }, []);
+
+  const selectImportSource = useCallback((kind: 'folder' | 'zip') => {
+    setImportPreview(null);
+    setImportRowLogSelections({});
+    setImportOutcomes(null);
+    sendMessage(CONSTANTS.API.POST_SELECT_IMPORT_SOURCE, { kind });
+  }, []);
+
+  /**
+   * Closing the preview tells the main process to delete anything it unpacked.
+   * An abandoned archive would otherwise sit in temp at full size.
+   */
+  const clearImportPreview = useCallback(() => {
+    setImportPreview(null);
+    setImportProgress(null);
+    setImportRowLogSelections({});
+    sendMessage(CONSTANTS.API.POST_DISCARD_IMPORT_PREVIEW);
+  }, []);
+
+  const clearImportOutcomes = useCallback(() => {
+    setImportOutcomes(null);
+  }, []);
+
+  const importSelectedReplays = useCallback(
+    (rows: unknown[], selections: ImportSelectionPayload[]) => {
+      if (selections.length === 0) {
+        return;
+      }
+
+      setImportOutcomes(null);
+      setImportProgress({
+        status: 'in-progress',
+        phase: 'importing',
+        processed: 0,
+        total: selections.length,
+      });
+      sendMessage(CONSTANTS.API.POST_IMPORT_REPLAYS, { rows, selections });
+    },
+    [],
+  );
+
+  const selectImportFile = useCallback(
+    (kind: 'replay' | 'log', rowId?: string) => {
+      setImportPairError('');
+      sendMessage(CONSTANTS.API.POST_SELECT_IMPORT_FILE, { kind, rowId });
+    },
+    [],
+  );
+
+  const importReplayPair = useCallback(
+    (note?: string) => {
+      if (!importReplayFile || !importLogFile) {
+        return;
+      }
+
+      setIsImportingPair(true);
+      setImportPairError('');
+      sendMessage(CONSTANTS.API.POST_IMPORT_REPLAY_PAIR, {
+        vcrPath: importReplayFile.filePath,
+        logPath: importLogFile.filePath,
+        note,
+      });
+    },
+    [importReplayFile, importLogFile],
+  );
+
+  const setImportedNote = useCallback((hashes: string[], note: string) => {
+    if (hashes.length === 0) {
+      return;
+    }
+
+    sendMessage(CONSTANTS.API.POST_SET_IMPORTED_NOTE, { hashes, note });
+  }, []);
+
+  const resetImportPair = useCallback(() => {
+    setImportReplayFile(null);
+    setImportLogFile(null);
+    setImportPairValidation(null);
+    setImportPairError('');
+    setIsImportingPair(false);
+  }, []);
+
+  const deleteImportedReplays = useCallback((hashes: string[]) => {
+    if (hashes.length === 0) {
+      return;
+    }
+
+    sendMessage(CONSTANTS.API.POST_DELETE_IMPORTED_REPLAYS, { hashes });
+  }, []);
+
+  const exportReplay = useCallback((request: ExportReplayPayload) => {
+    setExportResult(null);
+    sendMessage(CONSTANTS.API.POST_EXPORT_REPLAY, request);
+  }, []);
+
+  const exportWeekend = useCallback((request: ExportWeekendPayload) => {
+    if (request.sessions.length === 0) {
+      return;
+    }
+
+    setExportResult(null);
+    sendMessage(CONSTANTS.API.POST_EXPORT_WEEKEND, request);
+  }, []);
+
+  const clearExportResult = useCallback(() => {
+    setExportResult(null);
+    setExportProgress(null);
+  }, []);
+
   const setArchiveNote = useCallback(
     (hashes: string[], note: string) => {
       sendArchiveMessage(CONSTANTS.API.POST_ARCHIVE_NOTE, hashes, note);
@@ -321,6 +747,229 @@ export const ApiProvider: React.FC<{ children: React.ReactNode }> = ({
           }
 
           console.error('Failed to fetch track map:', payload?.message || data);
+        },
+      ),
+      [CONSTANTS.API.POST_SELECT_IMPORT_FILE]: createHandler(
+        CONSTANTS.API.POST_SELECT_IMPORT_FILE,
+        (data: unknown) => {
+          const payload = data as {
+            status?: string;
+            data?: ImportFileSelection & { canceled?: boolean };
+            message?: string;
+          };
+
+          if (payload?.status !== 'success') {
+            setImportPairError(payload?.message ?? 'Unable to read that file.');
+            return;
+          }
+
+          if (payload.data?.canceled) {
+            return;
+          }
+
+          if (payload.data?.kind === 'log') {
+            /*
+             * A row id means the bulk preview asked, not the two-file dialog.
+             * Kept apart so browsing for one row's log cannot overwrite the
+             * single-import selection sitting behind it.
+             */
+            const rowId = payload.data.rowId ?? '';
+
+            if (rowId) {
+              setImportRowLogSelections((previous) => ({
+                ...previous,
+                [rowId]: payload.data as ImportFileSelection,
+              }));
+              return;
+            }
+
+            setImportLogFile(payload.data);
+            return;
+          }
+
+          setImportReplayFile(payload.data ?? null);
+        },
+      ),
+      [CONSTANTS.API.POST_VALIDATE_IMPORT_PAIR]: createHandler(
+        CONSTANTS.API.POST_VALIDATE_IMPORT_PAIR,
+        (data: unknown) => {
+          const payload = data as {
+            status?: string;
+            data?: ImportPairValidationState;
+            message?: string;
+          };
+
+          if (payload?.status === 'success') {
+            setImportPairValidation(payload.data ?? null);
+            return;
+          }
+
+          setImportPairError(
+            payload?.message ?? 'Unable to check these files together.',
+          );
+        },
+      ),
+      [CONSTANTS.API.POST_IMPORT_REPLAY_PAIR]: createHandler(
+        CONSTANTS.API.POST_IMPORT_REPLAY_PAIR,
+        (data: unknown) => {
+          const payload = data as {
+            status?: string;
+            data?: { replays?: ImportedReplayRecord[] };
+            message?: string;
+          };
+
+          setIsImportingPair(false);
+
+          if (payload?.status === 'success') {
+            setImportedReplays(payload.data?.replays ?? []);
+            setImportReplayFile(null);
+            setImportLogFile(null);
+            setImportPairValidation(null);
+            return;
+          }
+
+          setImportPairError(
+            payload?.message ?? 'The replay could not be imported.',
+          );
+        },
+      ),
+      [CONSTANTS.API.GET_IMPORTED_REPLAYS]: createHandler(
+        CONSTANTS.API.GET_IMPORTED_REPLAYS,
+        (data: unknown) => {
+          const payload = data as {
+            status?: string;
+            data?: ImportedReplayRecord[];
+            message?: string;
+          };
+
+          if (payload?.status === 'success') {
+            setImportedReplays(payload.data ?? []);
+            return;
+          }
+
+          console.error('Failed to read imported replays:', payload?.message);
+        },
+      ),
+      [CONSTANTS.API.POST_SELECT_IMPORT_SOURCE]: createHandler(
+        CONSTANTS.API.POST_SELECT_IMPORT_SOURCE,
+        (data: unknown) => {
+          const payload = data as {
+            status?: string;
+            data?: Partial<ImportPreviewState> & { canceled?: boolean };
+            message?: string;
+          };
+
+          if (payload?.status !== 'success') {
+            setImportProgress({
+              status: 'error',
+              processed: 0,
+              total: 0,
+              message: payload?.message ?? 'That source could not be scanned.',
+            });
+            return;
+          }
+
+          if (payload.data?.canceled) {
+            return;
+          }
+
+          setImportPreview({
+            kind: payload.data?.kind ?? 'folder',
+            sourceLabel: payload.data?.sourceLabel ?? '',
+            rows: payload.data?.rows ?? [],
+            manifestSessionCount: payload.data?.manifestSessionCount ?? 0,
+            omittedSessions: payload.data?.omittedSessions ?? [],
+            rejectedEntries: payload.data?.rejectedEntries ?? [],
+          });
+        },
+      ),
+      [CONSTANTS.API.PUSH_IMPORT_PROGRESS]: createHandler(
+        CONSTANTS.API.PUSH_IMPORT_PROGRESS,
+        (data: unknown) => {
+          setImportProgress(data as ImportProgressState);
+        },
+      ),
+      [CONSTANTS.API.PUSH_EXPORT_PROGRESS]: createHandler(
+        CONSTANTS.API.PUSH_EXPORT_PROGRESS,
+        (data: unknown) => {
+          setExportProgress(data as ExportProgressState);
+        },
+      ),
+      [CONSTANTS.API.POST_EXPORT_REPLAY]: createHandler(
+        CONSTANTS.API.POST_EXPORT_REPLAY,
+        (data: unknown) => {
+          setExportProgress(null);
+          setExportResult(toExportResult(data, 1));
+        },
+      ),
+      [CONSTANTS.API.POST_EXPORT_WEEKEND]: createHandler(
+        CONSTANTS.API.POST_EXPORT_WEEKEND,
+        (data: unknown) => {
+          setExportProgress(null);
+          setExportResult(toExportResult(data));
+        },
+      ),
+      [CONSTANTS.API.POST_IMPORT_REPLAYS]: createHandler(
+        CONSTANTS.API.POST_IMPORT_REPLAYS,
+        (data: unknown) => {
+          const payload = data as {
+            status?: string;
+            data?: {
+              replays?: ImportedReplayRecord[];
+              outcomes?: ImportOutcomeState[];
+            };
+            message?: string;
+          };
+
+          if (payload?.status === 'success') {
+            setImportedReplays(payload.data?.replays ?? []);
+            /*
+             * Outcomes are per row: a failed replay does not fail the run, so
+             * "imported 5" is only half the story when the sixth rolled back.
+             * Closing the preview is what clears them.
+             */
+            setImportOutcomes(payload.data?.outcomes ?? []);
+            setImportPreview(null);
+            setImportRowLogSelections({});
+            return;
+          }
+
+          setImportOutcomes([]);
+          console.error('Failed to import replays:', payload?.message);
+        },
+      ),
+      [CONSTANTS.API.POST_SET_IMPORTED_NOTE]: createHandler(
+        CONSTANTS.API.POST_SET_IMPORTED_NOTE,
+        (data: unknown) => {
+          const payload = data as {
+            status?: string;
+            data?: { replays?: ImportedReplayRecord[] };
+            message?: string;
+          };
+
+          if (payload?.status === 'success') {
+            setImportedReplays(payload.data?.replays ?? []);
+            return;
+          }
+
+          console.error('Failed to save the note:', payload?.message);
+        },
+      ),
+      [CONSTANTS.API.POST_DELETE_IMPORTED_REPLAYS]: createHandler(
+        CONSTANTS.API.POST_DELETE_IMPORTED_REPLAYS,
+        (data: unknown) => {
+          const payload = data as {
+            status?: string;
+            data?: { replays?: ImportedReplayRecord[] };
+            message?: string;
+          };
+
+          if (payload?.status === 'success') {
+            setImportedReplays(payload.data?.replays ?? []);
+            return;
+          }
+
+          console.error('Failed to delete imported replays:', payload?.message);
         },
       ),
       [CONSTANTS.API.GET_REPLAYS]: createHandler(
@@ -483,6 +1132,7 @@ export const ApiProvider: React.FC<{ children: React.ReactNode }> = ({
       hasApiStatusResponse,
       hasUserSettingsResponse,
       quickViewEnabled,
+      experimentalFeaturesEnabled,
       persistDashboardFiltersEnabled,
       persistedDashboardView,
       lastReplaySyncAt,
@@ -491,6 +1141,9 @@ export const ApiProvider: React.FC<{ children: React.ReactNode }> = ({
       isReplayActive,
       currentTrackMap,
       replays,
+      importedReplays,
+      importPreview,
+      importProgress,
       currentReplay,
       loadingState,
       markReplayCacheResetRequired,
@@ -498,6 +1151,28 @@ export const ApiProvider: React.FC<{ children: React.ReactNode }> = ({
       archiveReplays,
       restoreReplays,
       setArchiveNote,
+      requestImportedReplays,
+      selectImportSource,
+      importRowLogSelections,
+      importOutcomes,
+      clearImportOutcomes,
+      importReplayFile,
+      importLogFile,
+      importPairValidation,
+      importPairError,
+      isImportingPair,
+      selectImportFile,
+      importReplayPair,
+      setImportedNote,
+      resetImportPair,
+      clearImportPreview,
+      importSelectedReplays,
+      deleteImportedReplays,
+      exportReplay,
+      exportWeekend,
+      exportProgress,
+      exportResult,
+      clearExportResult,
       subscribeToApiChannel,
     }),
     [
@@ -505,6 +1180,7 @@ export const ApiProvider: React.FC<{ children: React.ReactNode }> = ({
       hasApiStatusResponse,
       hasUserSettingsResponse,
       quickViewEnabled,
+      experimentalFeaturesEnabled,
       persistDashboardFiltersEnabled,
       persistedDashboardView,
       lastReplaySyncAt,
@@ -513,6 +1189,9 @@ export const ApiProvider: React.FC<{ children: React.ReactNode }> = ({
       isReplayActive,
       currentTrackMap,
       replays,
+      importedReplays,
+      importPreview,
+      importProgress,
       currentReplay,
       loadingState,
       markReplayCacheResetRequired,
@@ -520,6 +1199,28 @@ export const ApiProvider: React.FC<{ children: React.ReactNode }> = ({
       archiveReplays,
       restoreReplays,
       setArchiveNote,
+      requestImportedReplays,
+      selectImportSource,
+      importRowLogSelections,
+      importOutcomes,
+      clearImportOutcomes,
+      importReplayFile,
+      importLogFile,
+      importPairValidation,
+      importPairError,
+      isImportingPair,
+      selectImportFile,
+      importReplayPair,
+      setImportedNote,
+      resetImportPair,
+      clearImportPreview,
+      importSelectedReplays,
+      deleteImportedReplays,
+      exportReplay,
+      exportWeekend,
+      exportProgress,
+      exportResult,
+      clearExportResult,
       subscribeToApiChannel,
     ],
   );

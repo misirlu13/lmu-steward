@@ -14,6 +14,7 @@ import { autoUpdater } from 'electron-updater';
 import log from 'electron-log';
 import {
   ArchiveReplaysRequest,
+  CareerFilters,
   GetReplaysRequest,
   PersistedDashboardView,
 } from '@types';
@@ -34,6 +35,27 @@ import {
   putReplayTime,
   syncReplayData,
 } from './api/replay';
+import {
+  DeleteImportedReplaysRequest,
+  ExportReplayRequest,
+  ExportWeekendRequest,
+  getImportedReplays,
+  ImportPairRequest,
+  ImportReplaysRequest,
+  postDeleteImportedReplays,
+  postDiscardImportPreview,
+  postExportReplay,
+  postExportWeekend,
+  postImportReplayPair,
+  postImportReplays,
+  postSelectImportFile,
+  postSelectImportSource,
+  postSetImportedNote,
+  postValidateImportPair,
+  SelectImportFileRequest,
+  SelectImportSourceRequest,
+  SetImportedNoteRequest,
+} from './api/replay-import-handlers';
 import {
   getTrackThumbnail,
   getStandings,
@@ -57,6 +79,12 @@ import {
   writeUserSettings,
 } from './api/user-settings';
 import { getProfileInfo } from './api/profile';
+import {
+  getCareerSummary,
+  postCareerClaimIdentity,
+  postCareerExcludeSession,
+  postCareerRescan,
+} from './api/career-handlers';
 import {
   closeLmu,
   postCloseLmu,
@@ -150,8 +178,21 @@ const CHANNEL_CALLBACK_HANDLERS: Partial<
   [CONSTANTS.API.GET_IS_REPLAY_ACTIVE]: withEventOnly(getIsReplayActive),
   [CONSTANTS.API.GET_SESSION_INFO]: withEventOnly(getSessionInfo),
   [CONSTANTS.API.GET_FOCUSED_CAR]: withEventOnly(getFocusedCar),
+  [CONSTANTS.API.GET_CAREER_SUMMARY]: withEventAndData<
+    CareerFilters | undefined
+  >(getCareerSummary),
 
   // POST REQUESTS
+  [CONSTANTS.API.POST_CAREER_RESCAN]: withEventAndData<
+    { rebuild?: boolean; filters?: CareerFilters } | undefined
+  >(postCareerRescan),
+  [CONSTANTS.API.POST_CAREER_CLAIM_IDENTITY]: withEventAndData<
+    { name?: string; filters?: CareerFilters } | undefined
+  >(postCareerClaimIdentity),
+  [CONSTANTS.API.POST_CAREER_EXCLUDE_SESSION]: withEventAndData<
+    | { sessionKey?: string; excluded?: boolean; filters?: CareerFilters }
+    | undefined
+  >(postCareerExcludeSession),
   [CONSTANTS.API.POST_REPLAY_COMMAND_UI]: withEventAndData<
     string | { all: boolean }
   >(postToggleUIElement),
@@ -191,6 +232,30 @@ const CHANNEL_CALLBACK_HANDLERS: Partial<
   [CONSTANTS.API.PUT_REPLAY_COMMAND_FOCUS_CAR]:
     withEventAndData<string>(putFocusCar),
   [CONSTANTS.API.PUT_FOCUS_CAR]: withEventAndData<string>(putFocusCar),
+
+  // REPLAY IMPORT / EXPORT
+  [CONSTANTS.API.GET_IMPORTED_REPLAYS]: withEventOnly(getImportedReplays),
+  [CONSTANTS.API.POST_SELECT_IMPORT_SOURCE]:
+    withEventAndData<SelectImportSourceRequest>(postSelectImportSource),
+  [CONSTANTS.API.POST_DISCARD_IMPORT_PREVIEW]: withEventOnly(
+    postDiscardImportPreview,
+  ),
+  [CONSTANTS.API.POST_IMPORT_REPLAYS]:
+    withEventAndData<ImportReplaysRequest>(postImportReplays),
+  [CONSTANTS.API.POST_DELETE_IMPORTED_REPLAYS]:
+    withEventAndData<DeleteImportedReplaysRequest>(postDeleteImportedReplays),
+  [CONSTANTS.API.POST_SET_IMPORTED_NOTE]:
+    withEventAndData<SetImportedNoteRequest>(postSetImportedNote),
+  [CONSTANTS.API.POST_EXPORT_REPLAY]:
+    withEventAndData<ExportReplayRequest>(postExportReplay),
+  [CONSTANTS.API.POST_EXPORT_WEEKEND]:
+    withEventAndData<ExportWeekendRequest>(postExportWeekend),
+  [CONSTANTS.API.POST_SELECT_IMPORT_FILE]:
+    withEventAndData<SelectImportFileRequest>(postSelectImportFile),
+  [CONSTANTS.API.POST_VALIDATE_IMPORT_PAIR]:
+    withEventAndData<ImportPairRequest>(postValidateImportPair),
+  [CONSTANTS.API.POST_IMPORT_REPLAY_PAIR]:
+    withEventAndData<ImportPairRequest>(postImportReplayPair),
 };
 
 const devModeEnabled = isDevModeEnabled();

@@ -46,7 +46,10 @@ describe('useDashboardReplays', () => {
       persistDashboardFiltersEnabled: false,
       persistedDashboardView: null,
       replays: null,
+      importedReplays: [],
       requestReplays,
+      requestImportedReplays: jest.fn(),
+      deleteImportedReplays: jest.fn(),
       ...overrides,
     } as unknown as ReturnType<typeof useApi>);
   };
@@ -238,7 +241,7 @@ describe('useDashboardReplays', () => {
 
       const { result } = renderHook(() => useDashboardReplays());
 
-      expect(result.current.showArchived).toBe(false);
+      expect(result.current.dashboardView).toBe('active');
       expect(result.current.filteredReplayHashes).toEqual(['active-hash']);
       expect(result.current.archivedCount).toBe(1);
       expect(result.current.totalReplayCount).toBe(1);
@@ -251,7 +254,7 @@ describe('useDashboardReplays', () => {
       const requestCountBeforeToggle = requestReplays.mock.calls.length;
 
       act(() => {
-        result.current.handleToggleArchivedView(true);
+        result.current.handleChangeDashboardView('archived');
       });
 
       expect(result.current.filteredReplayHashes).toEqual(['archived-hash']);
@@ -270,10 +273,121 @@ describe('useDashboardReplays', () => {
       });
 
       act(() => {
-        result.current.handleToggleArchivedView(true);
+        result.current.handleChangeDashboardView('archived');
       });
 
       expect(result.current.page).toBe(1);
+    });
+  });
+
+  describe('imported view', () => {
+    const importedRecord = {
+      hash: 'imported-hash',
+      replayName: 'Autodromo Nazionale Monza R1 2',
+      sceneDesc: 'MONZAWEC',
+      session: 'RACE',
+      timestamp: 1784398360,
+      vcrFileName: 'Autodromo Nazionale Monza R1 2.Vcr',
+      vcrPath: 'C:/lmu/Replays/Autodromo Nazionale Monza R1 2.Vcr',
+      size: 1024,
+      logFileName: 'event-two-race.xml',
+      logPath: 'C:/lmu/Log/Results/event-two-race.xml',
+      vcrFingerprint: 'aaa',
+      logFingerprint: 'bbb',
+      importedAt: 5,
+      logData: {},
+      origin: {
+        trackFolder: 'Monza_2023',
+        trackVersion: '1.27',
+        trackContentHash: 'abc',
+        installPath: 'E:/LMU',
+      },
+      match: { method: 'roster', confidence: 0.84, rosterOverlap: null },
+    };
+
+    const setupWithImports = (deleteImportedReplays = jest.fn()) => {
+      setupApi({
+        replays: {
+          status: 'success',
+          data: [
+            {
+              hash: 'own-hash',
+              archived: false,
+              timestamp: 1000,
+              metadata: { session: 'RACE', sceneDesc: 'SEBRINGWEC' },
+              logData: {},
+            },
+          ],
+        },
+        importedReplays: [importedRecord],
+        deleteImportedReplays,
+      });
+
+      return deleteImportedReplays;
+    };
+
+    /**
+     * The three views are mutually exclusive, which is what makes "imported
+     * replays cannot be archived" structural rather than a disabled button.
+     */
+    it('keeps imported replays out of the active and archived views', () => {
+      setupWithImports();
+
+      const { result } = renderHook(() => useDashboardReplays());
+
+      expect(result.current.filteredReplayHashes).toEqual(['own-hash']);
+      expect(result.current.importedCount).toBe(1);
+
+      act(() => {
+        result.current.handleChangeDashboardView('archived');
+      });
+
+      expect(result.current.filteredReplayHashes).toEqual([]);
+    });
+
+    it('lists imported replays in their own view', () => {
+      setupWithImports();
+
+      const { result } = renderHook(() => useDashboardReplays());
+
+      act(() => {
+        result.current.handleChangeDashboardView('imported');
+      });
+
+      expect(result.current.filteredReplayHashes).toEqual(['imported-hash']);
+      expect(result.current.totalReplayCount).toBe(1);
+    });
+
+    /**
+     * Imported replays come from their own store, so the list must not wait on
+     * a replay sync that may never have run.
+     */
+    it('lists imported replays with no replay cache response at all', () => {
+      setupApi({
+        replays: null,
+        importedReplays: [importedRecord],
+        deleteImportedReplays: jest.fn(),
+      });
+
+      const { result } = renderHook(() => useDashboardReplays());
+
+      act(() => {
+        result.current.handleChangeDashboardView('imported');
+      });
+
+      expect(result.current.filteredReplayHashes).toEqual(['imported-hash']);
+    });
+
+    it('deletes by hash, never by path', () => {
+      const deleteImportedReplays = setupWithImports();
+
+      const { result } = renderHook(() => useDashboardReplays());
+
+      act(() => {
+        result.current.handleDeleteImportedReplays(['imported-hash']);
+      });
+
+      expect(deleteImportedReplays).toHaveBeenCalledWith(['imported-hash']);
     });
   });
 });

@@ -11,6 +11,12 @@ interface ArchiveNoteDialogProps {
   open: boolean;
   /** Existing note, if the replay already has one. */
   initialNote: string;
+  /**
+   * Which list the note will show up in. Imported replays keep their note on
+   * the imported record rather than in the archive store, so naming the wrong
+   * view here would send the user looking in the wrong place.
+   */
+  viewLabel?: string;
   onCancel: () => void;
   onSave: (note: string) => void;
 }
@@ -18,6 +24,7 @@ interface ArchiveNoteDialogProps {
 export const ArchiveNoteDialog: React.FC<ArchiveNoteDialogProps> = ({
   open,
   initialNote,
+  viewLabel = 'Archived',
   onCancel,
   onSave,
 }) => {
@@ -36,7 +43,7 @@ export const ArchiveNoteDialog: React.FC<ArchiveNoteDialogProps> = ({
       <DialogTitle>{hasExistingNote ? 'Edit note' : 'Add note'}</DialogTitle>
       <DialogContent>
         <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-          Shown on this replay in the Archived view. Saving an empty note
+          Shown on this replay in the {viewLabel} view. Saving an empty note
           removes it.
         </Typography>
         <TextField
@@ -48,7 +55,7 @@ export const ArchiveNoteDialog: React.FC<ArchiveNoteDialogProps> = ({
           fullWidth
           autoFocus
           size="small"
-          slotProps={{ htmlInput: { 'aria-label': 'Archive note' } }}
+          slotProps={{ htmlInput: { 'aria-label': 'Replay note' } }}
         />
       </DialogContent>
       <DialogActions>

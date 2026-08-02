@@ -12,8 +12,12 @@ jest.mock('@/renderer/providers/NavbarContext', () => ({
   }),
 }));
 
+const navigateMock = jest.fn();
+let mockPathname = '/';
+
 jest.mock('react-router-dom', () => ({
-  useNavigate: () => jest.fn(),
+  useNavigate: () => navigateMock,
+  useLocation: () => ({ pathname: mockPathname }),
 }));
 
 jest.mock('../../utils/postMessage', () => ({
@@ -78,5 +82,21 @@ describe('NavBar', () => {
     expect(sendMessageMock).toHaveBeenCalledWith(
       CONSTANTS.API.GET_PROFILE_INFO,
     );
+  });
+
+  /*
+   * The driver dashboard is the landing page and the replay list moved to
+   * /replays, so both have to stay reachable from the bar itself.
+   */
+  it('offers both the driver dashboard and the replay list', () => {
+    mockIsViewHeaderAttached = false;
+    mockPathname = '/';
+    render(<NavBar />);
+
+    screen.getByRole('button', { name: 'Driver' }).click();
+    expect(navigateMock).toHaveBeenCalledWith('/');
+
+    screen.getByRole('button', { name: 'Replays' }).click();
+    expect(navigateMock).toHaveBeenCalledWith('/replays');
   });
 });
