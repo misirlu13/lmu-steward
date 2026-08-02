@@ -25,7 +25,11 @@ export const buildReplayCompletionHoldPlan = ({
     return 'reset';
   }
 
-  if (hasCompletedHoldForCycle || isHoldingAtComplete || hasPendingHoldTimeout) {
+  if (
+    hasCompletedHoldForCycle ||
+    isHoldingAtComplete ||
+    hasPendingHoldTimeout
+  ) {
     return 'noop';
   }
 

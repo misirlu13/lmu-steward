@@ -1,11 +1,11 @@
 import { CONSTANTS } from '@constants';
 
 const toErrorMessage = (error: unknown): string => {
-   if (error instanceof Error) {
-      return error.message;
-   }
+  if (error instanceof Error) {
+    return error.message;
+  }
 
-   return String(error ?? 'Unknown error');
+  return String(error ?? 'Unknown error');
 };
 
 /**
@@ -17,7 +17,7 @@ const toErrorMessage = (error: unknown): string => {
  * {"ambientTemp":30.029863147605113,"averagePathWetness":0.0,"currentEventTime":0.0,"darkCloud":0.0,"endEventTime":1200.0,"gameMode":"UNKNOWN","gamePhase":9,"inRealtime":false,"lapDistance":5820.32568359375,"maxPathWetness":0.0,"maxPlayers":0,"maxTime":1200.0,"maximumLaps":4294967295,"minPathWetness":0.0,"numRedLights":4,"numberOfPlayers":0,"numberOfVehicles":20,"passwordProtected":false,"playerFileName":"Settings","playerName":"Bradley Drake","raceCompletion":{"timeCompletion":-1.0},"raining":0.0,"sectorFlag":["UNKNOWN","UNKNOWN","UNKNOWN"],"serverName":"-none-","serverPort":0,"session":"RACE1","startEventTime":5.0,"startLightFrame":0,"timeRemainingInGamePhase":1200.0,"trackName":"Sebring International Raceway","trackTemp":42.9999793758962,"windSpeed":{"velocity":0.0,"x":0.0,"y":0.0,"z":0.0},"yellowFlagState":"NONE"}
  */
 export const getSessionInfo = async (event: Electron.IpcMainEvent) => {
-    try {
+  try {
     const response = await fetch(
       `${CONSTANTS.LMU_API_BASE_URL}/rest/watch/sessionInfo`,
     );
@@ -30,13 +30,13 @@ export const getSessionInfo = async (event: Electron.IpcMainEvent) => {
     }
     const data = await response.json();
     event.reply(CONSTANTS.API.GET_SESSION_INFO, { status: 'success', data });
-   } catch (error: unknown) {
+  } catch (error: unknown) {
     event.reply(CONSTANTS.API.GET_SESSION_INFO, {
       status: 'error',
-         message: toErrorMessage(error),
+      message: toErrorMessage(error),
     });
   }
-}
+};
 
 /**
  * GET
@@ -61,10 +61,10 @@ export const getStandings = async (event: Electron.IpcMainEvent) => {
 
     const data = await response.json();
     event.reply(CONSTANTS.API.GET_STANDINGS, { status: 'success', data });
-   } catch (error: unknown) {
+  } catch (error: unknown) {
     event.reply(CONSTANTS.API.GET_STANDINGS, {
       status: 'error',
-         message: toErrorMessage(error),
+      message: toErrorMessage(error),
     });
   }
 };
@@ -95,10 +95,10 @@ export const getStandingsHistory = async (event: Electron.IpcMainEvent) => {
       status: 'success',
       data,
     });
-   } catch (error: unknown) {
+  } catch (error: unknown) {
     event.reply(CONSTANTS.API.GET_STANDINGS_HISTORY, {
       status: 'error',
-         message: toErrorMessage(error),
+      message: toErrorMessage(error),
     });
   }
 };
@@ -123,10 +123,10 @@ export const getTrackMap = async (event: Electron.IpcMainEvent) => {
     }
     const data = await response.json();
     event.reply(CONSTANTS.API.GET_TRACK_MAP, { status: 'success', data });
-   } catch (error: unknown) {
+  } catch (error: unknown) {
     event.reply(CONSTANTS.API.GET_TRACK_MAP, {
       status: 'error',
-         message: toErrorMessage(error),
+      message: toErrorMessage(error),
     });
   }
 };
@@ -156,10 +156,10 @@ export const getTrackThumbnail = async (
     }
     const data = await response.json();
     event.reply(CONSTANTS.API.GET_TRACK_THUMBNAIL, data);
-   } catch (error: unknown) {
+  } catch (error: unknown) {
     event.reply(CONSTANTS.API.GET_TRACK_THUMBNAIL, {
       status: 'error',
-         message: toErrorMessage(error),
+      message: toErrorMessage(error),
     });
   }
 };

@@ -33,8 +33,17 @@ export const SegmentedButtonGroup = <T extends string>({
       size={size}
       aria-label={ariaLabel}
       sx={{
-        [`.${buttonGroupClasses.grouped}:first-of-type`]: {
+        /*
+         * A contained ButtonGroup draws the divider between buttons in the
+         * primary colour, through a `:not(:last-of-type)` rule. Overriding only
+         * the first button was enough while there were two — the second was
+         * also the last, so nothing drew a divider on it. Any middle button
+         * picks the blue divider back up, so every button but the last needs
+         * the muted border.
+         */
+        [`.${buttonGroupClasses.grouped}:not(:last-of-type)`]: {
           borderColor: 'divider',
+          borderRightColor: 'divider',
         },
         [`.${buttonGroupClasses.grouped}:hover`]: {
           backgroundColor: (theme) => theme.palette.background.paper,

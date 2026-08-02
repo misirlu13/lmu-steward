@@ -91,7 +91,9 @@ const compute = (replay, standingsPayload) => {
     .filter(Number.isFinite);
 
   const allScoreEt = [...scoreEtRaw, ...scoreEtParsed].filter(Number.isFinite);
-  const scoreEtBaseline = allScoreEt.length ? Math.min(...allScoreEt) : Number.NaN;
+  const scoreEtBaseline = allScoreEt.length
+    ? Math.min(...allScoreEt)
+    : Number.NaN;
 
   const incidentEvents = toArray(stream.Incident)
     .map((item) => ({
@@ -126,14 +128,17 @@ const compute = (replay, standingsPayload) => {
   const standings = toStandingsEntries(standingsPayload);
   const count = standings.length;
   const allZeroLaps =
-    count > 0 && standings.every((entry) => Number(entry?.lapsCompleted ?? -1) === 0);
+    count > 0 &&
+    standings.every((entry) => Number(entry?.lapsCompleted ?? -1) === 0);
   const pittingRatio =
     count > 0
-      ? standings.filter((entry) => Boolean(entry?.pitting) === true).length / count
+      ? standings.filter((entry) => Boolean(entry?.pitting) === true).length /
+        count
       : 0;
   const exitingRatio =
     count > 0
-      ? standings.filter((entry) => String(entry?.pitState ?? '') === 'EXITING').length / count
+      ? standings.filter((entry) => String(entry?.pitState ?? '') === 'EXITING')
+          .length / count
       : 0;
   const nearZeroNegativeTimeIntoLapRatio =
     count > 0
@@ -151,9 +156,11 @@ const compute = (replay, standingsPayload) => {
     exitingRatio > 0.9 &&
     nearZeroNegativeTimeIntoLapRatio > 0.9;
 
-  const sortedEvents = [...incidentEvents, ...penaltyEvents, ...trackLimitEvents].sort(
-    (left, right) => left.et - right.et,
-  );
+  const sortedEvents = [
+    ...incidentEvents,
+    ...penaltyEvents,
+    ...trackLimitEvents,
+  ].sort((left, right) => left.et - right.et);
 
   const preview = sortedEvents.slice(0, 5).map((event) => {
     const beforeSeek = Math.max(event.et - 5, 0);
@@ -178,7 +185,9 @@ const compute = (replay, standingsPayload) => {
     scoreEtBaseline: Number.isFinite(scoreEtBaseline)
       ? Number(scoreEtBaseline.toFixed(3))
       : null,
-    firstEventEt: Number.isFinite(firstEventEt) ? Number(firstEventEt.toFixed(3)) : null,
+    firstEventEt: Number.isFinite(firstEventEt)
+      ? Number(firstEventEt.toFixed(3))
+      : null,
     firstEventMinusBaseline:
       Number.isFinite(firstEventEt) && Number.isFinite(scoreEtBaseline)
         ? Number((firstEventEt - scoreEtBaseline).toFixed(3))

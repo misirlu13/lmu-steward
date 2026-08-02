@@ -1,18 +1,26 @@
-import { MemoryRouter as Router, Routes, Route, useLocation } from 'react-router-dom';
+import {
+  MemoryRouter as Router,
+  Routes,
+  Route,
+  useLocation,
+} from 'react-router-dom';
 import './App.css';
+import { Container, ThemeProvider } from '@mui/material';
+import { AdapterDayjs } from '@mui/x-date-pickers/AdapterDayjs';
+import { LocalizationProvider } from '@mui/x-date-pickers/LocalizationProvider';
 import { NavbarProvider } from './providers/NavbarContext';
 import { DashboardView } from './views/Dashboard';
-import { ApiProvider } from './providers/ApiContext';
+import { ApiProvider, useApi } from './providers/ApiContext';
 import { NavBar } from './components/Navbar/NavBar';
-import { Container, ThemeProvider } from '@mui/material';
 import theme from './theme';
 import { ReplayView } from './views/Replay';
 import { DriverAnalysisView } from './views/DriverAnalysis';
+<<<<<<< HEAD
 import { LiveView } from './views/Live';
+=======
+import { DriverDashboardView } from './views/DriverDashboard';
+>>>>>>> feature/v1.5.0-update
 import { UserSettingsView } from './views/UserSettings';
-import { AdapterDayjs } from '@mui/x-date-pickers/AdapterDayjs';
-import { LocalizationProvider } from '@mui/x-date-pickers/LocalizationProvider';
-import { useApi } from './providers/ApiContext';
 import { LmuDisconnectedDialog } from './components/Common/LmuDisconnectedDialog';
 import { AppExitConfirmDialog } from './components/Common/AppExitConfirmDialog';
 import { ReplayProcessingSplash } from './components/Common/ReplayProcessingSplash';
@@ -27,11 +35,13 @@ const AppRoutesShell = () => {
   } = useApi();
   const location = useLocation();
   const showDisconnectedDialog =
-    hasApiStatusResponse && !isConnected && location.pathname !== '/user-settings';
+    hasApiStatusResponse &&
+    !isConnected &&
+    location.pathname !== '/user-settings';
 
   return (
     <>
-      <NavBar></NavBar>
+      <NavBar />
       <Container
         sx={{
           backgroundColor: 'background.default',
@@ -47,7 +57,15 @@ const AppRoutesShell = () => {
         }}
       >
         <Routes>
-          <Route path="/" element={<DashboardView />} />
+          {/*
+            The driver dashboard is the landing page, with the replay list one
+            click away at /replays. Existing links to "/" for the replay list
+            keep working through the redirect below, and the dashboard sends a
+            driver with no recorded sessions straight on to the replays it does
+            have rather than opening on a page of zeros.
+          */}
+          <Route path="/" element={<DriverDashboardView />} />
+          <Route path="/replays" element={<DashboardView />} />
           <Route path="/replay/:replayHash" element={<ReplayView />} />
           <Route
             path="/replay/:replayHash/driver/:driverId"
@@ -77,7 +95,7 @@ const AppShell = () => {
   );
 };
 
-export default function App() {
+const App = () => {
   return (
     <ApiProvider>
       <NavbarProvider>
@@ -91,4 +109,6 @@ export default function App() {
       </NavbarProvider>
     </ApiProvider>
   );
-}
+};
+
+export default App;

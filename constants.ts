@@ -1,3 +1,30 @@
+export interface ExperimentalFeature {
+  id: string;
+  name: string;
+  description: string;
+}
+
+/**
+ * Everything currently gated behind the Experimental Features setting.
+ *
+ * This is the only list. The settings card renders straight from it, so
+ * graduating a feature is deleting its entry and removing the gate — there is
+ * no second place that can be left claiming something is still experimental.
+ *
+ * Annotated rather than left to `as const` inference on purpose: a const
+ * assertion narrows this to a fixed-length tuple, which makes TypeScript reject
+ * the `length === 0` check the card's empty state depends on. Emptying this
+ * array is the expected end state, not an edge case.
+ */
+const EXPERIMENTAL_FEATURES: ExperimentalFeature[] = [
+  {
+    id: 'replay-import-export',
+    name: 'Replay Import & Export',
+    description:
+      'Import replays recorded on another PC, and export a replay with its result log to share with someone else.',
+  },
+];
+
 export const CONSTANTS = {
   LMU_API_BASE_URL: 'http://localhost:6397',
   LMU_DEFAULT_EXECUTABLE_PATH:
@@ -20,8 +47,16 @@ export const CONSTANTS = {
     GET_SESSION_INFO: 'get.session-info',
     GET_FOCUSED_CAR: 'get.focused-car',
     GET_STORAGE_DEBUG_INFO: 'get.storage-debug-info',
+    GET_CAREER_SUMMARY: 'get.career-summary',
+    POST_CAREER_RESCAN: 'post.career-rescan',
+    POST_CAREER_CLAIM_IDENTITY: 'post.career-claim-identity',
+    POST_CAREER_EXCLUDE_SESSION: 'post.career-exclude-session',
     POST_USER_SETTINGS: 'post.user-settings',
+    POST_DASHBOARD_VIEW: 'post.dashboard-view',
     POST_WATCH_REPLAY: 'post.watch-replay',
+    POST_ARCHIVE_REPLAYS: 'post.archive-replays',
+    POST_RESTORE_REPLAYS: 'post.restore-replays',
+    POST_ARCHIVE_NOTE: 'post.archive-note',
     POST_CAMERA_ANGLE: 'post.camera-angle',
     POST_CLOSE_REPLAY: 'post.close-replay',
     POST_CLOSE_LMU: 'post.close-lmu',
@@ -38,6 +73,19 @@ export const CONSTANTS = {
     PUT_REPLAY_COMMAND_FOCUS_CAR: 'put.replay-command-focus-car',
     POST_REPLAY_COMMAND_UI: 'post.replay-command-ui',
     PUT_FOCUS_CAR: 'put.focus-car',
+    GET_IMPORTED_REPLAYS: 'get.imported-replays',
+    POST_SELECT_IMPORT_SOURCE: 'post.select-import-source',
+    POST_DISCARD_IMPORT_PREVIEW: 'post.discard-import-preview',
+    POST_SELECT_IMPORT_FILE: 'post.select-import-file',
+    POST_VALIDATE_IMPORT_PAIR: 'post.validate-import-pair',
+    POST_IMPORT_REPLAY_PAIR: 'post.import-replay-pair',
+    POST_IMPORT_REPLAYS: 'post.import-replays',
+    POST_DELETE_IMPORTED_REPLAYS: 'post.delete-imported-replays',
+    POST_SET_IMPORTED_NOTE: 'post.set-imported-note',
+    POST_EXPORT_REPLAY: 'post.export-replay',
+    POST_EXPORT_WEEKEND: 'post.export-weekend',
+    PUSH_IMPORT_PROGRESS: 'push.import-progress',
+    PUSH_EXPORT_PROGRESS: 'push.export-progress',
   },
   TRACK_META_DATA: {
     PORTIMAOELMS: {
@@ -556,4 +604,5 @@ export const CONSTANTS = {
     LMP3: 'LMP3',
     HYPERCAR: 'Hypercar',
   },
+  EXPERIMENTAL_FEATURES,
 } as const;

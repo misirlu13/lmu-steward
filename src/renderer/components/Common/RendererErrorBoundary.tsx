@@ -8,7 +8,6 @@ interface Props {
 
 interface State {
   hasError: boolean;
-  errorMessage: string | null;
 }
 
 export class RendererErrorBoundary extends React.Component<Props, State> {
@@ -16,7 +15,6 @@ export class RendererErrorBoundary extends React.Component<Props, State> {
     super(props);
     this.state = {
       hasError: false,
-      errorMessage: null,
     };
   }
 
@@ -29,14 +27,16 @@ export class RendererErrorBoundary extends React.Component<Props, State> {
     };
 
     try {
-      window.electron?.ipcRenderer.sendMessage(CONSTANTS.API.POST_RENDERER_ERROR, payload);
+      window.electron?.ipcRenderer.sendMessage(
+        CONSTANTS.API.POST_RENDERER_ERROR,
+        payload,
+      );
     } catch (sendError) {
       console.error('Failed to send renderer error report', sendError);
     }
 
     this.setState({
       hasError: true,
-      errorMessage: error.message,
     });
   }
 
@@ -45,7 +45,10 @@ export class RendererErrorBoundary extends React.Component<Props, State> {
   };
 
   render() {
-    if (this.state.hasError) {
+    const { hasError } = this.state;
+    const { children } = this.props;
+
+    if (hasError) {
       return (
         <Box
           sx={{
@@ -62,11 +65,16 @@ export class RendererErrorBoundary extends React.Component<Props, State> {
           <Typography variant="h4" sx={{ mb: 2 }}>
             Something went wrong.
           </Typography>
-          <Typography variant="body1" sx={{ mb: 1, textAlign: 'center', maxWidth: 600 }}>
-            The application encountered an error and reported it to the crash logger.
+          <Typography
+            variant="body1"
+            sx={{ mb: 1, textAlign: 'center', maxWidth: 600 }}
+          >
+            The application encountered an error and reported it to the crash
+            logger.
           </Typography>
           <Typography variant="body2" sx={{ mb: 3 }}>
-            Please copy the error details from the crash report window and paste them into a GitHub issue.
+            Please copy the error details from the crash report window and paste
+            them into a GitHub issue.
           </Typography>
           <Button variant="contained" onClick={this.handleReload}>
             Reload application
@@ -75,6 +83,6 @@ export class RendererErrorBoundary extends React.Component<Props, State> {
       );
     }
 
-    return this.props.children;
+    return children;
   }
 }

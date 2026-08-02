@@ -91,11 +91,15 @@ export const getSessionCarClasses = (replay: LMUReplay): string[] => {
     return [];
   }
 
-  const dedupeNormalizedCarClasses = (values: Array<string | null>): string[] => {
+  const dedupeNormalizedCarClasses = (
+    values: Array<string | null>,
+  ): string[] => {
     const uniqueCarClasses = new Map<string, string>();
 
     values
-      .filter((carClass: string | null): carClass is string => Boolean(carClass))
+      .filter((carClass: string | null): carClass is string =>
+        Boolean(carClass),
+      )
       .forEach((displayCarClass: string) => {
         const normalizedCarClass = displayCarClass.toLowerCase();
         if (!uniqueCarClasses.has(normalizedCarClass)) {
@@ -108,12 +112,16 @@ export const getSessionCarClasses = (replay: LMUReplay): string[] => {
 
   if (Array.isArray(sessionInfo.CarClasses)) {
     return dedupeNormalizedCarClasses(
-      sessionInfo.CarClasses.map((carClass) => normalizeDriverCarClass(carClass)),
+      sessionInfo.CarClasses.map((carClass) =>
+        normalizeDriverCarClass(carClass),
+      ),
     );
   }
 
   const carClasses = toObjectOrArrayEntries<SessionDriverEntry>(
-    sessionInfo.Driver as SessionDriverEntry[] | Record<string, SessionDriverEntry>,
+    sessionInfo.Driver as
+      | SessionDriverEntry[]
+      | Record<string, SessionDriverEntry>,
   );
   return dedupeNormalizedCarClasses(
     carClasses.map((driver) => getDriverCarClass(driver)),
@@ -142,18 +150,20 @@ export const getSessionIncidents = (replay: LMUReplay): SessionIncidents => {
 
     // Use actual array/record counts if available, otherwise fall back to cached counts
     return {
-      trackLimits: trackLimits !== undefined && trackLimits !== null
-        ? countCollectionEntries(trackLimits)
-        : (stream?.TrackLimitCount ?? 0),
-      incidents: incidents !== undefined && incidents !== null
-        ? countCollectionEntries(incidents)
-        : (stream?.IncidentCount ?? 0),
-      penalties: penalties !== undefined && penalties !== null
-        ? countCollectionEntries(
-            penalties,
-            (penalty) => Boolean(penalty?.Penalty),
-          )
-        : (stream?.PenaltyCount ?? 0),
+      trackLimits:
+        trackLimits !== undefined && trackLimits !== null
+          ? countCollectionEntries(trackLimits)
+          : (stream?.TrackLimitCount ?? 0),
+      incidents:
+        incidents !== undefined && incidents !== null
+          ? countCollectionEntries(incidents)
+          : (stream?.IncidentCount ?? 0),
+      penalties:
+        penalties !== undefined && penalties !== null
+          ? countCollectionEntries(penalties, (penalty) =>
+              Boolean(penalty?.Penalty),
+            )
+          : (stream?.PenaltyCount ?? 0),
     };
   } catch (error) {
     if (process.env.NODE_ENV !== 'test') {

@@ -12,8 +12,8 @@ import {
 import SensorsOffRoundedIcon from '@mui/icons-material/SensorsOffRounded';
 import SettingsRoundedIcon from '@mui/icons-material/SettingsRounded';
 import { CONSTANTS } from '@constants';
-import { sendMessage } from '../../utils/postMessage';
 import { useNavigate } from 'react-router-dom';
+import { sendMessage } from '../../utils/postMessage';
 
 const LMU_LAUNCH_COOLDOWN_MS = 10_000;
 
@@ -57,7 +57,9 @@ export const LmuDisconnectedDialog: React.FC<LmuDisconnectedDialogProps> = ({
           }, LMU_LAUNCH_COOLDOWN_MS);
 
           setStatusTone('info');
-          setStatusMessage('Launch request sent. Waiting for LMU to become available…');
+          setStatusMessage(
+            'Launch request sent. Waiting for LMU to become available…',
+          );
           return;
         }
 
@@ -186,6 +188,9 @@ export const LmuDisconnectedDialog: React.FC<LmuDisconnectedDialogProps> = ({
             Online gameplay will be disabled if you open LMU from here.
           </Typography>
 
+          {/* Renders a real <button> via MUI's `component` prop, which the
+              rule cannot see through. */}
+          {/* eslint-disable-next-line jsx-a11y/anchor-is-valid */}
           <Link
             component="button"
             type="button"
@@ -222,7 +227,11 @@ export const LmuDisconnectedDialog: React.FC<LmuDisconnectedDialogProps> = ({
             bgcolor: 'background.alt',
           }}
         >
-          <Typography variant="caption" sx={{ letterSpacing: 1.2 }} color="text.secondary">
+          <Typography
+            variant="caption"
+            sx={{ letterSpacing: 1.2 }}
+            color="text.secondary"
+          >
             SERVICE STATUS
           </Typography>
           <Stack direction="row" spacing={1} alignItems="center">

@@ -109,9 +109,13 @@ export const computeNormalizedLoadingProgress = (
 };
 
 export const shouldShowReplayLoadingUi = ({
+  // These inputs are deliberately named after the predicates above that
+  // produce them; renaming would change this helper's public shape.
+  /* eslint-disable @typescript-eslint/no-shadow */
   isAwaitingReplayActivationFromQuickView,
   isForcingLoadingScreen,
   isQuickViewModeActive,
+  /* eslint-enable @typescript-eslint/no-shadow */
   isReplayStartupGateActive,
   isLoading,
   hasReplayForView,
@@ -140,6 +144,7 @@ export const shouldShowReplayLoadingUi = ({
 };
 
 export const computeDisplayedLoadingScreenProgress = ({
+  // eslint-disable-next-line @typescript-eslint/no-shadow
   isAwaitingReplayActivationFromQuickView,
   isForcingLoadingScreen,
   loadingScreenProgress,
@@ -217,18 +222,18 @@ export const detectPartialReplayData = ({
   );
   const exitingRatio =
     standingsEntries.filter(
-      (entry) => String((entry as ReplayStandingLike)?.pitState ?? '') === 'EXITING',
+      (entry) =>
+        String((entry as ReplayStandingLike)?.pitState ?? '') === 'EXITING',
     ).length / standingsEntries.length;
   const pittingRatio =
-    standingsEntries.filter((entry) => Boolean((entry as ReplayStandingLike)?.pitting)).length /
-    standingsEntries.length;
+    standingsEntries.filter((entry) =>
+      Boolean((entry as ReplayStandingLike)?.pitting),
+    ).length / standingsEntries.length;
   const nearZeroNegativeTimeIntoLapRatio =
     standingsEntries.filter((entry) => {
       const timeIntoLap = Number((entry as ReplayStandingLike)?.timeIntoLap);
       return (
-        Number.isFinite(timeIntoLap) &&
-        timeIntoLap < 0 &&
-        timeIntoLap > -5
+        Number.isFinite(timeIntoLap) && timeIntoLap < 0 && timeIntoLap > -5
       );
     }).length / standingsEntries.length;
 
@@ -249,5 +254,4 @@ export const detectPartialReplayData = ({
 export const shouldNormalizeReplayTime = (
   isPartialReplayDataDetected: boolean,
   replayTimeBaselineSeconds: number | null,
-): boolean =>
-  isPartialReplayDataDetected && replayTimeBaselineSeconds !== null;
+): boolean => isPartialReplayDataDetected && replayTimeBaselineSeconds !== null;

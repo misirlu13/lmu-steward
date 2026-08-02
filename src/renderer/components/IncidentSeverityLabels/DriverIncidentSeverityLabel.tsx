@@ -8,15 +8,21 @@ export const DriverIncidentSeverityLabel = ({
   totalIncidents: number;
 }) => {
   if (scorePerLap < 0.5) {
-     return(
-      <Typography variant="body1" sx={{ fontWeight: '700', color: 'success.main' }}>
+    return (
+      <Typography
+        variant="body1"
+        sx={{ fontWeight: '700', color: 'success.main' }}
+      >
         Low ({totalIncidents})
       </Typography>
-     );
+    );
   }
   if (scorePerLap < 1.5) {
     return (
-      <Typography variant="body1" sx={{ fontWeight: '700', color: 'warning.main' }}>
+      <Typography
+        variant="body1"
+        sx={{ fontWeight: '700', color: 'warning.main' }}
+      >
         Med ({totalIncidents})
       </Typography>
     );

@@ -41,6 +41,7 @@
     "build:main": "cross-env NODE_ENV=production TS_NODE_TRANSPILE_ONLY=true NODE_OPTIONS=\"-r ts-node/register --no-warnings\" webpack --config ./.erb/configs/webpack.config.main.prod.ts",
     "build:renderer": "cross-env NODE_ENV=production TS_NODE_TRANSPILE_ONLY=true NODE_OPTIONS=\"-r ts-node/register --no-warnings\" webpack --config ./.erb/configs/webpack.config.renderer.prod.ts",
     "postinstall": "ts-node .erb/scripts/check-native-dep.js && electron-builder install-app-deps && npm run build:dll",
+    "audit:replays": "node ./scripts/audit-replay-metadata.js",
     "lint": "cross-env NODE_ENV=development eslint . --ext .js,.jsx,.ts,.tsx",
     "lint:fix": "cross-env NODE_ENV=development eslint . --ext .js,.jsx,.ts,.tsx --fix",
     "package": "ts-node ./.erb/scripts/clean.js dist && npm run build:icons && npm run build && npm --prefix release/app run rebuild && electron-builder build --publish never && npm run build:dll",
@@ -88,6 +89,7 @@
       "json"
     ],
     "moduleNameMapper": {
+      "^(\\.{1,2}/.*)\\.js$": "$1",
       "^@/(.*)$": "<rootDir>/src/$1",
       "^@constants$": "<rootDir>/constants.ts",
       "^@types$": "<rootDir>/types.ts",
@@ -125,7 +127,9 @@
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
     "react-router-dom": "^7.3.0",
-    "xml2js": "^0.6.2"
+    "xml2js": "^0.6.2",
+    "yauzl": "^3.4.0",
+    "yazl": "^3.3.1"
   },
   "devDependencies": {
     "@commitlint/cli": "^19.8.1",
@@ -151,6 +155,8 @@
     "@types/react-test-renderer": "^19.0.0",
     "@types/webpack-bundle-analyzer": "^4.7.0",
     "@types/xml2js": "^0.4.14",
+    "@types/yauzl": "^3.4.0",
+    "@types/yazl": "^3.3.1",
     "@typescript-eslint/eslint-plugin": "^8.26.1",
     "@typescript-eslint/parser": "^8.26.1",
     "browserslist-config-erb": "^0.0.3",

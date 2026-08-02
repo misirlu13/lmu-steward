@@ -16,7 +16,11 @@ export const StatDisplay: React.FC<StatDisplayProps> = ({
       <Typography
         variant="caption"
         color="text.secondary"
-        sx={{ display: 'block', textTransform: 'uppercase', letterSpacing: 0.8 }}
+        sx={{
+          display: 'block',
+          textTransform: 'uppercase',
+          letterSpacing: 0.8,
+        }}
       >
         {label}
       </Typography>
