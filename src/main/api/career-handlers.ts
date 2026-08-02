@@ -1,8 +1,10 @@
 import { CONSTANTS } from '@constants';
+import { CareerFilters } from '@types';
 import {
   buildCareerAggregate,
   buildCareerLogIndex,
   claimCareerIdentity,
+  enrichCareerFromReplays,
   ensureCareerIdentity,
   getCareerAggregate,
   readCareerIdentity,
@@ -10,8 +12,9 @@ import {
   scanCareer,
   setCareerSessionExcluded,
 } from './career';
-import { readImportedReplays } from './replay';
+import { getCachedReplaysForCareer, readImportedReplays } from './replay';
 import { readUserSettings } from './user-settings';
+import { readVcrTrailer } from './vcr-metadata';
 
 /**
  * IPC surface for the driver dashboard.
@@ -48,11 +51,14 @@ const readImportedLogPaths = (): Set<string> =>
       .filter((path): path is string => Boolean(path)),
   );
 
-export const getCareerSummary = async (event: Electron.IpcMainEvent) => {
+export const getCareerSummary = async (
+  event: Electron.IpcMainEvent,
+  filters?: CareerFilters,
+) => {
   try {
     event.reply(CONSTANTS.API.GET_CAREER_SUMMARY, {
       status: 'success',
-      data: { aggregate: getCareerAggregate() },
+      data: { aggregate: getCareerAggregate(filters) },
     });
   } catch (error: unknown) {
     event.reply(CONSTANTS.API.GET_CAREER_SUMMARY, {
@@ -64,7 +70,7 @@ export const getCareerSummary = async (event: Electron.IpcMainEvent) => {
 
 export const postCareerRescan = async (
   event: Electron.IpcMainEvent,
-  request?: { rebuild?: boolean },
+  request?: { rebuild?: boolean; filters?: CareerFilters },
 ) => {
   try {
     ensureCareerIdentity();
@@ -76,9 +82,26 @@ export const postCareerRescan = async (
       importedLogPaths: readImportedLogPaths(),
     });
 
+    /*
+     * Official-event identity comes only from the replay, and only for sessions
+     * that still have one. Read after the scan so it decorates records that
+     * exist, and never as a source — a missing replay costs one optional field.
+     */
+    await enrichCareerFromReplays(getCachedReplaysForCareer(), (filePath) =>
+      readVcrTrailer(filePath).then((trailer) =>
+        trailer
+          ? {
+              eventTitle: trailer.eventTitle,
+              eventType: trailer.eventType,
+              splitNo: trailer.splitNo,
+            }
+          : null,
+      ),
+    );
+
     event.reply(CONSTANTS.API.POST_CAREER_RESCAN, {
       status: 'success',
-      data: { aggregate: getCareerAggregate(), report },
+      data: { aggregate: getCareerAggregate(request?.filters), report },
     });
   } catch (error: unknown) {
     event.reply(CONSTANTS.API.POST_CAREER_RESCAN, {
@@ -90,7 +113,7 @@ export const postCareerRescan = async (
 
 export const postCareerClaimIdentity = async (
   event: Electron.IpcMainEvent,
-  request?: { name?: string },
+  request?: { name?: string; filters?: CareerFilters },
 ) => {
   try {
     const name = String(request?.name ?? '').trim();
@@ -108,7 +131,7 @@ export const postCareerClaimIdentity = async (
 
     event.reply(CONSTANTS.API.POST_CAREER_CLAIM_IDENTITY, {
       status: 'success',
-      data: { aggregate: getCareerAggregate() },
+      data: { aggregate: getCareerAggregate(request?.filters) },
     });
   } catch (error: unknown) {
     event.reply(CONSTANTS.API.POST_CAREER_CLAIM_IDENTITY, {
@@ -120,7 +143,11 @@ export const postCareerClaimIdentity = async (
 
 export const postCareerExcludeSession = async (
   event: Electron.IpcMainEvent,
-  request?: { sessionKey?: string; excluded?: boolean },
+  request?: {
+    sessionKey?: string;
+    excluded?: boolean;
+    filters?: CareerFilters;
+  },
 ) => {
   try {
     const sessionKey = String(request?.sessionKey ?? '').trim();
@@ -135,6 +162,7 @@ export const postCareerExcludeSession = async (
           Object.values(readCareerSessions()),
           readCareerIdentity(),
           null,
+          request?.filters,
         ),
       },
     });

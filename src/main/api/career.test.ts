@@ -609,6 +609,214 @@ describe('main/career aggregate', () => {
     expect(aggregate.results.disqualifications).toBe(1);
   });
 
+  /*
+   * The pace figure that matters, and deliberately relative. A personal best
+   * says how quick the car and track are; this says how close to the pace the
+   * driver was, and survives a change of both.
+   */
+  it('measures pace as the gap to the quickest lap of the same session', () => {
+    const aggregate = buildCareerAggregate(
+      [
+        session({ bestLapSec: 101, sessionBestLapSec: 100 }),
+        session({ bestLapSec: 103, sessionBestLapSec: 100 }),
+      ],
+      identity,
+      null,
+    );
+
+    // 1% off in one session, 3% in the other.
+    expect(aggregate.pace.averageGapToSessionBest).toBeCloseTo(0.02);
+  });
+
+  /*
+   * A driver who joined, ran an out-lap and left is not slow — they did not
+   * run. Left in, those sessions dominate: a real career read 10.9% off the
+   * pace on a recent set containing single-lap installs at 24%.
+   */
+  it('ignores sessions the driver barely ran when measuring pace', () => {
+    const aggregate = buildCareerAggregate(
+      [
+        session({ bestLapSec: 101, sessionBestLapSec: 100, timedLapCount: 10 }),
+        session({ bestLapSec: 140, sessionBestLapSec: 100, timedLapCount: 1 }),
+      ],
+      identity,
+      null,
+    );
+
+    expect(aggregate.pace.averageGapToSessionBest).toBeCloseTo(0.01);
+  });
+
+  /*
+   * A thin sample reads as a verdict. Four sessions on a Spa variant measured
+   * 20% off the pace next to the 2% of the Spa actually driven, which says the
+   * driver is weak there when it says they have barely been there.
+   */
+  it('leaves pace unranked for a layout with too few timed sessions', () => {
+    const thin = Array.from({ length: 4 }, () =>
+      session({ trackFolder: 'Thin', trackLayout: 'thin' }),
+    );
+    const thick = Array.from({ length: 6 }, () =>
+      session({ trackFolder: 'Thick', trackLayout: 'thick' }),
+    );
+
+    const aggregate = buildCareerAggregate([...thin, ...thick], identity, null);
+    const byFolder = new Map(
+      aggregate.tracks.map((track) => [track.trackFolder, track]),
+    );
+
+    expect(byFolder.get('Thin')?.averageGapToSessionBest).toBeNull();
+    expect(byFolder.get('Thick')?.averageGapToSessionBest).not.toBeNull();
+  });
+
+  /*
+   * Race laps carry pit stops, safety cars and traffic — ±10.4s against
+   * qualifying's ±1.1s on a real career — so mixing them reports the shape of
+   * the sessions rather than the steadiness of the driver.
+   */
+  it('measures consistency from qualifying alone', () => {
+    const aggregate = buildCareerAggregate(
+      [
+        session({ sessionType: 'QUALIFY', lapStdDevSec: 1 }),
+        session({ sessionType: 'RACE', lapStdDevSec: 20 }),
+        session({ sessionType: 'PRACTICE', lapStdDevSec: 15 }),
+      ],
+      identity,
+      null,
+    );
+
+    expect(aggregate.pace.averageConsistencySec).toBeCloseTo(1);
+  });
+
+  it('keeps only improvements in a personal-best history', () => {
+    const aggregate = buildCareerAggregate(
+      [
+        session({ startedAt: 1, bestLapSec: 100 }),
+        session({ startedAt: 2, bestLapSec: 101 }),
+        session({ startedAt: 3, bestLapSec: 99 }),
+        session({ startedAt: 4, bestLapSec: 99.5 }),
+      ],
+      identity,
+      null,
+    );
+
+    expect(aggregate.tracks[0].bestLapHistory).toEqual([
+      { at: 1, sec: 100 },
+      { at: 3, sec: 99 },
+    ]);
+  });
+
+  /*
+   * "Raced against most" and "most contact with" are different questions, and
+   * the second is the one no other tool answers.
+   */
+  it('separates who you race from who you hit, and excludes AI', () => {
+    const aggregate = buildCareerAggregate(
+      [
+        session({
+          opponents: [
+            { name: 'Rival', carClass: 'GT3', isAi: false },
+            { name: 'Robot', carClass: 'GT3', isAi: true },
+          ],
+          contactByOpponent: { Nemesis: 3 },
+        }),
+        session({
+          opponents: [{ name: 'Rival', carClass: 'GT3', isAi: false }],
+          contactByOpponent: { Nemesis: 2, Rival: 1 },
+        }),
+      ],
+      identity,
+      null,
+    );
+
+    expect(aggregate.rivals.mostRaced.map((rival) => rival.name)).toEqual([
+      'Rival',
+    ]);
+    expect(aggregate.rivals.nemeses[0]).toMatchObject({
+      name: 'Nemesis',
+      contacts: 5,
+    });
+  });
+
+  it('scopes every figure to the active filter', () => {
+    const sessions = [
+      session({ setting: 'Multiplayer', classFinishPos: 1, carClass: 'GT3' }),
+      session({ setting: 'Race Weekend', classFinishPos: 1, carClass: 'GT3' }),
+      session({ setting: 'Multiplayer', classFinishPos: 1, carClass: 'Hyper' }),
+    ];
+
+    expect(buildCareerAggregate(sessions, identity, null).results.wins).toBe(3);
+    expect(
+      buildCareerAggregate(sessions, identity, null, {
+        gameType: 'multiplayer',
+      }).results.wins,
+    ).toBe(2);
+    expect(
+      buildCareerAggregate(sessions, identity, null, {
+        gameType: 'multiplayer',
+        carClass: 'GT3',
+      }).results.wins,
+    ).toBe(1);
+  });
+
+  /*
+   * Narrowing the view must never remove the way back out of it, so the choices
+   * come from every session rather than the filtered ones.
+   */
+  it('offers filter choices from the whole career, not the filtered view', () => {
+    const aggregate = buildCareerAggregate(
+      [
+        session({ carClass: 'GT3', trackFolder: 'Monza_2023' }),
+        session({ carClass: 'Hyper', trackFolder: 'Spa_2024' }),
+      ],
+      identity,
+      null,
+      { carClass: 'GT3' },
+    );
+
+    expect(aggregate.headline.sessions).toBe(1);
+    expect(aggregate.filterOptions.carClasses).toEqual(['GT3', 'Hyper']);
+    expect(aggregate.filterOptions.tracks).toHaveLength(2);
+  });
+
+  it('marks milestones as they were reached', () => {
+    const aggregate = buildCareerAggregate(
+      [
+        session({ startedAt: 100, lapsCompleted: 60, classFinishPos: 8 }),
+        session({ startedAt: 200, lapsCompleted: 60, classFinishPos: 2 }),
+        session({ startedAt: 300, lapsCompleted: 10, classFinishPos: 1 }),
+      ],
+      identity,
+      null,
+    );
+
+    const byKey = new Map(
+      aggregate.milestones.map((milestone) => [milestone.key, milestone]),
+    );
+
+    expect(byKey.get('first-session')?.achievedAt).toBe(100);
+    expect(byKey.get('races-1')?.achievedAt).toBe(100);
+    expect(byKey.get('laps-100')?.achievedAt).toBe(200);
+    expect(byKey.get('first-podium')?.achievedAt).toBe(200);
+    expect(byKey.get('first-win')?.achievedAt).toBe(300);
+  });
+
+  it('reads driver aids without treating the control mode as one', () => {
+    const aggregate = buildCareerAggregate(
+      [
+        session({ startedAt: 100, aids: 'PlayerControl,ABS=2,Clutch' }),
+        session({ startedAt: 200, aids: 'PlayerControl,ABS=1' }),
+      ],
+      identity,
+      null,
+    );
+
+    const aids = aggregate.activity.aidUsage.map((entry) => entry.aid);
+
+    expect(aids).toContain('ABS=2');
+    expect(aids).toContain('ABS=1');
+    expect(aids).not.toContain('PlayerControl');
+  });
+
   it('reports the best single-race comeback', () => {
     const aggregate = buildCareerAggregate(
       [

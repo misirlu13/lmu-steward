@@ -7,17 +7,33 @@ import {
 } from '@mui/material';
 import { useNavigate } from 'react-router-dom';
 import { ViewHeader } from '../components/Common/ViewHeader';
+import { CareerActivityCard } from '../components/DriverDashboard/CareerActivityCard';
+import { CareerCarsCard } from '../components/DriverDashboard/CareerCarsCard';
 import { CareerDataHealth } from '../components/DriverDashboard/CareerDataHealth';
 import { CareerDisciplineCard } from '../components/DriverDashboard/CareerDisciplineCard';
+import { CareerFilterBar } from '../components/DriverDashboard/CareerFilterBar';
 import { CareerHeadline } from '../components/DriverDashboard/CareerHeadline';
+import { CareerMilestones } from '../components/DriverDashboard/CareerMilestones';
+import { CareerPaceCard } from '../components/DriverDashboard/CareerPaceCard';
+import { CareerRecentSessions } from '../components/DriverDashboard/CareerRecentSessions';
 import { CareerResultsCard } from '../components/DriverDashboard/CareerResultsCard';
+import { CareerRivalsCard } from '../components/DriverDashboard/CareerRivalsCard';
 import { CareerTrackTable } from '../components/DriverDashboard/CareerTrackTable';
 import { useCareerSummary } from '../hooks/useCareerSummary';
 
 export const DriverDashboardView = () => {
   const navigate = useNavigate();
-  const { aggregate, loading, scanning, error, rescan, claimIdentity } =
-    useCareerSummary();
+  const {
+    aggregate,
+    filters,
+    loading,
+    scanning,
+    error,
+    setFilters,
+    rescan,
+    claimIdentity,
+    setSessionExcluded,
+  } = useCareerSummary();
 
   if (loading) {
     return (
@@ -27,7 +43,13 @@ export const DriverDashboardView = () => {
     );
   }
 
-  const isEmpty = !aggregate || aggregate.headline.sessions === 0;
+  const hasCareer = Boolean(aggregate) && aggregate!.headline.sessions > 0;
+  /*
+   * A filter that matches nothing is not an empty career, and must not offer to
+   * scan as though it were — the sessions are there, just outside the view.
+   */
+  const filteredToNothing =
+    !hasCareer && Boolean(aggregate?.filterOptions.tracks.length);
 
   return (
     <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
@@ -43,7 +65,15 @@ export const DriverDashboardView = () => {
 
       {error ? <Alert severity="error">{error}</Alert> : null}
 
-      {isEmpty ? (
+      {aggregate && (hasCareer || filteredToNothing) ? (
+        <CareerFilterBar
+          filters={filters}
+          options={aggregate.filterOptions}
+          onChange={setFilters}
+        />
+      ) : null}
+
+      {!aggregate || (!hasCareer && !filteredToNothing) ? (
         <Box sx={{ py: 6, textAlign: 'center' }}>
           <Typography variant="h6" sx={{ mb: 1 }}>
             No sessions recorded yet
@@ -76,7 +106,16 @@ export const DriverDashboardView = () => {
             </Box>
           ) : null}
         </Box>
-      ) : (
+      ) : null}
+
+      {aggregate && filteredToNothing ? (
+        <Alert severity="info">
+          No sessions match this filter. Your career is still here — widen the
+          view to see it.
+        </Alert>
+      ) : null}
+
+      {aggregate && hasCareer ? (
         <>
           <CareerHeadline aggregate={aggregate} />
 
@@ -88,15 +127,42 @@ export const DriverDashboardView = () => {
               alignItems: 'stretch',
             }}
           >
-            <Box sx={{ flex: '1 1 340px', minWidth: 320 }}>
+            <Box sx={{ flex: '1 1 320px', minWidth: 300 }}>
               <CareerResultsCard aggregate={aggregate} />
             </Box>
-            <Box sx={{ flex: '1 1 340px', minWidth: 320 }}>
+            <Box sx={{ flex: '1 1 320px', minWidth: 300 }}>
+              <CareerPaceCard aggregate={aggregate} />
+            </Box>
+            <Box sx={{ flex: '1 1 320px', minWidth: 300 }}>
               <CareerDisciplineCard aggregate={aggregate} />
             </Box>
           </Box>
 
           <CareerTrackTable tracks={aggregate.tracks} />
+          <CareerCarsCard aggregate={aggregate} />
+
+          <Box
+            sx={{
+              display: 'flex',
+              flexWrap: 'wrap',
+              gap: 2,
+              alignItems: 'stretch',
+            }}
+          >
+            <Box sx={{ flex: '1 1 320px', minWidth: 300 }}>
+              <CareerRivalsCard aggregate={aggregate} />
+            </Box>
+            <Box sx={{ flex: '2 1 480px', minWidth: 320 }}>
+              <CareerActivityCard aggregate={aggregate} />
+            </Box>
+          </Box>
+
+          <CareerMilestones aggregate={aggregate} />
+
+          <CareerRecentSessions
+            sessions={aggregate.recentSessions}
+            onToggleExcluded={setSessionExcluded}
+          />
 
           <CareerDataHealth
             aggregate={aggregate}
@@ -105,7 +171,7 @@ export const DriverDashboardView = () => {
             onClaimIdentity={claimIdentity}
           />
         </>
-      )}
+      ) : null}
     </Box>
   );
 };

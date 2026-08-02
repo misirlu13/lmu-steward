@@ -14,6 +14,7 @@ import { autoUpdater } from 'electron-updater';
 import log from 'electron-log';
 import {
   ArchiveReplaysRequest,
+  CareerFilters,
   GetReplaysRequest,
   PersistedDashboardView,
 } from '@types';
@@ -177,17 +178,20 @@ const CHANNEL_CALLBACK_HANDLERS: Partial<
   [CONSTANTS.API.GET_IS_REPLAY_ACTIVE]: withEventOnly(getIsReplayActive),
   [CONSTANTS.API.GET_SESSION_INFO]: withEventOnly(getSessionInfo),
   [CONSTANTS.API.GET_FOCUSED_CAR]: withEventOnly(getFocusedCar),
-  [CONSTANTS.API.GET_CAREER_SUMMARY]: withEventOnly(getCareerSummary),
+  [CONSTANTS.API.GET_CAREER_SUMMARY]: withEventAndData<
+    CareerFilters | undefined
+  >(getCareerSummary),
 
   // POST REQUESTS
   [CONSTANTS.API.POST_CAREER_RESCAN]: withEventAndData<
-    { rebuild?: boolean } | undefined
+    { rebuild?: boolean; filters?: CareerFilters } | undefined
   >(postCareerRescan),
   [CONSTANTS.API.POST_CAREER_CLAIM_IDENTITY]: withEventAndData<
-    { name?: string } | undefined
+    { name?: string; filters?: CareerFilters } | undefined
   >(postCareerClaimIdentity),
   [CONSTANTS.API.POST_CAREER_EXCLUDE_SESSION]: withEventAndData<
-    { sessionKey?: string; excluded?: boolean } | undefined
+    | { sessionKey?: string; excluded?: boolean; filters?: CareerFilters }
+    | undefined
   >(postCareerExcludeSession),
   [CONSTANTS.API.POST_REPLAY_COMMAND_UI]: withEventAndData<
     string | { all: boolean }

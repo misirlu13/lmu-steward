@@ -497,6 +497,29 @@ export const getReplayLogData = async (
   }
 };
 
+/**
+ * Cached replays, with just the fields the career needs to pair a session to a
+ * replay it can read an event title out of.
+ *
+ * Deliberately the cache rather than the replay folder: a career enrichment
+ * pass must never walk a directory of multi-gigabyte files, and a replay the
+ * game no longer lists has nothing to add anyway.
+ */
+export const getCachedReplaysForCareer = (): {
+  logDataFileName?: string;
+  replayDirectory?: string;
+  replayName?: string;
+}[] => {
+  const stored =
+    (getReplayStore().get('replays') as Record<string, ReplayCacheEntry>) || {};
+
+  return Object.values(stored).map((replay) => ({
+    logDataFileName: (replay as { logDataFileName?: string }).logDataFileName,
+    replayDirectory: replay.replayDirectory,
+    replayName: replay.replayName,
+  }));
+};
+
 export const getReplayData = async (): Promise<LMUReplay[]> => {
   const response = await fetch(
     `${CONSTANTS.LMU_API_BASE_URL}/rest/watch/replays`,

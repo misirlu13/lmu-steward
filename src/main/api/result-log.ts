@@ -140,6 +140,11 @@ export interface ResultLogConduct {
   incidentForceMax: number;
   contactWithVehicle: number;
   contactWithScenery: number;
+  /**
+   * Contacts with each other driver, by their name. Bounded by the size of the
+   * field, and the only place a "who do I keep hitting" answer can come from.
+   */
+  contactByOpponent: Record<string, number>;
   penalties: ResultLogPenalty[];
   trackLimitEvents: number;
   /** Everything the stewards actually acted on — not "No Further Action". */
@@ -328,6 +333,7 @@ const emptyConduct = (): ResultLogConduct => ({
   incidentForceMax: 0,
   contactWithVehicle: 0,
   contactWithScenery: 0,
+  contactByOpponent: {},
   penalties: [],
   trackLimitEvents: 0,
   trackLimitWarnings: 0,
@@ -516,6 +522,8 @@ const applyIncident = (session: SessionAccumulator, text: string) => {
     const otherName = other[1].trim();
     if (otherName && otherName !== subjectName) {
       conductFor(session, otherName).incidentsInvolved += 1;
+      conduct.contactByOpponent[otherName] =
+        (conduct.contactByOpponent[otherName] ?? 0) + 1;
     }
   } else {
     // "reported contact (4529.33) with Immovable" — a wall, not a car.

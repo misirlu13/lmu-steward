@@ -263,6 +263,8 @@ export interface CareerSessionRecord {
   incidentForceMax: number;
   contactWithVehicle: number;
   contactWithScenery: number;
+  /** Contacts with each other driver, by name. Feeds the nemesis card. */
+  contactByOpponent?: Record<string, number>;
   penalties: { penalty: string; reason: string; timeSec: number | null }[];
   trackLimitWarnings: number;
   trackLimitInvalidLaps: number;
@@ -276,6 +278,19 @@ export interface CareerSessionRecord {
   /** User-set: keep the session in the library but out of every statistic. */
   excluded: boolean;
   firstSeenAt: number;
+  /**
+   * Which shape of record this is.
+   *
+   * A stored record is never re-parsed while its log is unchanged, so one
+   * written before a field existed would never gain it. Bumping this re-reads
+   * the logs still on disk; records whose logs have gone keep what they were
+   * written with, because nothing can improve them and nothing may drop them.
+   */
+  recordVersion?: number;
+  /** Official-event identity, from the paired replay. Absent for most sessions. */
+  eventTitle?: string;
+  eventType?: string;
+  splitNo?: number;
 }
 
 /**
@@ -314,6 +329,19 @@ export interface CareerTrackSummary {
   bestClassGridPos: number | null;
   bestClassFinishPos: number | null;
   bestLapSec: number | null;
+  /** Sum of the best sectors ever turned here — quicker than any lap driven. */
+  theoreticalBestSec: number | null;
+  /**
+   * How far off the quickest lap in the session the driver's own best was, as a
+   * fraction, averaged. The one pace figure that survives a change of car,
+   * track and field quality, which a raw personal best does not.
+   */
+  averageGapToSessionBest: number | null;
+  averageLapSec: number | null;
+  consistencySec: number | null;
+  topSpeedKph: number | null;
+  /** Personal bests in the order they were set, improvements only. */
+  bestLapHistory: { at: number; sec: number }[];
   averageFinishPercentile: number | null;
   lapsCompleted: number;
   distanceKm: number;
@@ -331,6 +359,9 @@ export interface CareerCarSummary {
   podiums: number;
   bestLapSec: number | null;
   averageFinishPercentile: number | null;
+  lapsCompleted: number;
+  distanceKm: number;
+  averageGapToSessionBest: number | null;
 }
 
 export interface CareerAggregate {
@@ -389,8 +420,50 @@ export interface CareerAggregate {
     trackLimitInvalidLaps: number;
     longestCleanStreak: number;
   };
+  pace: {
+    /**
+     * Averaged over every session with a timed lap. Negative is impossible —
+     * you cannot be quicker than the quickest lap of a session you were in.
+     */
+    averageGapToSessionBest: number | null;
+    /** The same figure over the most recent sessions, for form. */
+    recentGapToSessionBest: number | null;
+    averageConsistencySec: number | null;
+    topSpeedKph: number | null;
+    /** Personal bests, quickest gap to the session best first. */
+    strongestLayouts: CareerTrackSummary[];
+    weakestLayouts: CareerTrackSummary[];
+  };
+  rivals: {
+    mostRaced: CareerRival[];
+    /** Most contact with, which is a different list from most raced against. */
+    nemeses: CareerRival[];
+    averageFieldSize: number | null;
+    humanShare: number | null;
+  };
+  events: {
+    /** Official events, from paired replays. Empty when none are known. */
+    byTitle: { title: string; type: string; sessions: number }[];
+    averageSplit: number | null;
+  };
+  activity: {
+    /** Sessions per day, for the calendar. Epoch seconds at local midnight. */
+    byDay: { day: number; sessions: number }[];
+    byHour: number[];
+    byWeekday: number[];
+    practicePerRace: number | null;
+    /** Driver aids seen, oldest first, so a habit changing is visible. */
+    aidUsage: {
+      aid: string;
+      firstSeenAt: number;
+      lastSeenAt: number;
+      sessions: number;
+    }[];
+  };
+  milestones: CareerMilestone[];
   tracks: CareerTrackSummary[];
   cars: CareerCarSummary[];
+  filterOptions: CareerFilterOptions;
   /** Newest first, for the recent-form strip. */
   recentSessions: CareerSessionRecord[];
   dataHealth: {
@@ -402,6 +475,43 @@ export interface CareerAggregate {
 
 export interface CareerSummaryResponse {
   aggregate: CareerAggregate;
+}
+
+/**
+ * What the page is currently scoped to. Every figure in the aggregate honours
+ * it, so the same dashboard reads as "my 2026 GT3 multiplayer season" on demand.
+ */
+export interface CareerFilters {
+  /** Epoch seconds, inclusive. */
+  from?: number | null;
+  to?: number | null;
+  gameType?: 'multiplayer' | 'race-weekend' | null;
+  carClass?: string | null;
+  trackFolder?: string | null;
+}
+
+/**
+ * Derived from every session rather than the filtered ones, so the available
+ * choices do not disappear as the user narrows the view.
+ */
+export interface CareerFilterOptions {
+  tracks: { trackFolder: string; trackVenue: string }[];
+  carClasses: string[];
+  earliestAt: number | null;
+  latestAt: number | null;
+}
+
+export interface CareerRival {
+  name: string;
+  sessions: number;
+  contacts: number;
+}
+
+export interface CareerMilestone {
+  key: string;
+  label: string;
+  detail: string;
+  achievedAt: number;
 }
 
 export type LMUReplayCommands =
