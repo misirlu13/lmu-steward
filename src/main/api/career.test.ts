@@ -647,6 +647,47 @@ describe('main/career aggregate', () => {
     expect(aggregate.discipline.longestCleanStreak).toBe(3);
   });
 
+  /*
+   * The recent list is the only place an exclusion can be undone, so an
+   * excluded session has to stay in it. Dropping it made excluding one a
+   * one-way door: the row vanished, taking its own toggle with it.
+   */
+  it('keeps an excluded session listed so it can be counted again', () => {
+    const aggregate = buildCareerAggregate(
+      [
+        session({ startedAt: 200, classFinishPos: 1 }),
+        session({ startedAt: 100, classFinishPos: 1, excluded: true }),
+      ],
+      identity,
+      null,
+    );
+
+    expect(aggregate.recentSessions).toHaveLength(2);
+    expect(aggregate.recentSessions.map((entry) => entry.excluded)).toEqual([
+      false,
+      true,
+    ]);
+    expect(aggregate.results.wins).toBe(1);
+  });
+
+  /*
+   * Otherwise the one-way door closes slowly rather than not at all: exclude a
+   * session, race twenty-five more times, and it falls off the end still
+   * excluded and no longer reachable.
+   */
+  it('keeps an excluded session listed after it falls out of the recent window', () => {
+    const old = session({ startedAt: 1, excluded: true });
+    const recent = Array.from({ length: 40 }, (_unused, index) =>
+      session({ startedAt: 1000 + index }),
+    );
+
+    const aggregate = buildCareerAggregate([old, ...recent], identity, null);
+    const keys = aggregate.recentSessions.map((entry) => entry.sessionKey);
+
+    expect(keys).toContain(old.sessionKey);
+    expect(aggregate.recentSessions).toHaveLength(26);
+  });
+
   it('keeps an excluded session in the library but out of every total', () => {
     const aggregate = buildCareerAggregate(
       [

@@ -60,7 +60,17 @@ export const CareerRecentSessions = ({
             </TableHead>
             <TableBody>
               {sessions.map((session) => (
-                <TableRow key={session.sessionKey} hover>
+                <TableRow
+                  key={session.sessionKey}
+                  hover
+                  /*
+                    An excluded session stays in the table — this list is the
+                    only place the exclusion can be undone — so it is dimmed
+                    rather than removed, and its own toggle stays at full
+                    strength so it remains obviously clickable.
+                  */
+                  sx={session.excluded ? { opacity: 0.45 } : undefined}
+                >
                   <TableCell>
                     <Typography variant="body2">
                       {formatDate(session.startedAt)}
@@ -78,6 +88,15 @@ export const CareerRecentSessions = ({
                           file gone
                         </Typography>
                       </Tooltip>
+                    ) : null}
+                    {session.excluded ? (
+                      <Typography
+                        variant="caption"
+                        color="text.secondary"
+                        sx={{ display: 'block' }}
+                      >
+                        excluded
+                      </Typography>
                     ) : null}
                   </TableCell>
                   <TableCell>
@@ -122,17 +141,23 @@ export const CareerRecentSessions = ({
                     <Tooltip
                       title={
                         session.excluded
-                          ? 'Counted again in every total'
-                          : 'Keep the session but leave it out of every total'
+                          ? 'Excluded — this session counts towards nothing. Click to count it again.'
+                          : 'Counted in every total. Click to keep the session but leave it out of them.'
                       }
                       placement="left"
                     >
                       <IconButton
                         size="small"
+                        color={session.excluded ? 'default' : 'primary'}
                         aria-label={
                           session.excluded
                             ? 'Include session in career totals'
                             : 'Exclude session from career totals'
+                        }
+                        aria-pressed={session.excluded}
+                        // Undimmed, so the way back is never faint.
+                        sx={
+                          session.excluded ? { opacity: 1 / 0.45 } : undefined
                         }
                         onClick={() =>
                           onToggleExcluded(

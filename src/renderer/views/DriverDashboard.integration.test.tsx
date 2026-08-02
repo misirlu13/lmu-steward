@@ -521,6 +521,52 @@ describe('DriverDashboardView', () => {
     });
   });
 
+  /*
+   * Excluding used to remove the row, which removed the only control that could
+   * put the session back. The row stays, marked, with its toggle pointing the
+   * other way.
+   */
+  it('keeps an excluded session in the list so it can be counted again', () => {
+    render(<DriverDashboardView />);
+
+    reply(CONSTANTS.API.GET_CAREER_SUMMARY, {
+      status: 'success',
+      data: {
+        aggregate: buildAggregate({
+          recentSessions: [
+            {
+              sessionKey: 'abc',
+              startedAt: 1785000000,
+              sessionType: 'RACE',
+              trackVenue: 'Autodromo Nazionale Monza',
+              trackFolder: 'Monza_2023',
+              trackLayout: 'layoutMonza',
+              carType: 'Porsche 911 GT3 R LMGT3',
+              carClass: 'GT3',
+              classGridPos: 4,
+              classFinishPos: 2,
+              bestLapSec: 101.45,
+              incidentsCaused: 1,
+              filePresent: true,
+              excluded: true,
+            },
+          ] as CareerAggregate['recentSessions'],
+        }),
+      },
+    });
+
+    expect(screen.getByText('excluded')).toBeInTheDocument();
+
+    screen
+      .getByRole('button', { name: 'Include session in career totals' })
+      .click();
+
+    expect(sendMessage).toHaveBeenCalledWith(
+      CONSTANTS.API.POST_CAREER_EXCLUDE_SESSION,
+      { sessionKey: 'abc', excluded: false, filters: {} },
+    );
+  });
+
   it('surfaces an error rather than rendering an empty career', () => {
     render(<DriverDashboardView />);
 

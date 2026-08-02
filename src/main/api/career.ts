@@ -1080,6 +1080,30 @@ export const buildCareerAggregate = (
     .map(gapToSessionBest)
     .filter((value): value is number => value !== null);
 
+  /*
+   * Excluded sessions stay in this list, unlike every other figure here.
+   *
+   * The list is the only place an exclusion can be undone, so dropping them
+   * made excluding one a one-way door — the row vanished, taking its own toggle
+   * with it. They are marked rather than removed, and contribute to nothing.
+   *
+   * They are also kept past the recent-window cut, or the door would simply
+   * close more slowly: exclude a session, race twenty-five more times, and it
+   * would fall off the end still excluded and no longer reachable. There are
+   * only ever as many as the user chose to exclude.
+   */
+  const chronological = [...sessions].sort(
+    (left, right) => right.startedAt - left.startedAt,
+  );
+  const recent = chronological.slice(0, RECENT_SESSION_COUNT);
+  const recentKeys = new Set(recent.map((record) => record.sessionKey));
+  const recentSessions = [
+    ...recent,
+    ...chronological.filter(
+      (record) => record.excluded && !recentKeys.has(record.sessionKey),
+    ),
+  ].sort((left, right) => right.startedAt - left.startedAt);
+
   const pacedLayouts = tracks.filter(
     (track) => track.averageGapToSessionBest !== null,
   );
@@ -1386,7 +1410,7 @@ export const buildCareerAggregate = (
     tracks,
     cars,
     filterOptions: buildCareerFilterOptions(allSessions),
-    recentSessions: newestFirst.slice(0, RECENT_SESSION_COUNT),
+    recentSessions,
     dataHealth: {
       sessionsWithMissingFiles: sessions.filter((record) => !record.filePresent)
         .length,
