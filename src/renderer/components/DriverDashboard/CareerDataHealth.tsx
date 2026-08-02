@@ -4,6 +4,7 @@ import {
   Button,
   Card,
   CardContent,
+  Tooltip,
   Typography,
 } from '@mui/material';
 import RefreshRoundedIcon from '@mui/icons-material/RefreshRounded';
@@ -95,24 +96,61 @@ export const CareerDataHealth = ({
           </Typography>
 
           <Box sx={{ display: 'flex', gap: 1 }}>
-            <Button
-              size="small"
-              startIcon={<RefreshRoundedIcon />}
-              onClick={() => onRescan()}
-              disabled={scanning}
+            <Tooltip
+              title="Reads any result logs that are new or have changed since the last scan. Sessions already recorded are left as they are."
+              placement="top"
             >
-              {scanning ? 'Scanning…' : 'Rescan'}
-            </Button>
-            <Button
-              size="small"
-              color="inherit"
-              onClick={() => onRescan({ rebuild: true })}
-              disabled={scanning}
+              <span>
+                <Button
+                  size="small"
+                  startIcon={<RefreshRoundedIcon />}
+                  onClick={() => onRescan()}
+                  disabled={scanning}
+                >
+                  {scanning ? 'Scanning…' : 'Rescan'}
+                </Button>
+              </span>
+            </Tooltip>
+            {/*
+              "Rebuild" sounds destructive, and the button most needing
+              reassurance is the one people will not press without it. The
+              tooltip leads with what it does not do.
+            */}
+            <Tooltip
+              title="Re-reads every result log still on disk, including ones that have not changed. Nothing is removed — sessions whose logs are gone are kept, as is anything you have excluded. Use it if a figure looks wrong."
+              placement="top"
             >
-              Rebuild
-            </Button>
+              <span>
+                <Button
+                  size="small"
+                  color="inherit"
+                  onClick={() => onRescan({ rebuild: true })}
+                  disabled={scanning}
+                >
+                  Rebuild
+                </Button>
+              </span>
+            </Tooltip>
           </Box>
         </Box>
+
+        {/*
+          Stated in the footer rather than only in a tooltip. That a session
+          survives the deletion of the log it came from is the promise the whole
+          feature rests on, and a promise nobody can find is not one.
+        */}
+        <Typography
+          variant="caption"
+          color="text.secondary"
+          sx={{ display: 'block', mt: 1 }}
+        >
+          Your career is built from the result logs LMU writes after every
+          session, and it keeps them: a session stays on record even once you
+          delete its log or its replay. <strong>Rescan</strong> picks up logs
+          that are new or changed, which also happens automatically whenever
+          replays are synced. <strong>Rebuild</strong> re-reads every log still
+          on disk, for when a figure looks wrong. Neither removes a session.
+        </Typography>
       </CardContent>
     </Card>
   );

@@ -486,6 +486,41 @@ describe('DriverDashboardView', () => {
     );
   });
 
+  /*
+   * "Rebuild" reads as destructive, so the footer says what it does not do —
+   * and says it in the page rather than only in a tooltip, where a user
+   * hesitating over the button would never find it.
+   */
+  it('explains the scan controls and that neither removes a session', () => {
+    render(<DriverDashboardView />);
+
+    reply(CONSTANTS.API.GET_CAREER_SUMMARY, {
+      status: 'success',
+      data: { aggregate: buildAggregate() },
+    });
+
+    expect(screen.getByText(/Neither removes a session/)).toBeInTheDocument();
+    expect(
+      screen.getByText(/stays on record even once you delete its log/),
+    ).toBeInTheDocument();
+  });
+
+  it('re-reads every log when rebuild is chosen', () => {
+    render(<DriverDashboardView />);
+
+    reply(CONSTANTS.API.GET_CAREER_SUMMARY, {
+      status: 'success',
+      data: { aggregate: buildAggregate() },
+    });
+
+    screen.getByRole('button', { name: 'Rebuild' }).click();
+
+    expect(sendMessage).toHaveBeenCalledWith(CONSTANTS.API.POST_CAREER_RESCAN, {
+      rebuild: true,
+      filters: {},
+    });
+  });
+
   it('surfaces an error rather than rendering an empty career', () => {
     render(<DriverDashboardView />);
 
