@@ -23,6 +23,12 @@ const EXPERIMENTAL_FEATURES: ExperimentalFeature[] = [
     description:
       'Import replays recorded on another PC, and export a replay with its result log to share with someone else.',
   },
+  {
+    id: 'live-stewarding',
+    name: 'Live Stewarding',
+    description:
+      'Watch a session as it runs and capture incidents in real time, with evidence and camera dispatch. Needs its own switch under Live Capture, and reads LMU shared memory while the game is running.',
+  },
 ];
 
 export const CONSTANTS = {

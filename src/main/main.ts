@@ -538,6 +538,43 @@ const configureReplayAutoSync = async () => {
   );
 };
 
+/**
+ * Live capture needs BOTH the experimental gate and its own switch. The sidecar
+ * takes a machine-wide lock that wheel LED and motion software share, so it
+ * stays off until someone asks for it by name.
+ *
+ * Called on boot and after every settings write, so toggling either switch
+ * starts or stops the sidecar without an app restart. Both calls are idempotent.
+ */
+let isLiveCaptureConfigured = false;
+
+const configureLiveCapture = async () => {
+  if (devModeEnabled) {
+    return;
+  }
+
+  const settings = await readUserSettings();
+  const enabled =
+    Boolean(settings.experimentalFeaturesEnabled) &&
+    Boolean(settings.liveCaptureEnabled);
+
+  if (enabled === isLiveCaptureConfigured) {
+    return;
+  }
+
+  isLiveCaptureConfigured = enabled;
+
+  // Logged because capture is now conditional: when the live view is empty the
+  // first question is whether the sidecar was ever asked to run.
+  if (enabled) {
+    log.info('live-capture: enabled by settings, starting sidecar');
+    startLiveCapture();
+  } else {
+    log.info('live-capture: disabled by settings, stopping sidecar');
+    stopLiveCapture();
+  }
+};
+
 // Initialize IPC handlers for all channels defined in CONSTANTS.IPC_CHANNELS
 Object.entries(CHANNEL_CALLBACK_HANDLERS).forEach(([channel, handler]) => {
   ipcMain.on(channel, async (event, arg) => {
@@ -557,6 +594,7 @@ Object.entries(CHANNEL_CALLBACK_HANDLERS).forEach(([channel, handler]) => {
 
     if (channel === CONSTANTS.API.POST_USER_SETTINGS) {
       await configureReplayAutoSync();
+      await configureLiveCapture();
     }
   });
 });
@@ -730,9 +768,7 @@ app
   .whenReady()
   .then(() => {
     createWindow();
-    if (!devModeEnabled) {
-      startLiveCapture();
-    }
+    void configureLiveCapture();
     app.on('activate', () => {
       // On macOS it's common to re-create a window in the app when the
       // dock icon is clicked and there are no other windows open.

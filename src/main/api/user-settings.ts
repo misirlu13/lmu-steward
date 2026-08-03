@@ -26,6 +26,13 @@ export const DEFAULT_USER_SETTINGS: UserSettings = {
    * not be running unfinished features.
    */
   experimentalFeaturesEnabled: false,
+  /**
+   * Runs the live capture sidecar. Separate from the experimental gate, and
+   * off by default, because the sidecar takes a machine-wide lock that wheel
+   * LED and motion software also use — enabling live stewarding should not
+   * silently start touching shared memory.
+   */
+  liveCaptureEnabled: false,
 };
 
 // Removed threshold constants

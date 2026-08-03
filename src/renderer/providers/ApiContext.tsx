@@ -31,6 +31,7 @@ interface UserSettingsResponse {
   data?: {
     quickViewEnabled?: boolean;
     experimentalFeaturesEnabled?: boolean;
+    liveCaptureEnabled?: boolean;
     persistDashboardFiltersEnabled?: boolean;
     dashboardView?: PersistedDashboardView | null;
   };
@@ -259,6 +260,8 @@ interface ApiContextType {
   hasUserSettingsResponse: boolean;
   quickViewEnabled: boolean;
   experimentalFeaturesEnabled: boolean;
+  /** True only when experimental features AND the live capture switch are on. */
+  liveCaptureEnabled: boolean;
   persistDashboardFiltersEnabled: boolean;
   persistedDashboardView: PersistedDashboardView | null;
   lastReplaySyncAt: number | null;
@@ -319,6 +322,7 @@ const ApiContext = createContext<ApiContextType>({
   hasUserSettingsResponse: false,
   quickViewEnabled: false,
   experimentalFeaturesEnabled: false,
+  liveCaptureEnabled: false,
   persistDashboardFiltersEnabled: false,
   persistedDashboardView: null,
   lastReplaySyncAt: null,
@@ -378,6 +382,8 @@ export const ApiProvider: React.FC<{ children: React.ReactNode }> = ({
   const [hasUserSettingsResponse, setHasUserSettingsResponse] = useState(false);
   const [quickViewEnabled, setQuickViewEnabled] = useState(false);
   const [experimentalFeaturesEnabled, setExperimentalFeaturesEnabled] =
+    useState(false);
+  const [liveCaptureSettingEnabled, setLiveCaptureSettingEnabled] =
     useState(false);
   const [persistDashboardFiltersEnabled, setPersistDashboardFiltersEnabled] =
     useState(false);
@@ -487,6 +493,10 @@ export const ApiProvider: React.FC<{ children: React.ReactNode }> = ({
 
     if (typeof payload?.data?.experimentalFeaturesEnabled === 'boolean') {
       setExperimentalFeaturesEnabled(payload.data.experimentalFeaturesEnabled);
+    }
+
+    if (typeof payload?.data?.liveCaptureEnabled === 'boolean') {
+      setLiveCaptureSettingEnabled(payload.data.liveCaptureEnabled);
     }
 
     if (typeof payload?.data?.quickViewEnabled === 'boolean') {
@@ -1237,6 +1247,8 @@ export const ApiProvider: React.FC<{ children: React.ReactNode }> = ({
       hasUserSettingsResponse,
       quickViewEnabled,
       experimentalFeaturesEnabled,
+      liveCaptureEnabled:
+        experimentalFeaturesEnabled && liveCaptureSettingEnabled,
       persistDashboardFiltersEnabled,
       persistedDashboardView,
       lastReplaySyncAt,
@@ -1289,6 +1301,7 @@ export const ApiProvider: React.FC<{ children: React.ReactNode }> = ({
       hasUserSettingsResponse,
       quickViewEnabled,
       experimentalFeaturesEnabled,
+      liveCaptureSettingEnabled,
       persistDashboardFiltersEnabled,
       persistedDashboardView,
       lastReplaySyncAt,

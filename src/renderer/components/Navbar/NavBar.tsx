@@ -25,7 +25,12 @@ export const NavBar = () => {
   const { pathname } = useLocation();
   const [profileName, setProfileName] = useState('');
   const { isViewHeaderAttached } = useNavbar();
-  const { isConnected, hasApiStatusResponse, liveSessionStatus } = useApi();
+  const {
+    isConnected,
+    hasApiStatusResponse,
+    liveSessionStatus,
+    liveCaptureEnabled,
+  } = useApi();
   const liveIndicator = deriveLiveIndicator({
     isConnected,
     hasApiStatusResponse,
@@ -134,43 +139,52 @@ export const NavBar = () => {
           <Box
             sx={{ display: 'flex', flexGrow: 0, alignItems: 'center', gap: 1 }}
           >
-            <Tooltip
-              title={
-                liveIndicator.detail
-                  ? `${liveIndicator.label} — ${liveIndicator.detail}`
-                  : liveIndicator.label
-              }
-            >
-              <IconButton
-                color="inherit"
-                onClick={() => navigate('/live')}
-                aria-label={`Open live session (${liveIndicator.label})`}
-                sx={{
-                  color:
-                    liveIndicator.state === 'live' ? 'success.main' : 'inherit',
-                  opacity: liveIndicator.state === 'unavailable' ? 0.4 : 1,
-                  transition: 'color 200ms ease, opacity 200ms ease',
-                  ...(liveIndicator.state === 'live'
-                    ? {
-                        animation: 'lmu-live-pulse 1.8s ease-in-out infinite',
-                        '@keyframes lmu-live-pulse': {
-                          '0%, 100%': { opacity: 1 },
-                          '50%': { opacity: 0.45 },
-                        },
-                      }
-                    : {}),
-                }}
+            {/*
+              Hidden rather than disabled when capture is off: with no sidecar
+              running the indicator can never leave "unavailable", so it would
+              only ever read as something being broken.
+            */}
+            {liveCaptureEnabled && (
+              <Tooltip
+                title={
+                  liveIndicator.detail
+                    ? `${liveIndicator.label} — ${liveIndicator.detail}`
+                    : liveIndicator.label
+                }
               >
-                <Badge
-                  variant="dot"
-                  color="success"
-                  invisible={liveIndicator.state !== 'live'}
-                  overlap="circular"
+                <IconButton
+                  color="inherit"
+                  onClick={() => navigate('/live')}
+                  aria-label={`Open live session (${liveIndicator.label})`}
+                  sx={{
+                    color:
+                      liveIndicator.state === 'live'
+                        ? 'success.main'
+                        : 'inherit',
+                    opacity: liveIndicator.state === 'unavailable' ? 0.4 : 1,
+                    transition: 'color 200ms ease, opacity 200ms ease',
+                    ...(liveIndicator.state === 'live'
+                      ? {
+                          animation: 'lmu-live-pulse 1.8s ease-in-out infinite',
+                          '@keyframes lmu-live-pulse': {
+                            '0%, 100%': { opacity: 1 },
+                            '50%': { opacity: 0.45 },
+                          },
+                        }
+                      : {}),
+                  }}
                 >
-                  <SensorsRoundedIcon />
-                </Badge>
-              </IconButton>
-            </Tooltip>
+                  <Badge
+                    variant="dot"
+                    color="success"
+                    invisible={liveIndicator.state !== 'live'}
+                    overlap="circular"
+                  >
+                    <SensorsRoundedIcon />
+                  </Badge>
+                </IconButton>
+              </Tooltip>
+            )}
             <Tooltip title="User Settings">
               <IconButton
                 color="inherit"

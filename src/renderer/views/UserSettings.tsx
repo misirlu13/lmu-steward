@@ -61,6 +61,7 @@ interface ApiResponse {
     replayLogMatchThresholdMs?: number;
     persistDashboardFiltersEnabled?: boolean;
     experimentalFeaturesEnabled?: boolean;
+    liveCaptureEnabled?: boolean;
     anonymizeDriverData?: boolean;
     telemetryCacheEnabled?: boolean;
     clearCacheOnExit?: boolean;
@@ -120,6 +121,7 @@ export const UserSettingsView: React.FC = () => {
     useState(false);
   const [experimentalFeaturesEnabled, setExperimentalFeaturesEnabled] =
     useState(false);
+  const [liveCaptureEnabled, setLiveCaptureEnabled] = useState(false);
   /*
    * Defaults to keeping the files. Clearing a cache should not destroy
    * multi-GB replays as a side effect — the destructive option is the one the
@@ -198,6 +200,7 @@ export const UserSettingsView: React.FC = () => {
     syncOnIntervalMinutes,
     persistDashboardFiltersEnabled,
     experimentalFeaturesEnabled,
+    liveCaptureEnabled,
     // replayLogMatchThresholdMinutes,
     anonymizeDriverData,
     telemetryCacheEnabled,
@@ -318,6 +321,9 @@ export const UserSettingsView: React.FC = () => {
       const resolvedExperimentalFeaturesEnabled = Boolean(
         response?.data?.experimentalFeaturesEnabled ?? false,
       );
+      const resolvedLiveCaptureEnabled = Boolean(
+        response?.data?.liveCaptureEnabled ?? false,
+      );
       const resolvedAnonymizeDriverData = Boolean(
         response?.data?.anonymizeDriverData ?? false,
       );
@@ -338,6 +344,7 @@ export const UserSettingsView: React.FC = () => {
 
       setPersistDashboardFiltersEnabled(resolvedPersistDashboardFiltersEnabled);
       setExperimentalFeaturesEnabled(resolvedExperimentalFeaturesEnabled);
+      setLiveCaptureEnabled(resolvedLiveCaptureEnabled);
       setAnonymizeDriverData(resolvedAnonymizeDriverData);
       setTelemetryCacheEnabled(resolvedTelemetryCacheEnabled);
       setClearCacheOnExit(resolvedClearCacheOnExit);
@@ -353,6 +360,7 @@ export const UserSettingsView: React.FC = () => {
         syncOnIntervalMinutes: resolvedSyncIntervalMinutes,
         persistDashboardFiltersEnabled: resolvedPersistDashboardFiltersEnabled,
         experimentalFeaturesEnabled: resolvedExperimentalFeaturesEnabled,
+        liveCaptureEnabled: resolvedLiveCaptureEnabled,
         // replayLogMatchThresholdMinutes: resolvedReplayLogMatchThresholdMinutes,
         anonymizeDriverData: resolvedAnonymizeDriverData,
         telemetryCacheEnabled: resolvedTelemetryCacheEnabled,
@@ -486,6 +494,10 @@ export const UserSettingsView: React.FC = () => {
           setExperimentalFeaturesEnabled(
             response.data.experimentalFeaturesEnabled,
           );
+        }
+
+        if (typeof response?.data?.liveCaptureEnabled === 'boolean') {
+          setLiveCaptureEnabled(response.data.liveCaptureEnabled);
         }
 
         if (typeof response?.data?.anonymizeDriverData === 'boolean') {
@@ -1544,6 +1556,52 @@ export const UserSettingsView: React.FC = () => {
                     }
                     disabled={
                       isLoading || isSaving || isLaunching || isAutosaving
+                    }
+                  />
+                </Stack>
+              </Box>
+
+              {/*
+                Its own switch on top of the experimental gate. The capture
+                sidecar takes a machine-wide lock that wheel LED and motion
+                software also use, so turning experimental features on must not
+                start reading shared memory on its own.
+              */}
+              <Box
+                sx={{
+                  border: '1px solid',
+                  borderColor: 'divider',
+                  borderRadius: 1,
+                  p: 2,
+                  opacity: experimentalFeaturesEnabled ? 1 : 0.5,
+                }}
+              >
+                <Stack
+                  direction="row"
+                  justifyContent="space-between"
+                  alignItems="center"
+                >
+                  <Box>
+                    <Typography variant="subtitle2" fontWeight={600}>
+                      Live Capture
+                    </Typography>
+                    <Typography variant="caption" color="text.secondary">
+                      Reads LMU&apos;s shared memory while the game is running
+                      so live stewarding can capture incidents as they happen.
+                      This briefly takes a lock that wheel LED and motion
+                      software also use — leave it off if you see those
+                      misbehave. Needs Experimental Features on.
+                    </Typography>
+                  </Box>
+                  <Switch
+                    checked={experimentalFeaturesEnabled && liveCaptureEnabled}
+                    onChange={(_, checked) => setLiveCaptureEnabled(checked)}
+                    disabled={
+                      !experimentalFeaturesEnabled ||
+                      isLoading ||
+                      isSaving ||
+                      isLaunching ||
+                      isAutosaving
                     }
                   />
                 </Stack>

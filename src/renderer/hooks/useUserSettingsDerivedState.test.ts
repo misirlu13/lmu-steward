@@ -20,6 +20,7 @@ describe('useUserSettingsDerivedState', () => {
     syncOnIntervalMinutes: 5,
     persistDashboardFiltersEnabled: false,
     experimentalFeaturesEnabled: false,
+    liveCaptureEnabled: false,
     // removed replayLogMatchThresholdMinutes
     anonymizeDriverData: false,
     telemetryCacheEnabled: true,
@@ -62,6 +63,7 @@ describe('useUserSettingsDerivedState', () => {
       syncOnIntervalMinutes: 5,
       persistDashboardFiltersEnabled: false,
       experimentalFeaturesEnabled: false,
+      liveCaptureEnabled: false,
       anonymizeDriverData: false,
       telemetryCacheEnabled: true,
       clearCacheOnExit: false,
