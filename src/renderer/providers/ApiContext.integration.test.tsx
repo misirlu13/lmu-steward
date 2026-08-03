@@ -46,6 +46,7 @@ describe('ApiContext integration', () => {
       subscribeToApiChannel,
     } = useApi();
     const [sessionInfoStatus, setSessionInfoStatus] = useState('none');
+    const [liveDriverCount, setLiveDriverCount] = useState('none');
 
     useEffect(() => {
       return subscribeToApiChannel(
@@ -53,6 +54,18 @@ describe('ApiContext integration', () => {
         (data: unknown) => {
           const payload = data as { status?: string } | null;
           setSessionInfoStatus(String(payload?.status ?? 'unknown'));
+        },
+      );
+    }, [subscribeToApiChannel]);
+
+    useEffect(() => {
+      return subscribeToApiChannel(
+        CONSTANTS.API.GET_LIVE_SESSION_DATA,
+        (data: unknown) => {
+          const payload = data as { data?: { drivers?: unknown[] } } | null;
+          setLiveDriverCount(
+            String(payload?.data?.drivers?.length ?? 'unknown'),
+          );
         },
       );
     }, [subscribeToApiChannel]);
@@ -72,6 +85,7 @@ describe('ApiContext integration', () => {
           {String(hasApiStatusResponse)}
         </div>
         <div data-testid="session-info-status">{sessionInfoStatus}</div>
+        <div data-testid="live-driver-count">{liveDriverCount}</div>
         <button type="button" onClick={markReplayCacheResetRequired}>
           mark replay cache reset
         </button>
@@ -104,6 +118,35 @@ describe('ApiContext integration', () => {
       expect(sendMessageMock).toHaveBeenCalledWith(
         CONSTANTS.API.GET_USER_SETTINGS,
       );
+    });
+  });
+
+  // The message bus only dispatches channels that appear in the handler map, so
+  // a channel the provider itself holds no state for still needs an entry. The
+  // Live view went blank against a real session because this one was missing:
+  // main replied, and the reply was received and dropped.
+  it('delivers live session data to a subscriber', async () => {
+    render(
+      <ApiProvider>
+        <TestConsumer />
+      </ApiProvider>,
+    );
+
+    expect(handlers[CONSTANTS.API.GET_LIVE_SESSION_DATA]).toBeDefined();
+
+    act(() => {
+      handlers[CONSTANTS.API.GET_LIVE_SESSION_DATA]?.({
+        status: 'success',
+        data: {
+          status: { state: 'live' },
+          drivers: [{}, {}, {}],
+          incidents: [],
+        },
+      });
+    });
+
+    await waitFor(() => {
+      expect(screen.getByTestId('live-driver-count').textContent).toBe('3');
     });
   });
 

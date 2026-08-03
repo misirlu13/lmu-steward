@@ -10,21 +10,16 @@ import React, {
 import { CONSTANTS } from '@constants';
 import {
   GetReplaysRequest,
-<<<<<<< HEAD
+  ImportedReplayRecord,
   LiveSessionStatus,
   LMUReplay,
-  LoadingState,
-  ReplaySyncStatus,
-} from '@types';
-=======
-  ImportedReplayRecord,
-  LMUReplay,
+  StewardDecision,
+  StewardDecisionStore,
   LoadingState,
   PersistedDashboardView,
   ReplaySyncStatus,
 } from '@types';
 import { initializeMessageBus, sendMessage } from '../utils/postMessage';
->>>>>>> feature/v1.5.0-update
 
 interface ReplayResponse {
   status: string;
@@ -62,6 +57,13 @@ export interface ExportReplayPayload {
   session: string;
   timestamp: number;
   logDataFileName: string;
+}
+
+export interface ExportSessionDataPayload {
+  /** Suggested filename only; the main process owns the actual path. */
+  fileName: string;
+  contents: string;
+  format: 'csv' | 'markdown' | 'json';
 }
 
 export interface ExportWeekendPayload {
@@ -253,11 +255,8 @@ const toExportResult = (
 interface ApiContextType {
   isConnected: boolean;
   hasApiStatusResponse: boolean;
-<<<<<<< HEAD
   liveSessionStatus: LiveSessionStatus;
-=======
   hasUserSettingsResponse: boolean;
->>>>>>> feature/v1.5.0-update
   quickViewEnabled: boolean;
   experimentalFeaturesEnabled: boolean;
   persistDashboardFiltersEnabled: boolean;
@@ -301,6 +300,9 @@ interface ApiContextType {
   deleteImportedReplays: (hashes: string[]) => void;
   exportReplay: (request: ExportReplayPayload) => void;
   exportWeekend: (request: ExportWeekendPayload) => void;
+  exportSessionData: (request: ExportSessionDataPayload) => void;
+  stewardDecisions: StewardDecisionStore;
+  saveStewardDecision: (decision: StewardDecision) => void;
   exportProgress: ExportProgressState | null;
   exportResult: ExportResultState | null;
   clearExportResult: () => void;
@@ -313,11 +315,8 @@ interface ApiContextType {
 const ApiContext = createContext<ApiContextType>({
   isConnected: false,
   hasApiStatusResponse: false,
-<<<<<<< HEAD
   liveSessionStatus: { state: 'detached' },
-=======
   hasUserSettingsResponse: false,
->>>>>>> feature/v1.5.0-update
   quickViewEnabled: false,
   experimentalFeaturesEnabled: false,
   persistDashboardFiltersEnabled: false,
@@ -360,6 +359,9 @@ const ApiContext = createContext<ApiContextType>({
   deleteImportedReplays: () => {},
   exportReplay: () => {},
   exportWeekend: () => {},
+  exportSessionData: () => {},
+  stewardDecisions: {},
+  saveStewardDecision: () => {},
   exportProgress: null,
   exportResult: null,
   clearExportResult: () => {},
@@ -390,9 +392,11 @@ export const ApiProvider: React.FC<{ children: React.ReactNode }> = ({
     processed: 0,
     total: 0,
   });
-  const [liveSessionStatus, setLiveSessionStatus] = useState<LiveSessionStatus>({
-    state: 'detached',
-  });
+  const [liveSessionStatus, setLiveSessionStatus] = useState<LiveSessionStatus>(
+    {
+      state: 'detached',
+    },
+  );
   const [isReplayActive, setIsReplayActive] = useState<boolean | null>(null);
   const [isReplayCacheResetRequired, setIsReplayCacheResetRequired] =
     useState(false);
@@ -691,6 +695,24 @@ export const ApiProvider: React.FC<{ children: React.ReactNode }> = ({
     sendMessage(CONSTANTS.API.POST_EXPORT_REPLAY, request);
   }, []);
 
+  const [stewardDecisions, setStewardDecisions] =
+    useState<StewardDecisionStore>({});
+
+  const saveStewardDecision = useCallback((decision: StewardDecision) => {
+    // Applied locally first so a call registers instantly under time pressure;
+    // main replies with the authoritative collection.
+    setStewardDecisions((previous) => ({
+      ...previous,
+      [decision.id]: decision,
+    }));
+    sendMessage(CONSTANTS.API.POST_STEWARD_DECISION, decision);
+  }, []);
+
+  const exportSessionData = useCallback((request: ExportSessionDataPayload) => {
+    setExportResult(null);
+    sendMessage(CONSTANTS.API.POST_EXPORT_SESSION_DATA, request);
+  }, []);
+
   const exportWeekend = useCallback((request: ExportWeekendPayload) => {
     if (request.sessions.length === 0) {
       return;
@@ -745,6 +767,13 @@ export const ApiProvider: React.FC<{ children: React.ReactNode }> = ({
               : next,
           );
         },
+      ),
+      // The provider holds no live session state of its own — the Live view
+      // subscribes directly. It still needs an entry here, because the message
+      // bus only dispatches channels present in this map, and without one main
+      // replies into nothing.
+      [CONSTANTS.API.GET_LIVE_SESSION_DATA]: createHandler(
+        CONSTANTS.API.GET_LIVE_SESSION_DATA,
       ),
       [CONSTANTS.API.GET_API_STATUS]: createHandler(
         CONSTANTS.API.GET_API_STATUS,
@@ -934,6 +963,36 @@ export const ApiProvider: React.FC<{ children: React.ReactNode }> = ({
         CONSTANTS.API.PUSH_EXPORT_PROGRESS,
         (data: unknown) => {
           setExportProgress(data as ExportProgressState);
+        },
+      ),
+      [CONSTANTS.API.GET_STEWARD_DECISIONS]: createHandler(
+        CONSTANTS.API.GET_STEWARD_DECISIONS,
+        (data: unknown) => {
+          const payload = data as {
+            status?: string;
+            data?: StewardDecisionStore;
+          };
+          if (payload?.status === 'success' && payload.data) {
+            setStewardDecisions(payload.data);
+          }
+        },
+      ),
+      [CONSTANTS.API.POST_STEWARD_DECISION]: createHandler(
+        CONSTANTS.API.POST_STEWARD_DECISION,
+        (data: unknown) => {
+          const payload = data as {
+            status?: string;
+            data?: StewardDecisionStore;
+          };
+          if (payload?.status === 'success' && payload.data) {
+            setStewardDecisions(payload.data);
+          }
+        },
+      ),
+      [CONSTANTS.API.POST_EXPORT_SESSION_DATA]: createHandler(
+        CONSTANTS.API.POST_EXPORT_SESSION_DATA,
+        (data: unknown) => {
+          setExportResult(toExportResult(data, 1));
         },
       ),
       [CONSTANTS.API.POST_EXPORT_REPLAY]: createHandler(
@@ -1162,35 +1221,19 @@ export const ApiProvider: React.FC<{ children: React.ReactNode }> = ({
     };
     checkConnection();
     sendMessage(CONSTANTS.API.GET_USER_SETTINGS);
+    // Loaded once at startup; every later change comes back on the write reply.
+    sendMessage(CONSTANTS.API.GET_STEWARD_DECISIONS);
     const _id = setInterval(checkConnection, apiStatusInterval);
     return () => {
       clearInterval(_id);
     };
   }, [apiStatusInterval]);
 
-<<<<<<< HEAD
-  const contextValue: ApiContextType = {
-    isConnected,
-    hasApiStatusResponse,
-    liveSessionStatus,
-    quickViewEnabled,
-    lastReplaySyncAt,
-    isReplaySyncInProgress: activeReplaySyncRequestCount > 0,
-    replaySyncStatus,
-    isReplayActive,
-    currentTrackMap,
-    replays,
-    currentReplay,
-    loadingState,
-    markReplayCacheResetRequired,
-    requestReplays,
-    subscribeToApiChannel,
-  };
-=======
   const contextValue: ApiContextType = useMemo(
     () => ({
       isConnected,
       hasApiStatusResponse,
+      liveSessionStatus,
       hasUserSettingsResponse,
       quickViewEnabled,
       experimentalFeaturesEnabled,
@@ -1231,6 +1274,9 @@ export const ApiProvider: React.FC<{ children: React.ReactNode }> = ({
       deleteImportedReplays,
       exportReplay,
       exportWeekend,
+      exportSessionData,
+      stewardDecisions,
+      saveStewardDecision,
       exportProgress,
       exportResult,
       clearExportResult,
@@ -1239,6 +1285,7 @@ export const ApiProvider: React.FC<{ children: React.ReactNode }> = ({
     [
       isConnected,
       hasApiStatusResponse,
+      liveSessionStatus,
       hasUserSettingsResponse,
       quickViewEnabled,
       experimentalFeaturesEnabled,
@@ -1279,13 +1326,15 @@ export const ApiProvider: React.FC<{ children: React.ReactNode }> = ({
       deleteImportedReplays,
       exportReplay,
       exportWeekend,
+      exportSessionData,
+      stewardDecisions,
+      saveStewardDecision,
       exportProgress,
       exportResult,
       clearExportResult,
       subscribeToApiChannel,
     ],
   );
->>>>>>> feature/v1.5.0-update
 
   return (
     <ApiContext.Provider value={contextValue}>{children}</ApiContext.Provider>

@@ -17,12 +17,25 @@ import {
   CareerFilters,
   GetReplaysRequest,
   PersistedDashboardView,
+  StewardDecision,
 } from '@types';
 import MenuBuilder from './menu';
 import { resolveHtmlPath } from './util';
 import { CONSTANTS } from '../../constants';
 import { getApiStatus } from './api/api-status';
-import { getLiveSessionStatus } from './api/live-session';
+import {
+  getLiveSessionStatus,
+  getLiveSessionDataHandler,
+} from './api/live-session';
+import { startLiveCapture, stopLiveCapture } from './api/live-capture';
+import {
+  ExportSessionDataRequest,
+  postExportSessionData,
+} from './api/session-export';
+import {
+  getStewardDecisionsHandler,
+  postStewardDecisionHandler,
+} from './api/steward-decisions';
 import {
   getReplays,
   getIsReplayActive,
@@ -167,6 +180,9 @@ const CHANNEL_CALLBACK_HANDLERS: Partial<
   // GET REQUESTS
   [CONSTANTS.API.GET_API_STATUS]: withEventOnly(getApiStatus),
   [CONSTANTS.API.GET_LIVE_SESSION_STATUS]: withEventOnly(getLiveSessionStatus),
+  [CONSTANTS.API.GET_LIVE_SESSION_DATA]: withEventOnly(
+    getLiveSessionDataHandler,
+  ),
   [CONSTANTS.API.GET_TRACK_MAP]: withEventOnly(getTrackMap),
   [CONSTANTS.API.GET_REPLAYS]: withEventAndData<GetReplaysRequest | undefined>(
     getReplays,
@@ -252,6 +268,14 @@ const CHANNEL_CALLBACK_HANDLERS: Partial<
     withEventAndData<ExportReplayRequest>(postExportReplay),
   [CONSTANTS.API.POST_EXPORT_WEEKEND]:
     withEventAndData<ExportWeekendRequest>(postExportWeekend),
+  [CONSTANTS.API.POST_EXPORT_SESSION_DATA]:
+    withEventAndData<ExportSessionDataRequest>(postExportSessionData),
+  [CONSTANTS.API.GET_STEWARD_DECISIONS]: withEventOnly(
+    getStewardDecisionsHandler,
+  ),
+  [CONSTANTS.API.POST_STEWARD_DECISION]: withEventAndData<StewardDecision>(
+    postStewardDecisionHandler,
+  ),
   [CONSTANTS.API.POST_SELECT_IMPORT_FILE]:
     withEventAndData<SelectImportFileRequest>(postSelectImportFile),
   [CONSTANTS.API.POST_VALIDATE_IMPORT_PAIR]:
@@ -693,6 +717,8 @@ app.on('window-all-closed', () => {
     replayAutoSyncIntervalId = null;
   }
 
+  stopLiveCapture();
+
   // Respect the OSX convention of having the application in memory even
   // after all windows have been closed
   if (process.platform !== 'darwin') {
@@ -704,6 +730,9 @@ app
   .whenReady()
   .then(() => {
     createWindow();
+    if (!devModeEnabled) {
+      startLiveCapture();
+    }
     app.on('activate', () => {
       // On macOS it's common to re-create a window in the app when the
       // dock icon is clicked and there are no other windows open.

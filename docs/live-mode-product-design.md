@@ -5,6 +5,7 @@
 **Companion documents:**
 - [Live Capture Investigation](live-capture-investigation.md) — technical feasibility, shared memory contract, sidecar architecture
 - [Export & Steward Decisions](export-and-decisions-design.md) — the decision layer, record schema, and the three export surfaces
+- [Live ↔ Replay Reconciliation](live-replay-reconciliation-design.md) — persisting live capture and linking it to a replay for post-session review
 
 **Question:** Given that finished sessions are already parsed from log files and synced to the DB, what should live mode actually *be* to be maximally valuable to a steward during a race?
 
@@ -25,6 +26,7 @@
 - [What Not To Build](#what-not-to-build)
 - [Layout](#layout)
 - [Relationship to Existing UI](#relationship-to-existing-ui)
+- [Gating](#gating)
 - [Scope Recommendation](#scope-recommendation)
 - [Field Reference](#field-reference)
 
@@ -89,6 +91,19 @@ Bradley Drake(0) reported contact (2003.53) with Immovable
 
 **This is the feature that justifies the whole project.**
 
+> ✅ **Built and verified live 2026-08-02.** The dossier renders derived evidence
+> and both cars' throttle/brake/speed traces from a captured window. Two
+> deliberate departures from the table below, both forced by what the data
+> actually supports:
+>
+> - **No corner names.** LMU exposes none, so inventing "T4" would be a lie.
+>   The dossier reports sector plus distance around the lap.
+> - **No "under yellow at the time".** `mSectorFlag` proved not to be a
+>   yellow-flag boolean — see the Tier 3 warning.
+>
+> Durations that ran to the edge of the capture window render as a floor
+> (`6.0s+`) rather than an exact figure.
+
 The raw incident string above is nearly unadjudicable on its own. But because the sidecar keeps a rolling buffer of scoring data, the moment an `<Incident>` line arrives we can snapshot the surrounding seconds and turn that prose into a structured, adjudicable record:
 
 | Evidence | Source field(s) |
@@ -97,7 +112,7 @@ The raw incident string above is nearly unadjudicable on its own. But because th
 | Closing speed and who was ahead | `mPos`, `mLocalVel`, `mLapDist` |
 | On track or off | `mPathLateral` vs `mTrackEdge` |
 | Same class or traffic incident | `mVehicleClass` |
-| Blue flag being shown | `mFlag` (value to be confirmed in Phase 0) |
+| Blue flag being shown | `mFlag == 6` (**confirmed** in a live multiclass field) |
 | Spin vs. clean contact | `mLocalRot`, `mLocalRotAccel` |
 | Human or AI | `mControl` (0 = local, 1 = AI, 2 = remote) |
 | Corner / sector | `mLapDist`, `mSector` |
@@ -140,12 +155,17 @@ and `TelemInfoV01` contains `mUnfilteredThrottle`, `mUnfilteredBrake`, and `mUnf
 
 **If those slots are genuinely populated for all cars in multiplayer**, the dossier can carry throttle and brake traces for both drivers covering the seconds before contact. That is literally the evidence real stewards argue about — *"did he brake-check me?"* becomes a brake trace rather than a shouting match.
 
-> **⚠ Unverified.** In rFactor 2, detailed telemetry is typically populated only for vehicles the local sim simulates fully. Remote cars in a multiplayer client may be interpolated or empty. This has **not** been tested.
+> **✅ VERIFIED 2026-07-28 — remote telemetry is fully populated.** In a public online practice session at Laguna Seca, every vehicle reporting `mControl == 2` carried live, changing throttle, brake, and steering values, sampled repeatedly over several minutes.
 >
-> **Make this an explicit Phase 0 test:** dump `activeVehicles` and sample brake/throttle values for two remote cars during a live online race.
->
-> - If populated → this is the flagship capability, and Tier 1 should be resequenced to include it.
-> - If not → everything in Tier 1 still stands on scoring data alone. No plan depends on this.
+> **This capability is real.** Tier 1 should be resequenced to include throttle/brake traces in the dossier — it is the strongest evidence the tool can offer, and it turns the most-argued question in stewarding into a measurement.
+
+**Capture shape: rolling buffer, snapshot on incident — never continuous recording.**
+
+At 50Hz × 3 channels × ~30 cars, continuous capture is a firehose that would be stored forever and read almost never. Instead keep a rolling in-memory window (~30 seconds is roughly 1–2 MB resident) and persist only the ~10 seconds surrounding each `<Incident>`.
+
+> ⚠️ **A trace alone can mislead.** A brake spike is innocent if there is a corner there. Always capture `mPos`, `mLocalVel`, and `mLapDist` from the same window and present them together — the trace is only evidence when read with position context. Those fields are needed for the dossier regardless.
+
+What it answers: brake-checking (a defender's brake spike with no corner), divebombs (attacker braking late or not at all), blue-flag compliance (did the lapped car actually lift), and avoidability (the gap between contact and any input change).
 
 ---
 
@@ -168,15 +188,52 @@ The genuinely novel capability. A steward cannot watch 40 cars in a 24-hour race
 **Detection the game does not report.**
 Solo spins and off-tracks without contact never generate an `<Incident>` line. Yaw rate (`mLocalRot`) combined with `mPathLateral` vs `mTrackEdge` catches them.
 
+**Driver detail view.**
+The queue and dossier are *incident-scoped*. This view is **escalation-scoped**, and exists to answer one question: *"is this a pattern?"* — asked before deciding on a driver's fifth incident rather than their first.
+
+Reached from the watchlist, from any driver chip in the queue, or by search when a league receives a complaint about a specific car mid-race.
+
+Contents:
+
+- Session-cumulative incidents, with outcomes
+- Track-limit strikes against **this session's** threshold (see the per-session warning below)
+- Outstanding penalties (`mNumPenalties`)
+- Prior decisions on this driver and the reasoning recorded for each
+- Current position, class, gap, and whether they are in the pits
+- Penalty assignment, including the accumulation case — see [Export & Steward Decisions](export-and-decisions-design.md)
+
+It must **not** re-render the incident dossier. That is one click away, and duplicating it makes both screens worse.
+
+> ⚠️ `mTrackLimitsStepsPerPenalty` is **per session**, not a constant — observed as `40` at Daytona and `24` at Laguna Seca. Read it live; a hardcoded denominator misreports every driver's standing.
+
+**A small proximity map — not a full field map.**
+On the driver view, a compact map showing the focused driver plus nearby cars answers *"are they in traffic, and who is around them?"* That is cheap and directly serves the escalation question. It is deliberately **not** the full-field live map, which belongs in Tier 3 and is discussed there.
+
 ---
 
 ## Tier 3 — Race Control Awareness
 
 **Live field map.**
-Distinct from the existing aggregate heatmap — a real-time map showing all cars by class with incident flares. The `TrackMap` component and track point data already exist, so the rendering substrate is in place.
+A real-time map showing all cars by class with incident flares, distinct from the existing aggregate heatmap. The `TrackMap` component and track point data already exist, so the rendering substrate is in place.
+
+> **Rank this below the rest of Tier 3.** It is lower value than it first appears: the steward already has LMU running with a real spectator camera, and for *judging* an incident a 2D map is strictly worse than the 3D view — which is one click away via camera focus. What the map genuinely adds is **overview** — the whole field at once, which no single camera can give. That is real, but secondary to triage, and it competes with the queue for attention.
+>
+> The escalation-scoped proximity map on the driver detail view (Tier 2) delivers most of the practical benefit at a fraction of the cost. Build that first and see whether the full-field version is still wanted.
 
 **Session control panel.**
-Surface `mSessionTimeRemaining` as a real countdown, and `mSectorFlag[3]` for **local yellows** — waved yellows at incident sites, a real and useful signal for policing overtakes under yellow.
+Surface `mSessionTimeRemaining` as a real countdown.
+
+> 🛑 **`mSectorFlag[3]` does not mean what the header says.** It was read live at
+> Daytona through an entirely green practice session and held a constant `11` in
+> all three sectors. It is not a local-yellow boolean. The capture layer carries
+> it through raw and the dossier does not render it; the "local yellow in
+> sector" evidence row has been removed rather than left showing a value that
+> would be wrong. Settle what it means in a session with a genuine local yellow
+> before designing anything on it.
+>
+> This is the second instance of the general rule below, and it is worth
+> stating plainly: **every engine-level field in `InternalsPlugin.hpp` is a
+> claim to be tested, not a fact.**
 
 > ⚠️ **Do not build on full-course yellow.** `mGamePhase == 6` (FCY / safety car) and `mYellowFlagState` are defined in `InternalsPlugin.hpp`, but that header is the **gMotor engine API inherited from rFactor 2** — a field existing there says nothing about whether LMU populates it.
 >
@@ -194,7 +251,7 @@ Blue-flag disputes are among the most contested topics in endurance sim racing, 
 
 Both are stewardable and both are argued about. Combined with relative positions over time, the flag state measures *how long* blue has been shown and whether the car yielded — turning a recurring argument into a measurement.
 
-> ⚠️ **Do not hardcode the flag value.** `InternalsPlugin.hpp` documents `mFlag` as "currently only 0=green or 6=blue", but that comment describes rFactor 2 and LMU may encode differently or extend the set. The *feature* is confirmed; the *encoding* is not. Decode it empirically in Phase 0 (see the verification checklist in the capture investigation) and drive the UI from a named constant, not a literal `6`.
+> ✅ **Encoding confirmed 2026-07-28.** Both `0` (green) and `6` (blue) were observed in a live multiclass online session, matching the header's documented values. Still drive the UI from a named constant rather than a literal `6`, so a future LMU change is a one-line fix.
 
 This converts a recurring argument into a measurement, and it is specific to the series LMU simulates.
 
@@ -244,6 +301,16 @@ The capability seam already exists: Quick View mode in `src/renderer/utils/repla
 At session end, live mode hands off — but this is a **promotion step**, not just a data sync. `SME_END_SESSION` fires, LMU writes the XML, the existing sync ingests it, live decisions are promoted from provisional to reviewable and linked to the now-available `replay_hash`, and unresolved flags surface as a review worklist.
 
 **The post-session replay view then becomes the review surface for calls made live.** The two halves of the product close the loop on each other: live mode captures decisions under pressure, and the replay view is where they get confirmed or revised with full evidence.
+
+---
+
+## Gating
+
+Live stewarding ships behind the **experimental feature flag**, and live capture is a **user setting that defaults to off**.
+
+Most users want the replay browser and the driver dashboard, and have no interest in a stewarding tool. Capture also takes a machine-wide lock shared with other consumers of LMU's shared memory, so not attaching at all is the strongest guarantee of not disturbing wheel LED software or motion rigs.
+
+Capture is all-or-nothing per install rather than armed per session: the incident worth reviewing is the one nobody expected, and live capture exists to hold the seconds *before* it. See [Settings and Gating](live-replay-reconciliation-design.md#settings-and-gating).
 
 ---
 

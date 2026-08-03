@@ -1,10 +1,11 @@
 # Live Capture Investigation
 
-**Status:** Research complete — no implementation started
-**Date:** 2026-07-28
+**Status:** Phases 0–3 implemented and verified against a running game
+**Date:** 2026-07-28, updated 2026-08-02
 **Companion documents:**
 - [Live Mode — Product Design](live-mode-product-design.md) — what live mode should be, and why it is not a variant of the replay UI
 - [Export & Steward Decisions](export-and-decisions-design.md) — the decision layer, record schema, and the three export surfaces
+- [Live ↔ Replay Reconciliation](live-replay-reconciliation-design.md) — persisting live capture and linking it to a replay for post-session review
 
 **Question:** What would it take to capture incidents live during a race, from the game's perspective, rather than parsing session log files after the fact?
 
@@ -127,7 +128,104 @@ The interface is **push-based, not polled**. The header's usage example blocks o
                              process local copy outside the lock
 ```
 
-Copy under the lock, process outside it. `CopySharedMemoryObj` is already selective — it only copies sections whose event flag fired, and only `mNumVehicles` / `activeVehicles` entries rather than the full 104 slots.
+Copy under the lock, process outside it. `CopySharedMemoryObj` only walks `mNumVehicles` / `activeVehicles` entries rather than the full 104 slots.
+
+> ⚠️ **`generic.events[]` is a queue, not an array indexed by event type.**
+> The header's own `CopySharedMemoryObj` reads
+> `if (src.generic.events[SME_UPDATE_SCORING])`, which invites indexing *by* the
+> enum. That is wrong, and reading it that way fires bogus session transitions on
+> every update.
+>
+> Observed in a live session, the slots hold **fired event types in order**, with
+> `SME_MAX` (16) as the terminator:
+>
+> ```
+> [ 0] = 6   SME_START_SESSION
+> [ 1] = 16  <terminator>
+> [ 2..15] = 16
+> ```
+>
+> Read it as a list, stopping at the first value `>= SME_MAX`:
+>
+> ```cpp
+> for (int i = 0; i < SME_MAX; ++i) {
+>   const unsigned e = generic.events[i];
+>   if (e >= SME_MAX) break;
+>   // handle event type e
+> }
+> ```
+>
+> **Corollary: the results stream buffer is not cleared between updates.** The same
+> delta stays visible for many consecutive ticks, so a naive reader re-emits every
+> incident ~10 times. Deduplicate on content before publishing anything downstream.
+
+> ⚠️ **The shared memory objects do not exist at the main menu.** `LMU_Data` and
+> `LMU_Data_Event` are published when a session loads, so an attach attempt from
+> the menu fails with `ERROR_FILE_NOT_FOUND` (2). The reader must poll and wait
+> rather than treating that as a fatal error — and must not report "plugins are
+> disabled" on the strength of it.
+
+> 🛑 **Do not use `SharedMemoryLock::Lock()` from the SDK.** Its slow path is
+> broken:
+>
+> ```cpp
+> return WaitForSingleObject(mWaitEventHandle, dwMilliseconds) == WAIT_OBJECT_0;
+> ```
+>
+> It returns `true` **without re-acquiring `busy`**, and leaks a `waiters`
+> increment. A caller that trusts it then calls `Unlock()`, which clears the busy
+> flag while another process legitimately holds the lock.
+>
+> This matters far beyond our own reader: `LMU_SharedMemoryLockData` is a **single
+> machine-wide lock shared by every consumer of LMU's shared memory**, including
+> in-process plugins (dashboards, wheel LED/RPM software, motion rigs). Releasing
+> a lock we never held corrupts mutual exclusion for all of them, and is a
+> plausible cause of third-party telemetry tools failing while our reader runs.
+>
+> **Rule for any reader we ship: never block, never queue, never release a lock we
+> did not genuinely acquire.** Use a bounded try-acquire and skip the update on
+> contention — missing a tick is harmless, since the buffer is not cleared between
+> updates and content is deduplicated anyway. The spike now does this and reports
+> a skipped-tick count so contention is visible.
+
+> 🛑 **`CopySharedMemoryObj` gates its copies on garbage.** Each section is
+> copied only `if (src.generic.events[SME_UPDATE_SCORING])` — that is, if slot
+> **10** of the events array is non-zero. Since `events[]` is a queue terminated
+> by `SME_MAX` (16), slot 10 almost always holds the terminator, which is
+> truthy, so everything gets copied for entirely the wrong reason.
+>
+> It happens to work, and would keep working right up until slot 10 legitimately
+> held `SME_ENTER` (0), at which point scoring would silently stop updating.
+> Anything that keeps a rolling buffer cannot rest on that. The sidecar now uses
+> its own `CopyShared`, which copies every section unconditionally with bounds
+> checks and decodes the event queue separately.
+>
+> The SDK's version also writes its NUL terminator at `scoringStream[size]`
+> without checking, which overruns when the stream fills the buffer exactly.
+
+> ⚠️ **`mSectorFlag` is not a local-yellow boolean.** The header describes it as
+> "whether there are any local yellows at the moment in each sector". Read live
+> at Daytona through a green practice session it held a constant **11** in all
+> three sectors. Whatever it carries, it is not what the header says, and no UI
+> should present it as a yellow flag. It is carried through raw so a session
+> with a real local yellow can settle it. This is the same trap as `mGamePhase`:
+> the header describes the engine, not the game.
+
+> ✅ **The two clocks agree.** `ScoringInfoV01.mCurrentET` (the clock `et=` is
+> quoted in) and `TelemInfoV01.mElapsedTime` were measured 0.04–0.14s apart.
+> Incident contexts are still anchored by searching for the frame whose
+> `mCurrentET` is nearest the quoted `et`, so nothing depends on that continuing
+> to hold; the observed anchor error is 0.0–0.1s, bounded by the scoring tick.
+
+> ℹ️ **Telemetry ticks nearer 25Hz than 50Hz.** Measured at ~0.039s between
+> updates at Daytona. Trace resolution follows the game's rate, not the sample
+> floor, so frames carry their own timestamps and consumers must not assume
+> constant spacing.
+
+> ⚠️ **Strings are UTF-8.** Driver names arrive as UTF-8 bytes
+> (`Sébastien Buemi`, `José María López`). Since driver name is the join key for
+> incident parsing, any consumer must treat these as UTF-8 rather than the local
+> code page.
 
 Note the example takes LMU's PID as a command-line argument — Studio 397 designed this for an **external child process**, which directly supports the sidecar architecture below.
 
@@ -168,7 +266,20 @@ Beyond the results stream, `VehicleScoringInfoV01` and `ScoringInfoV01` expose s
 - `mTrackLimitsStepsPerPenalty`
 
 **Identity**
-- `mSteamID` — **stable driver identity.** `mID` is explicitly documented as reusable in multiplayer after a driver leaves, so it is not a safe key. This is likely a worthwhile improvement to the existing app independent of live capture.
+- `mSteamID` — **stable driver identity, but only online.** `mID` is explicitly documented as reusable in multiplayer after a driver leaves, so it is not a safe key on its own.
+
+> ⚠️ **`mSteamID` is `0` for every AI entry and every offline session.** A
+> 54-car single-player field at Daytona reported 54 drivers and exactly **one**
+> distinct Steam ID. Keying the UI on it collapsed the entire field to one
+> identity — duplicate React keys, and a driver lookup that returned whichever
+> car happened to be first.
+>
+> The rule is therefore: key on `mSteamID` **when it is populated**, and fall
+> back to the slot otherwise. Neither field is sufficient alone. See
+> `driverIdentity` in `src/renderer/hooks/useLiveSessionData.ts`.
+>
+> Note this cuts the other way for the camera: `/rest/watch/focus/<slot-id>`
+> addresses cars by **slot**, so both keys have to be carried.
 
 ---
 
@@ -274,6 +385,62 @@ Throwaway standalone executable. Map `LMU_Data`, print `mResultsStream` and scor
 
 Items 1 and 3 are the high-stakes ones — 1 gates the feature, 3 gates the flagship dossier capability.
 
+### Results — online practice run, 2026-07-28 ✅ PHASE 0 COMPLETE
+
+WeatherTech Raceway Laguna Seca, ~29 human drivers, public practice. **All seven items answered.**
+
+| # | Result |
+| --- | --- |
+| 3 | ✅ **PASS — remote telemetry is fully populated.** Vehicles reporting `mControl == 2` carried live, changing throttle/brake/steering (`thr=0.97 brk=0.00 str=-0.06`), sampled repeatedly over many minutes. |
+| 4 | ✅ **PASS — `mFlag == 6` confirmed as blue.** Both `0` and `6` observed in a live multiclass field, matching the header's documented values. |
+
+**Item 3 is the flagship result.** Throttle and brake traces for *other* drivers are available, which makes the incident dossier's strongest capability real: *"did he brake-check me?"* becomes a brake trace rather than an argument. Tier 1 should be resequenced to include traces.
+
+**Findings that change the design:**
+
+- **`mTrackLimitsStepsPerPenalty` is per-session, not a constant.** It read `40` at Daytona and `24` at Laguna Seca. Strike tracking must read it live per session; hardcoding a denominator would misreport every driver's standing.
+- **A single collision produces two `<Incident>` records** — one from each car's perspective, ~0.1s apart, with *different* magnitudes:
+  ```
+  <Incident et="6235.4">matteo stefano(50) reported contact (210.78) with another vehicle Rafael Cruvinel(14)</Incident>
+  <Incident et="6235.5">Rafael Cruvinel(14) reported contact (125.23) with another vehicle matteo stefano(50)</Incident>
+  ```
+  The triage queue must fold these into **one incident with two parties**, or every car-to-car contact appears twice and the unreviewed count is inflated. The differing magnitudes are themselves evidence — they indicate which car absorbed more of the impact.
+- **`<TrackLimits>` is emitted twice on the live stream.** The written session XML contains it once (verified against `fixture-test-set/`), so this is live-stream-specific. Without deduplication, live counts would be double the post-session counts and the two views would disagree.
+- **`<Sector>` elements carry more than sector times.** They also report damage: `<Sector et="6211.2">S F#7575(54) reports new suspension damage</Sector>`. Damage is stewarding-relevant and arrives on a channel the design had not considered.
+- **Driver names are user-supplied and messy** — `S F#7575`, `Bence Biro#6702`, `matteo stefano`. Names contain `#`, digits, and arbitrary casing. This reinforces `mSteamID` as the join key; name matching would be fragile.
+- **`mNumVehicles` changes continuously** in open practice (29 → 24 as drivers joined and left). Any field-state UI must treat the roster as volatile rather than fixed at session start.
+- **New incident object kinds:** `Sign`, alongside `Immovable` and `Cone`.
+
+### Results — single-player run, 2026-07-28
+
+Daytona Road Course, 54 vehicles, practice session.
+
+| # | Result |
+| --- | --- |
+| 1 | ✅ **PASS.** Read succeeded against a running game. Anti-cheat did not interfere. |
+| 2 | ✅ Mapping opened with plugins enabled. Note it is absent at the main menu — see the warning above. |
+| 3 | ⏳ **Still open.** All 54 slots populated with changing throttle/brake/steering, but every vehicle reported `mControl == 1` (local AI). Single player cannot answer this; an online race is still required. |
+| 4 | ⏳ **Still open.** Only `mFlag == 0` (green) observed — no blue-flag situation arose. |
+| 5 | ✅ **Populated.** `mTrackLimitsStepsPerPenalty = 40`, `mTrackLimitsStepsPerPoint = 4`. |
+| 6 | ✅ **Consistent with the assumption.** Phases `0 → 5` (green flag) only; `mYellowFlagState` stayed `0`. No FCY. |
+| 7 | ✅ Layout matches the baseline below; `mSession` moved `0 → 1` as the session loaded. |
+
+**Confirmed stream formats.** All three steward event kinds appear live:
+
+```
+<Incident et="114.8">Bradley Drake(0) reported contact (5004.90) with another vehicle Robert Kubica(15)</Incident>
+<Incident et="66.1">Bradley Drake(0) reported contact (8954.12) with Immovable</Incident>
+<TrackLimits Driver="Bradley Drake" ID="0" Lap="0" WarningPoints="23.75" CurrentPoints="23.75" Resolution="5" et="25.7">Invalid Lap Cut Track</TrackLimits>
+<TrackLimits Driver="Bradley Drake" ID="0" Lap="0" WarningPoints="0" CurrentPoints="23.75" Resolution="7" et="73.9">No Further Action</TrackLimits>
+```
+
+Notes that affect the design:
+
+- **The element is `<TrackLimits>`, plural** — matching the existing parser fix that bumped `REPLAY_CACHE_SCHEMA_VERSION` to 3. Live capture confirms that fix independently.
+- **`<TrackLimits>` is far richer than assumed** — it carries `WarningPoints`, `CurrentPoints`, `Resolution`, and a verdict as text content (`Invalid Lap Cut Track`, `No Further Action`). The design treated track limits as a bare count; it is closer to an adjudicated event with a running points total.
+- **Contact events name the object struck**: `another vehicle <Name>(<ID>)`, `Immovable`, `Cone`. Only the first is a two-driver incident; a parser must not assume every `<Incident>` has two parties.
+- **Not every incident is stewardable.** Hitting a cone or a wall generates an `<Incident>` identical in shape to car-to-car contact. The triage queue needs to classify and de-prioritise solo events, or a steward drowns in their own off-track excursions.
+
 **Measured layout baseline** (item 7), from compiling against the shipped headers on 2026-07-28:
 
 | Symbol | Bytes |
@@ -295,8 +462,33 @@ Stream live session and driver state only, no incidents. Proves the sidecar, the
 **Phase 2 — Live incidents**
 Parse `mResultsStream` into the existing incident model. Reuses current parser semantics.
 
-**Phase 3 — Context capture**
+**Phase 3 — Context capture** ✅ **DONE, verified live 2026-08-02**
 Rolling position/velocity buffer; snapshot the N seconds around each incident. This is the feature people are actually asking for.
+
+The sidecar keeps a ~30s in-memory ring of per-car frames — world position and
+velocity, yaw rate, throttle/brake/steering from telemetry, merged with lap
+distance, lateral offset, track edge, flag and sector from scoring — and emits a
+window of `[-6s, +2s]` per contact. Nothing is recorded continuously.
+
+Because the window straddles the incident, and only the "before" half exists
+when the `<Incident>` line arrives, each incident is parked and emitted once the
+session clock has run past it. Evidence derivation (closing speed, who was
+ahead, on/off track, class interaction, braking, blue-flag duration, peak yaw)
+happens in TypeScript in `src/main/api/live-incident-evidence.ts`, where it can
+be unit tested; the sidecar only captures and emits.
+
+**Verified against a live session at Daytona, 2026-08-02.** A real LMP2-into-GT3
+contact produced both cars' traces: the LMP2 arriving under braking 13 m/s
+faster, closing from ~15m to ~5m, and losing 4 m/s in a single sample at
+contact. That capture is checked in as
+`src/main/api/live-incident-context.fixture.ts` and is what the evidence tests
+run against.
+
+> ⚠️ **A duration measured against a finite window is a floor, not a fact.**
+> "Blue flag shown for 6.0s" may mean the flag was shown for six seconds, or
+> that it was already showing when the window began. Held durations carry a
+> `truncated` flag and render as `6.0s+` when the measurement ran off the end of
+> the capture.
 
 **Phase 4 — Derived detection**
 Detections the game does not report itself, built on captured context.

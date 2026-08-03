@@ -30,11 +30,9 @@ npm-debug.log.*
 
 /fixture-test-set
 
-<<<<<<< HEAD
 # Phase 0 spike build output (dev tool, never shipped)
 tools/live-capture-spike/build
-=======
+
 # Working design and implementation plans. Local-only so they survive branch
 # switches and never reach origin.
 /plans
->>>>>>> feature/v1.5.0-update

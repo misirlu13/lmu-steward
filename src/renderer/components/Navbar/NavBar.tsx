@@ -6,30 +6,19 @@ import IconButton from '@mui/material/IconButton';
 import Typography from '@mui/material/Typography';
 import Container from '@mui/material/Container';
 import Avatar from '@mui/material/Avatar';
-<<<<<<< HEAD
 import Badge from '@mui/material/Badge';
-import Tooltip from '@mui/material/Tooltip';
-import SettingsRoundedIcon from '@mui/icons-material/SettingsRounded';
-import SensorsRoundedIcon from '@mui/icons-material/SensorsRounded';
-import { useNavigate } from 'react-router-dom';
-import { useEffect, useState } from 'react';
-=======
 import Button from '@mui/material/Button';
 import Tooltip from '@mui/material/Tooltip';
 import SettingsRoundedIcon from '@mui/icons-material/SettingsRounded';
+import SensorsRoundedIcon from '@mui/icons-material/SensorsRounded';
 import { useLocation, useNavigate } from 'react-router-dom';
->>>>>>> feature/v1.5.0-update
 import { CONSTANTS } from '@constants';
 import { useNavbar } from '@/renderer/providers/NavbarContext';
 import { sendMessage } from '../../utils/postMessage';
 import { getProfileInitials } from '../../utils/profileInitials';
 import navLogoIcon from '../../../../assets/icons/48x48.png';
-<<<<<<< HEAD
-import { useNavbar } from '@/renderer/providers/NavbarContext';
 import { useApi } from '../../providers/ApiContext';
 import { deriveLiveIndicator } from '../../hooks/useLiveIndicator';
-=======
->>>>>>> feature/v1.5.0-update
 
 export const NavBar = () => {
   const navigate = useNavigate();

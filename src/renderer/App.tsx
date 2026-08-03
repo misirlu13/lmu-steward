@@ -15,11 +15,8 @@ import { NavBar } from './components/Navbar/NavBar';
 import theme from './theme';
 import { ReplayView } from './views/Replay';
 import { DriverAnalysisView } from './views/DriverAnalysis';
-<<<<<<< HEAD
 import { LiveView } from './views/Live';
-=======
 import { DriverDashboardView } from './views/DriverDashboard';
->>>>>>> feature/v1.5.0-update
 import { UserSettingsView } from './views/UserSettings';
 import { LmuDisconnectedDialog } from './components/Common/LmuDisconnectedDialog';
 import { AppExitConfirmDialog } from './components/Common/AppExitConfirmDialog';

@@ -13,6 +13,8 @@ import {
   ImportedReplayRecord,
   LMUReplay,
   ProfileCacheStore,
+  StewardDecision,
+  StewardDecisionStore,
 } from '@types';
 
 type SqliteDatabase = import('better-sqlite3').Database;
@@ -67,6 +69,12 @@ const IMPORTED_REPLAYS_KEY = 'importedReplays';
  * they must not sit in a cache that is wiped on schema bumps.
  */
 const CAREER_SESSIONS_KEY = 'careerSessions';
+
+/**
+ * Backed by the steward_decisions table, for the same reason the two above get
+ * their own: a decision is human judgement that exists nowhere else on disk.
+ */
+const STEWARD_DECISIONS_KEY = 'stewardDecisions';
 const RESERVED_LEGACY_KEYS = new Set(['__internal__', LEGACY_SYNC_STAMPS_KEY]);
 
 const SQLITE_OPEN_ATTEMPTS = 3;
@@ -172,6 +180,24 @@ class SqliteNamespaceStore implements PersistentStore {
       }
 
       return imported;
+    }
+
+    if (this.namespace === 'main' && key === STEWARD_DECISIONS_KEY) {
+      const rows = this.db
+        .prepare(
+          'SELECT id, payload FROM steward_decisions ORDER BY decided_at DESC',
+        )
+        .all() as Array<{ id: string; payload: string }>;
+      const decisions: StewardDecisionStore = {};
+
+      for (const row of rows) {
+        const record = deserializeValue(row.payload);
+        if (record !== undefined) {
+          decisions[row.id] = record as StewardDecision;
+        }
+      }
+
+      return decisions;
     }
 
     if (this.namespace === 'main' && key === CAREER_SESSIONS_KEY) {
@@ -291,6 +317,90 @@ class SqliteNamespaceStore implements PersistentStore {
       );
 
       replaceImported(importedEntries);
+      return;
+    }
+
+    /*
+      Upsert only, for the strongest reason of any table here: a decision is a
+      human judgement that exists nowhere else, and one made under appeal is
+      evidence. A partial map from any caller must leave the rest standing.
+    */
+    if (this.namespace === 'main' && key === STEWARD_DECISIONS_KEY) {
+      const decisionEntries = Object.entries(
+        isRecord(value) ? value : {},
+      ) as Array<[string, StewardDecision]>;
+
+      const upsertDecisions = this.db.transaction(
+        (entries: Array<[string, StewardDecision]>) => {
+          const statement = this.db.prepare(`
+            INSERT INTO steward_decisions (
+              id,
+              session_key,
+              session_track,
+              session_type,
+              session_date,
+              replay_hash,
+              incident_id,
+              basis,
+              driver_steam_id,
+              driver_slot_id,
+              driver_name,
+              outcome,
+              state,
+              status,
+              steward_author,
+              decided_at,
+              payload,
+              updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(id) DO UPDATE SET
+              session_key = excluded.session_key,
+              session_track = excluded.session_track,
+              session_type = excluded.session_type,
+              session_date = excluded.session_date,
+              replay_hash = excluded.replay_hash,
+              incident_id = excluded.incident_id,
+              basis = excluded.basis,
+              driver_steam_id = excluded.driver_steam_id,
+              driver_slot_id = excluded.driver_slot_id,
+              driver_name = excluded.driver_name,
+              outcome = excluded.outcome,
+              state = excluded.state,
+              status = excluded.status,
+              steward_author = excluded.steward_author,
+              decided_at = excluded.decided_at,
+              payload = excluded.payload,
+              updated_at = excluded.updated_at
+          `);
+
+          const updatedAt = Date.now();
+
+          for (const [id, record] of entries) {
+            statement.run(
+              id,
+              record?.sessionKey ?? '',
+              record?.sessionTrack ?? null,
+              record?.sessionType ?? null,
+              Number(record?.sessionDate ?? 0),
+              record?.replayHash ?? null,
+              record?.incidentId ?? null,
+              record?.basis ?? 'incident',
+              record?.target?.steamId ?? null,
+              record?.target?.slotId ?? null,
+              record?.target?.driverName ?? null,
+              record?.outcome ?? '',
+              record?.state ?? 'DECIDED',
+              record?.status ?? 'provisional',
+              record?.stewardAuthor ?? '',
+              Number(record?.decidedAt ?? updatedAt),
+              serializeValue(record),
+              updatedAt,
+            );
+          }
+        },
+      );
+
+      upsertDecisions(decisionEntries);
       return;
     }
 
@@ -549,6 +659,42 @@ const initializeSqliteSchema = (db: SqliteDatabase) => {
     CREATE INDEX IF NOT EXISTS idx_career_sessions_track
       ON career_sessions(track_folder, track_layout);
 
+    /*
+      Steward decisions, and the same reasoning again: a decision is the output
+      of human judgement and exists nowhere else, so it must not sit anywhere
+      that gets emptied. Nothing here is ever dropped by the app.
+
+      The columns exist so a season-long query — "this driver's penalties across
+      every session in a date range" — can be served without loading and
+      scanning every decision ever made. The full record stays in payload.
+    */
+    CREATE TABLE IF NOT EXISTS steward_decisions (
+      id TEXT PRIMARY KEY,
+      session_key TEXT NOT NULL,
+      session_track TEXT,
+      session_type TEXT,
+      session_date INTEGER NOT NULL DEFAULT 0,
+      replay_hash TEXT,
+      incident_id TEXT,
+      basis TEXT NOT NULL,
+      driver_steam_id TEXT,
+      driver_slot_id INTEGER,
+      driver_name TEXT,
+      outcome TEXT NOT NULL,
+      state TEXT NOT NULL,
+      status TEXT NOT NULL,
+      steward_author TEXT,
+      decided_at INTEGER NOT NULL DEFAULT 0,
+      payload TEXT NOT NULL,
+      updated_at INTEGER NOT NULL
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_steward_decisions_session
+      ON steward_decisions(session_key);
+
+    CREATE INDEX IF NOT EXISTS idx_steward_decisions_driver
+      ON steward_decisions(driver_steam_id, session_date DESC);
+
     CREATE TABLE IF NOT EXISTS meta (
       key TEXT PRIMARY KEY,
       value TEXT NOT NULL
@@ -638,6 +784,14 @@ const readImportedStamps = (db: SqliteDatabase): Map<string, number> => {
   return new Map(rows.map((row) => [row.hash, row.updated_at]));
 };
 
+const readDecisionStamps = (db: SqliteDatabase): Map<string, number> => {
+  const rows = db
+    .prepare('SELECT id, updated_at FROM steward_decisions')
+    .all() as Array<{ id: string; updated_at: number }>;
+
+  return new Map(rows.map((row) => [row.id, row.updated_at]));
+};
+
 const readCareerStamps = (db: SqliteDatabase): Map<string, number> => {
   const rows = db
     .prepare('SELECT session_key, updated_at FROM career_sessions')
@@ -659,6 +813,47 @@ const reconcileLegacyMainStore = (
   const kvStamps = readKvStamps(db, 'main');
   const replayStamps = readReplayStamps(db);
   const importedStamps = readImportedStamps(db);
+  const decisionStamps = readDecisionStamps(db);
+  const decisionStatement = db.prepare(`
+    INSERT INTO steward_decisions (
+      id,
+      session_key,
+      session_track,
+      session_type,
+      session_date,
+      replay_hash,
+      incident_id,
+      basis,
+      driver_steam_id,
+      driver_slot_id,
+      driver_name,
+      outcome,
+      state,
+      status,
+      steward_author,
+      decided_at,
+      payload,
+      updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT(id) DO UPDATE SET
+      session_key = excluded.session_key,
+      session_track = excluded.session_track,
+      session_type = excluded.session_type,
+      session_date = excluded.session_date,
+      replay_hash = excluded.replay_hash,
+      incident_id = excluded.incident_id,
+      basis = excluded.basis,
+      driver_steam_id = excluded.driver_steam_id,
+      driver_slot_id = excluded.driver_slot_id,
+      driver_name = excluded.driver_name,
+      outcome = excluded.outcome,
+      state = excluded.state,
+      status = excluded.status,
+      steward_author = excluded.steward_author,
+      decided_at = excluded.decided_at,
+      payload = excluded.payload,
+      updated_at = excluded.updated_at
+  `);
   const careerStamps = readCareerStamps(db);
   const careerStatement = db.prepare(`
     INSERT INTO career_sessions (
@@ -809,6 +1004,46 @@ const reconcileLegacyMainStore = (
           record?.logFileName ?? null,
           record?.logPath ?? null,
           Number(record?.importedAt ?? 0),
+          serializeValue(record),
+          stamp,
+        );
+      }
+
+      continue;
+    }
+
+    /*
+      Decisions merge per id and are never removed. Without this branch they
+      would fall through to kv_store, where the table reader would never find
+      them again.
+    */
+    if (key === STEWARD_DECISIONS_KEY) {
+      const decisionEntries = Object.entries(
+        isRecord(value) ? value : {},
+      ) as Array<[string, StewardDecision]>;
+
+      for (const [id, record] of decisionEntries) {
+        if ((decisionStamps.get(id) ?? -1) >= stamp) {
+          continue;
+        }
+
+        decisionStatement.run(
+          id,
+          record?.sessionKey ?? '',
+          record?.sessionTrack ?? null,
+          record?.sessionType ?? null,
+          Number(record?.sessionDate ?? 0),
+          record?.replayHash ?? null,
+          record?.incidentId ?? null,
+          record?.basis ?? 'incident',
+          record?.target?.steamId ?? null,
+          record?.target?.slotId ?? null,
+          record?.target?.driverName ?? null,
+          record?.outcome ?? '',
+          record?.state ?? 'DECIDED',
+          record?.status ?? 'provisional',
+          record?.stewardAuthor ?? '',
+          Number(record?.decidedAt ?? stamp),
           serializeValue(record),
           stamp,
         );

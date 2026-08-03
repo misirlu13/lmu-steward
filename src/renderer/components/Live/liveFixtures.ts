@@ -1,3 +1,6 @@
+import { LiveHeldDuration, LiveIncidentFrame } from '@types';
+import { followingCarFrames, leadingCarFrames } from './liveTraceFixture';
+
 export type LiveIncidentState = 'NEW' | 'FLAGGED' | 'DECIDED';
 
 export type LiveIncidentClassification =
@@ -14,25 +17,68 @@ export type LiveDecisionOutcome =
   | 'no-action'
   | 'note';
 
+/**
+ * A penalty is always against a driver; "no action" is a finding about the
+ * incident as a whole and has no target. Treating them alike is what let the
+ * first version record a penalty against a two-car incident with no indication
+ * of who it was for — a call nobody could act on.
+ */
+const DRIVER_SCOPED_OUTCOMES = new Set<LiveDecisionOutcome>([
+  'penalty-5s',
+  'penalty-10s',
+  'drive-through',
+]);
+
+export const isDriverScopedOutcome = (outcome: LiveDecisionOutcome): boolean =>
+  DRIVER_SCOPED_OUTCOMES.has(outcome);
+
 export type LiveSessionPhase = 'green' | 'red' | 'finished';
 
+/**
+ * `steamId` is the identity key, but it is not always a Steam ID: offline and
+ * AI entries all report `0`, so the capture layer substitutes a slot-derived
+ * key. Treat it as an opaque identity, never as something to show or send.
+ *
+ * `slotId` is what LMU's camera API addresses, and is the only thing that can
+ * be used to focus a car.
+ */
 export interface LiveDriverRef {
   steamId: string;
+  slotId?: number;
   displayName: string;
   carNumber: string;
   carClass: string;
   isAiDriver?: boolean;
 }
 
+export interface LiveIncidentCarEvidence {
+  steamId: string;
+  speedKph?: number;
+  peakDecelMps2?: number;
+  brakeApplied?: LiveHeldDuration;
+  blueFlagShown?: LiveHeldDuration;
+  peakYawRateDegPerSec?: number;
+  offTrack?: boolean;
+}
+
 export interface LiveIncidentEvidence {
   closingSpeedKph?: number;
   aheadDriverSteamId?: string;
-  offTrack?: LiveDriverRef['steamId'][];
   isTrafficIncident?: boolean;
-  blueFlagShownSeconds?: number;
-  peakYawRateDegPerSec?: number;
-  cornerLabel?: string;
-  localYellowInSector?: boolean;
+  /** LMU names no corners, so this is sector plus distance around the lap. */
+  trackPositionLabel?: string;
+  cars: LiveIncidentCarEvidence[];
+}
+
+/**
+ * The captured window for one car. Held alongside the derived numbers rather
+ * than instead of them: a brake trace only means something read together with
+ * where the car was and how fast it was going.
+ */
+export interface LiveIncidentTrace {
+  steamId: string;
+  displayName: string;
+  frames: LiveIncidentFrame[];
 }
 
 export interface LiveIncident {
@@ -46,6 +92,9 @@ export interface LiveIncident {
   atFaultSteamId?: string;
   rawText: string;
   evidence: LiveIncidentEvidence;
+  traces?: LiveIncidentTrace[];
+  /** How precisely the contact instant could be located, in seconds. */
+  anchorErrorSeconds?: number;
   state: LiveIncidentState;
   decision?: LiveDecisionOutcome;
   decisionReasoning?: string;
@@ -53,6 +102,7 @@ export interface LiveIncident {
 
 export interface LiveStanding {
   steamId: string;
+  slotId?: number;
   position: number;
   classPosition: number;
   displayName: string;
@@ -61,7 +111,10 @@ export interface LiveStanding {
   gapToLeader: string;
   lastLap: string;
   outstandingPenalties: number;
+  /** Track-limit elements that actually added warning points. */
   trackLimitStrikes: number;
+  /** LMU's own running warning-points total, when it has reported one. */
+  trackLimitPoints?: number;
   incidentCount: number;
   inPits: boolean;
   isAiDriver?: boolean;
@@ -76,12 +129,17 @@ export interface LivePressureBattle {
   isTraffic: boolean;
 }
 
+/**
+ * No sector flags here on purpose. `mSectorFlag` is documented as local yellows
+ * but reads a constant 11 in all three sectors through a green session, so
+ * there is nothing to render. See the Tier 3 warning in
+ * docs/live-mode-product-design.md.
+ */
 export interface LiveSessionState {
   trackName: string;
   sessionType: 'RACE' | 'QUALIFY' | 'PRACTICE';
   serverName: string;
   phase: LiveSessionPhase;
-  sectorFlags: [boolean, boolean, boolean];
   timeRemainingSeconds: number;
   lapsCompleted: number;
   trackLimitStepsPerPenalty: number;
@@ -139,7 +197,6 @@ export const liveSessionFixture: LiveSessionState = {
   sessionType: 'RACE',
   serverName: 'Endurance League — Round 4',
   phase: 'green',
-  sectorFlags: [false, true, false],
   timeRemainingSeconds: 4359,
   lapsCompleted: 41,
   trackLimitStepsPerPenalty: 4,
@@ -156,15 +213,46 @@ export const liveIncidentsFixture: LiveIncident[] = [
     contactMagnitude: 2003.53,
     drivers: [drivers.drake, drivers.lindqvist],
     atFaultSteamId: drivers.drake.steamId,
-    rawText: 'Bradley Drake(7) reported contact (2003.53) with Nils Lindqvist(92)',
+    rawText:
+      'Bradley Drake(7) reported contact (2003.53) with Nils Lindqvist(92)',
+    anchorErrorSeconds: 0.1,
     evidence: {
-      closingSpeedKph: 62.4,
+      closingSpeedKph: 28.4,
       aheadDriverSteamId: drivers.lindqvist.steamId,
       isTrafficIncident: true,
-      blueFlagShownSeconds: 8.2,
-      cornerLabel: 'T4 — Sector 1',
-      offTrack: [],
+      trackPositionLabel: 'Sector 3 · 3,808 m (66% of lap)',
+      cars: [
+        {
+          steamId: drivers.lindqvist.steamId,
+          speedKph: 147.7,
+          peakDecelMps2: 19.3,
+          brakeApplied: { seconds: 2, truncated: true },
+          blueFlagShown: { seconds: 8.2, truncated: true },
+          peakYawRateDegPerSec: 38.8,
+          offTrack: false,
+        },
+        {
+          steamId: drivers.drake.steamId,
+          speedKph: 164.8,
+          peakDecelMps2: 23.8,
+          brakeApplied: { seconds: 1.46, truncated: false },
+          peakYawRateDegPerSec: 42.4,
+          offTrack: false,
+        },
+      ],
     },
+    traces: [
+      {
+        steamId: drivers.lindqvist.steamId,
+        displayName: drivers.lindqvist.displayName,
+        frames: leadingCarFrames,
+      },
+      {
+        steamId: drivers.drake.steamId,
+        displayName: drivers.drake.displayName,
+        frames: followingCarFrames,
+      },
+    ],
     state: 'NEW',
   },
   {
@@ -181,8 +269,16 @@ export const liveIncidentsFixture: LiveIncident[] = [
       closingSpeedKph: 31.8,
       aheadDriverSteamId: drivers.vasquez.steamId,
       isTrafficIncident: false,
-      cornerLabel: 'T10 — Sector 2',
-      offTrack: [drivers.vasquez.steamId],
+      trackPositionLabel: 'Sector 2 · 2,140 m (41% of lap)',
+      cars: [
+        { steamId: drivers.vasquez.steamId, speedKph: 178.2, offTrack: true },
+        {
+          steamId: drivers.okonkwo.steamId,
+          speedKph: 191.4,
+          brakeApplied: { seconds: 0.4, truncated: false },
+          offTrack: false,
+        },
+      ],
     },
     state: 'NEW',
   },
@@ -195,10 +291,15 @@ export const liveIncidentsFixture: LiveIncident[] = [
     drivers: [drivers.ferrara],
     rawText: 'Gia Ferrara(77) spun',
     evidence: {
-      peakYawRateDegPerSec: 214.6,
-      cornerLabel: 'T13 — Sector 3',
-      offTrack: [drivers.ferrara.steamId],
-      isTrafficIncident: false,
+      trackPositionLabel: 'Sector 3 · 4,880 m (91% of lap)',
+      cars: [
+        {
+          steamId: drivers.ferrara.steamId,
+          speedKph: 96.4,
+          peakYawRateDegPerSec: 214.6,
+          offTrack: true,
+        },
+      ],
     },
     state: 'NEW',
   },
@@ -216,8 +317,11 @@ export const liveIncidentsFixture: LiveIncident[] = [
       closingSpeedKph: 48.1,
       aheadDriverSteamId: drivers.moreau.steamId,
       isTrafficIncident: true,
-      cornerLabel: 'T1 — Sector 1',
-      offTrack: [],
+      trackPositionLabel: 'Sector 1 · 420 m (8% of lap)',
+      cars: [
+        { steamId: drivers.moreau.steamId, speedKph: 224.6, offTrack: false },
+        { steamId: drivers.bot.steamId, speedKph: 238.1, offTrack: false },
+      ],
     },
     state: 'FLAGGED',
   },
@@ -230,8 +334,8 @@ export const liveIncidentsFixture: LiveIncident[] = [
     drivers: [drivers.lindqvist],
     rawText: 'Nils Lindqvist(92) exceeded track limits',
     evidence: {
-      cornerLabel: 'T4 — Sector 1',
-      offTrack: [drivers.lindqvist.steamId],
+      trackPositionLabel: 'Sector 1 · 1,180 m (22% of lap)',
+      cars: [{ steamId: drivers.lindqvist.steamId, offTrack: true }],
     },
     state: 'FLAGGED',
   },
@@ -249,13 +353,21 @@ export const liveIncidentsFixture: LiveIncident[] = [
       closingSpeedKph: 88.7,
       aheadDriverSteamId: drivers.ferrara.steamId,
       isTrafficIncident: true,
-      cornerLabel: 'T8 — Sector 2',
-      offTrack: [drivers.okonkwo.steamId],
-      localYellowInSector: true,
+      trackPositionLabel: 'Sector 2 · 2,960 m (56% of lap)',
+      cars: [
+        { steamId: drivers.ferrara.steamId, speedKph: 152.0, offTrack: false },
+        {
+          steamId: drivers.okonkwo.steamId,
+          speedKph: 188.3,
+          peakYawRateDegPerSec: 121.4,
+          offTrack: true,
+        },
+      ],
     },
     state: 'DECIDED',
     decision: 'penalty-10s',
-    decisionReasoning: 'Rejoined across the racing line under yellow, heavy contact.',
+    decisionReasoning:
+      'Rejoined across the racing line under yellow, heavy contact.',
   },
   {
     id: 'inc-0006',
@@ -270,8 +382,11 @@ export const liveIncidentsFixture: LiveIncident[] = [
       closingSpeedKph: 12.3,
       aheadDriverSteamId: drivers.moreau.steamId,
       isTrafficIncident: false,
-      cornerLabel: 'T1 — Sector 1',
-      offTrack: [],
+      trackPositionLabel: 'Sector 1 · 420 m (8% of lap)',
+      cars: [
+        { steamId: drivers.moreau.steamId, speedKph: 231.7, offTrack: false },
+        { steamId: drivers.drake.steamId, speedKph: 233.9, offTrack: false },
+      ],
     },
     state: 'DECIDED',
     decision: 'no-action',
@@ -411,4 +526,6 @@ export const livePressureFixture: LivePressureBattle[] = [
 export const findDriverBySteamId = (
   steamId: string | undefined,
 ): LiveDriverRef | undefined =>
-  steamId ? Object.values(drivers).find((d) => d.steamId === steamId) : undefined;
+  steamId
+    ? Object.values(drivers).find((d) => d.steamId === steamId)
+    : undefined;

@@ -1,10 +1,11 @@
 # Export & Steward Decisions — Design
 
-**Status:** Design proposal — no implementation started
-**Date:** 2026-07-28
+**Status:** Steps 0a and 0b implemented; cross-session export (0c) not started
+**Date:** 2026-07-28, updated 2026-08-03
 **Companion documents:**
 - [Live Capture Investigation](live-capture-investigation.md) — technical feasibility, shared memory contract, sidecar architecture
 - [Live Mode — Product Design](live-mode-product-design.md) — what live mode should be
+- [Live ↔ Replay Reconciliation](live-replay-reconciliation-design.md) — persisting live capture and linking it to a replay for post-session review
 
 **Question:** How does session data — including steward decisions — get out of the app and into a league's own spreadsheet, database, or published results post?
 
@@ -81,6 +82,27 @@ The primary surface. Lives on the replay view, operating on one synced session.
 **This is largely a serialization of view models that already exist.** The replay view already computes essentially all of it — see `replaySummaryViewModel.ts`, `useReplayDerivedData`, and the standings and timeline components. That makes session export substantially cheaper to build than a from-scratch feature, and it means **it can ship before the decision layer exists**, with decisions appearing as an additional section once that layer lands.
 
 **Scope options within a session:** whole session (the standard case), or single driver (for issuing an individual notice).
+
+> ✅ **Built 2026-08-03.** Whole-session scope only; single-driver is not built.
+> The record is assembled in `src/renderer/utils/sessionExportModel.ts` and
+> serialized by `sessionExportFormats.ts` — one model, three formats, so CSV,
+> Markdown and JSON can never disagree about what a session contained. The
+> renderer never picks a path: it sends a suggested filename that the main
+> process reduces to a basename before the save dialog sees it.
+>
+> Two things the implementation had to get right that the design did not call out:
+>
+> - **`driver_steam_id` is frequently absent.** LMU reports `0` for AI entries
+>   and offline sessions, so the export omits the field rather than writing `0`
+>   — a league joining on it would otherwise merge a whole field into one
+>   driver. See the identity warning in the companion capture document.
+> - **CSV needs a UTF-8 BOM.** Driver names are user-supplied UTF-8
+>   (`José María López`, `S F#7575`) and Excel assumes the system code page
+>   without one.
+>
+> The control is deliberately labelled **Export Data**, next to the existing
+> **Export Replay** — one produces a report, the other an archive of replay
+> files, and conflating them means someone posts a zip where they meant results.
 
 ---
 
@@ -174,10 +196,22 @@ Being able to show *"we called it live, reviewed it after, and changed it for th
 
 Proposed shape. Field names are indicative, not final.
 
+> ⚠️ **Not every penalty stems from a single incident.** A driver who crosses the
+> track-limit threshold earns a penalty tied to *accumulation across many
+> incidents*, not to any one of them. The same applies to a conduct penalty issued
+> for repeated contact. A schema that requires `incident_id` cannot express either,
+> and this surfaces the moment penalty assignment appears anywhere other than the
+> incident dossier — for example on the driver detail view.
+>
+> Hence `basis`, a nullable `incident_id`, and `contributing_incident_ids` below.
+> Cheap now, a migration later.
+
 ```
 decision
-├── id                     stable, generated at incident capture
-├── incident_id            stable reference to the source incident
+├── id                     stable, generated at capture
+├── basis                  incident | accumulation | conduct
+├── incident_id            required when basis = incident; null otherwise
+├── contributing_incident_ids[]   populated when basis = accumulation
 ├── replay_hash            null while live; populated after sync
 ├── session_track
 ├── session_type           RACE / QUALIFY / PRACTICE
@@ -207,9 +241,34 @@ decision_revision
 └── revised_at
 ```
 
+> 🛑 **Verified against a real export 2026-08-03: a replay-sourced export has no
+> Steam ID at all.** The session XML's `<Driver>` block carries no identity
+> element — name, team, car number, positions and laps, but no id. The value the
+> replay view exposes as `driverSid` resolves from the live standings API, so it
+> is empty for a synced replay, and where it is present it is a short numeric
+> LMU driver id (e.g. `3532`), not a 17-digit Steam ID.
+>
+> The export column is therefore labelled **Driver ID**, and the practical join
+> keys for a replay-sourced export are **car number and team**. Real Steam IDs
+> reach an export only through the decision layer, which gets them from live
+> capture's `mSteamID`.
+>
+> ⚠️ **`<ServerName>` is empty in every multiplayer log inspected — all of which
+> were `<Dedicated>0</Dedicated>`.** The two co-vary, so the field most likely
+> only carries a value on a hosted dedicated server, which is what a league
+> would run. Unconfirmed: no `Dedicated=1` sample exists to check the positive
+> case. The export omits the row when empty and reports `Dedicated server`
+> separately, so an absent name reads as "not a hosted server" rather than as
+> missing data.
+>
+> This is a strong argument for
+> [live↔replay reconciliation](live-replay-reconciliation-design.md): linking a
+> live capture to a replay is what would give a replay-sourced export the stable
+> driver identity this section assumes it already has.
+
 **`driver_steam_id` is the most important field in any export.** `mSteamID` from `VehicleScoringInfoV01` is a stable identity that lets a league join an export directly against their existing roster or licence-points database. Name matching breaks on nicknames, duplicate names, and mid-season renames. Slot `mID` is explicitly **not** suitable — the SDK documents it as reused after a driver leaves a multiplayer session.
 
-**`et_seconds` plus `replay_hash` makes an export a review manifest**, not just a log. An appeals panel can open it and jump straight to the moment in the replay.
+**`et_seconds` plus `replay_hash` makes an export a review manifest**, not just a log. An appeals panel can open it and jump straight to the moment in the replay. For `basis = accumulation` there is no single moment to jump to — the export should render the contributing incidents as a list of jump points instead.
 
 **`steward_author` should exist from day one** even in single-steward use. Multi-steward panels are the most likely future request; adding the field later means a migration.
 
@@ -274,8 +333,8 @@ Session export can ship **before** the decision layer, which makes the increment
 
 | Step | What | Why first |
 | --- | --- | --- |
-| **0a** | Session export on the replay view | Mostly serializes existing view models; delivers value immediately with no schema decisions |
-| **0b** | Decision layer + decisions section in session export | The schema decision, validated against real league workflow |
+| **0a** ✅ | Session export on the replay view | Mostly serializes existing view models; delivers value immediately with no schema decisions |
+| **0b** ✅ | Decision layer + decisions section in session export | The schema decision, validated against real league workflow |
 | **0c** | Cross-session decision export on the Dashboard | Reuses the existing date-range filter |
 | **1+** | Live mode | Inherits a proven decision model; live becomes another writer |
 

@@ -1,5 +1,5 @@
 import WarningAmberIcon from '@mui/icons-material/WarningAmber';
-import { Box, Chip, LinearProgress, Paper, Stack, Typography } from '@mui/material';
+import { Box, Chip, Paper, Stack, Typography } from '@mui/material';
 import { CarClassBadge } from '../CarClassBadge/CarClassBadge';
 import { AiBadge } from '../Common/AiBadge';
 import {
@@ -50,7 +50,7 @@ interface LiveFieldStateProps {
   battles: LivePressureBattle[];
   captureLabel: string;
   isCaptureLive: boolean;
-  onFocusCar: (steamId: string) => void;
+  onFocusCar: (slotId: number | undefined) => void;
 }
 
 export const LiveFieldState: React.FC<LiveFieldStateProps> = ({
@@ -61,14 +61,24 @@ export const LiveFieldState: React.FC<LiveFieldStateProps> = ({
   isCaptureLive,
   onFocusCar,
 }) => {
+  // A heuristic, deliberately. LMU reports track limits as a running points
+  // total whose relationship to mTrackLimitsStepsPerPenalty is not yet
+  // understood, so this counts events rather than pretending to know how close
+  // a driver is to a penalty. The previous rule compared a count of strikes
+  // against a count of steps — different units, so nothing ever qualified.
   const watchlist = [...standings]
     .filter(
       (s) =>
         s.outstandingPenalties > 0 ||
-        s.trackLimitStrikes >= session.trackLimitStepsPerPenalty - 1 ||
-        s.incidentCount >= 3,
+        s.trackLimitStrikes >= 2 ||
+        s.incidentCount >= 2,
     )
-    .sort((a, b) => b.incidentCount - a.incidentCount);
+    .sort(
+      (a, b) =>
+        b.outstandingPenalties - a.outstandingPenalties ||
+        b.incidentCount - a.incidentCount ||
+        b.trackLimitStrikes - a.trackLimitStrikes,
+    );
 
   const rankedBattles = [...battles].sort(
     (a, b) => b.closingSpeedKph - a.closingSpeedKph,
@@ -106,25 +116,6 @@ export const LiveFieldState: React.FC<LiveFieldStateProps> = ({
           <Typography variant="caption" color="text.secondary">
             {session.lapsCompleted} laps · {session.serverName}
           </Typography>
-          <Typography
-            variant="caption"
-            color="text.secondary"
-            sx={{ display: 'block', mt: 1 }}
-          >
-            Local yellows
-          </Typography>
-          <Stack direction="row" spacing={0.5} sx={{ mt: 0.5 }}>
-            {session.sectorFlags.map((isYellow, index) => (
-              <Chip
-                key={`sector-${index}`}
-                size="small"
-                label={`S${index + 1}`}
-                color={isYellow ? 'warning' : 'default'}
-                variant={isYellow ? 'filled' : 'outlined'}
-                sx={{ height: 20, fontSize: 10, minWidth: 44 }}
-              />
-            ))}
-          </Stack>
         </Section>
 
         <Section title="Watchlist">
@@ -135,12 +126,19 @@ export const LiveFieldState: React.FC<LiveFieldStateProps> = ({
           ) : null}
           <Stack spacing={1}>
             {watchlist.map((driver) => {
-              const strikeRatio =
-                driver.trackLimitStrikes / session.trackLimitStepsPerPenalty;
+              const summary = [
+                `${driver.incidentCount} inc`,
+                `${driver.trackLimitStrikes} limits`,
+                driver.trackLimitPoints !== undefined
+                  ? `${driver.trackLimitPoints.toFixed(2).replace(/\.?0+$/, '')} pts`
+                  : undefined,
+              ]
+                .filter(Boolean)
+                .join(' · ');
               return (
                 <Box
                   key={driver.steamId}
-                  onClick={() => onFocusCar(driver.steamId)}
+                  onClick={() => onFocusCar(driver.slotId)}
                   sx={{ cursor: 'pointer' }}
                 >
                   <Stack direction="row" alignItems="center" spacing={0.75}>
@@ -163,24 +161,9 @@ export const LiveFieldState: React.FC<LiveFieldStateProps> = ({
                       />
                     ) : null}
                   </Stack>
-                  <Stack
-                    direction="row"
-                    alignItems="center"
-                    spacing={1}
-                    sx={{ mt: 0.25 }}
-                  >
-                    <LinearProgress
-                      variant="determinate"
-                      value={Math.min(100, strikeRatio * 100)}
-                      color={strikeRatio >= 0.75 ? 'warning' : 'primary'}
-                      sx={{ flex: 1, height: 4, borderRadius: 2 }}
-                    />
-                    <Typography variant="caption" color="text.secondary">
-                      {driver.trackLimitStrikes}/
-                      {session.trackLimitStepsPerPenalty} limits ·{' '}
-                      {driver.incidentCount} inc
-                    </Typography>
-                  </Stack>
+                  <Typography variant="caption" color="text.secondary">
+                    {summary}
+                  </Typography>
                 </Box>
               );
             })}
@@ -202,7 +185,7 @@ export const LiveFieldState: React.FC<LiveFieldStateProps> = ({
                   alignItems="center"
                   spacing={0.75}
                   sx={{ cursor: 'pointer' }}
-                  onClick={() => onFocusCar(behind.steamId)}
+                  onClick={() => onFocusCar(behind.slotId)}
                 >
                   {battle.isTraffic ? (
                     <WarningAmberIcon
@@ -243,7 +226,7 @@ export const LiveFieldState: React.FC<LiveFieldStateProps> = ({
                 direction="row"
                 alignItems="center"
                 spacing={0.75}
-                onClick={() => onFocusCar(driver.steamId)}
+                onClick={() => onFocusCar(driver.slotId)}
                 sx={{ cursor: 'pointer', opacity: driver.inPits ? 0.55 : 1 }}
               >
                 <Typography

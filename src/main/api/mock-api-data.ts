@@ -254,7 +254,6 @@ export const mockApiData: Partial<Record<ApiChannel, MockApiResolver>> = {
       loadingStatus: getMockLoadingStatus(),
     },
   }),
-<<<<<<< HEAD
   [CONSTANTS.API.GET_LIVE_SESSION_STATUS]: () => ({
     status: 'success',
     data: {
@@ -264,10 +263,23 @@ export const mockApiData: Partial<Record<ApiChannel, MockApiResolver>> = {
       driverCount: 7,
     },
   }),
-  [CONSTANTS.API.GET_REPLAYS]: {
-=======
+  // Devmode keeps the renderer on its own fixtures, so this only needs to
+  // report a live session — the view supplies the field and incidents.
+  [CONSTANTS.API.GET_LIVE_SESSION_DATA]: () => ({
+    status: 'success',
+    data: {
+      status: {
+        state: 'live',
+        trackName: 'Bahrain International Circuit',
+        sessionType: 'RACE',
+        driverCount: 7,
+      },
+      drivers: [],
+      incidents: [],
+      useRendererFixtures: true,
+    },
+  }),
   [CONSTANTS.API.GET_REPLAYS]: () => ({
->>>>>>> feature/v1.5.0-update
     status: 'success',
     data: decorateMockReplays(),
   }),

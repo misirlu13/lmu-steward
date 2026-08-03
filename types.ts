@@ -563,9 +563,273 @@ export interface LiveSessionStatus {
   sessionType?: SessionType;
   driverCount?: number;
   detail?: string;
+  /** Session time left, seconds. Absent when no session is live. */
+  timeRemainingSeconds?: number;
+  /**
+   * Raw mGamePhase: 5 green, 7 stopped, 8 session over. Values 1-4 are race
+   * start procedure and 6 is FCY, which LMU does not meaningfully implement.
+   */
+  gamePhase?: number;
 }
 
 export type LiveIndicatorState = 'unavailable' | 'standby' | 'live';
+
+export type LiveIncidentKind = 'incident' | 'track-limits' | 'penalty';
+
+export interface LiveIncidentParty {
+  slotId?: number;
+  displayName: string;
+}
+
+export interface LiveCaptureIncident {
+  id: string;
+  kind: LiveIncidentKind;
+  etSeconds: number;
+  raw: string;
+  parties: LiveIncidentParty[];
+  /** For contact events: what was struck — another vehicle, Immovable, Cone, Sign. */
+  objectStruck?: string;
+  /** Contact magnitude; also the severity proxy. */
+  magnitude?: number;
+  /** TrackLimits only. */
+  warningPoints?: number;
+  currentPoints?: number;
+  resolution?: string;
+  lap?: number;
+  /**
+   * Sidecar-assigned sequence number. Contexts arrive seconds after the event
+   * itself, so they are matched back on this rather than on content.
+   */
+  seq?: number;
+  context?: LiveIncidentContext;
+  evidence?: LiveCaptureEvidence;
+}
+
+/**
+ * One sampled instant for one car, from the sidecar's rolling buffer.
+ *
+ * Position, velocity, driver inputs and track-relative offsets are captured
+ * together deliberately: a brake trace on its own is misleading, because a
+ * brake spike is innocent if there is a corner there.
+ */
+export interface LiveIncidentFrame {
+  /** Seconds relative to the incident. Negative is before contact. */
+  t: number;
+  /** World position, metres. */
+  x: number;
+  y: number;
+  z: number;
+  /** World velocity, m/s. */
+  vx: number;
+  vy: number;
+  vz: number;
+  /** Speed, m/s. */
+  speed: number;
+  /** Yaw rate, degrees/sec. */
+  yaw: number;
+  /** Driver inputs, unfiltered. Throttle and brake 0..1, steering -1..1. */
+  throttle: number;
+  brake: number;
+  steering: number;
+  /** Distance around the lap, metres. */
+  lapDist: number;
+  /** Lateral offset from the approximate centre path, metres. */
+  pathLateral: number;
+  /** Track edge on the car's side of the centre path, metres. */
+  trackEdge: number;
+  /** Primary flag shown to this car: 0 green, 6 blue. */
+  flag: number;
+  /** LMU's own encoding: 0 = sector 3, 1 = sector 1, 2 = sector 2. */
+  sector: number;
+  lap: number;
+}
+
+export interface LiveIncidentCarTrace {
+  slotId: number;
+  frames: LiveIncidentFrame[];
+}
+
+export interface LiveIncidentContext {
+  seq: number;
+  /** Session elapsed time of the incident, matching the et= attribute. */
+  et: number;
+  /** Track length in metres; needed to unwrap lap distance across the line. */
+  trackLength: number;
+  /**
+   * How far the anchor frame sits from the quoted et, in seconds. Bounded by
+   * the scoring tick — observed at 0.0–0.1s. `t: 0` is only this precise.
+   */
+  anchorErrorSeconds: number;
+  /**
+   * Raw mSectorFlag. The header calls this "local yellows per sector", but it
+   * read a constant 11 in all three sectors through a green practice session
+   * at Daytona, so it plainly is not a yellow-flag boolean. Carried through
+   * unconverted; do not build UI on it until a session with a real local
+   * yellow says what it means.
+   */
+  sectorFlags: [number, number, number];
+  cars: LiveIncidentCarTrace[];
+}
+
+/**
+ * How long some condition had held continuously up to the moment of contact.
+ *
+ * The captured window is finite, so a condition that was already true at its
+ * oldest frame is only a lower bound. Presenting that as an exact figure would
+ * be a lie a steward could be held to, hence the explicit flag.
+ */
+export interface LiveHeldDuration {
+  seconds: number;
+  truncated: boolean;
+}
+
+export interface LiveCaptureCarEvidence {
+  slotId: number;
+  /** Speed at the moment of contact, kph. */
+  speedKph?: number;
+  /** Peak deceleration in the second before contact, m/s². */
+  peakDecelMps2?: number;
+  brakeApplied?: LiveHeldDuration;
+  blueFlagShown?: LiveHeldDuration;
+  peakYawRateDegPerSec?: number;
+  offTrack?: boolean;
+}
+
+export interface LiveCaptureEvidence {
+  /** Rate of closure along the line between the two cars, kph. */
+  closingSpeedKph?: number;
+  /** Slot of the car that was ahead on track at contact. */
+  aheadSlotId?: number;
+  offTrackSlotIds: number[];
+  /** True when the parties were in different classes. */
+  isTrafficIncident?: boolean;
+  /** Where on track this happened, expressed honestly — LMU names no corners. */
+  trackPositionLabel?: string;
+  cars: LiveCaptureCarEvidence[];
+}
+
+export interface LiveCaptureDriver {
+  slotId: number;
+  steamId: string;
+  driverName: string;
+  vehicleName: string;
+  vehicleClass: string;
+  place: number;
+  lapsCompleted: number;
+  lastLapTime: number;
+  timeBehindLeader: number;
+  lapsBehindLeader: number;
+  penalties: number;
+  inPits: boolean;
+  /** -1 nobody, 0 local player, 1 local AI, 2 remote, 3 replay. */
+  control: number;
+  /** 0 green, 6 blue. */
+  flag: number;
+  pitStops: number;
+  finishStatus: number;
+}
+
+export interface LiveSessionData {
+  status: LiveSessionStatus;
+  drivers: LiveCaptureDriver[];
+  incidents: LiveCaptureIncident[];
+  trackLimitStepsPerPenalty?: number;
+}
+
+/**
+ * Steward decisions.
+ *
+ * The app proposes, the steward disposes: nothing here is ever written without
+ * a human confirming it, and the record captures who decided and why. Under
+ * appeal, "a named steward decided, here is the reasoning" is defensible where
+ * "the app decided" is not. See docs/export-and-decisions-design.md.
+ */
+
+export type StewardDecisionOutcome =
+  | 'penalty-5s'
+  | 'penalty-10s'
+  | 'drive-through'
+  | 'no-action'
+  | 'note';
+
+/**
+ * Not every penalty stems from one incident: a track-limit penalty is earned by
+ * accumulation across many, and a conduct penalty by repeated contact. A schema
+ * requiring a single incident id could express neither.
+ */
+export type StewardDecisionBasis = 'incident' | 'accumulation' | 'conduct';
+
+export type StewardDecisionState = 'FLAGGED' | 'DECIDED' | 'DEFERRED';
+
+export type StewardDecisionStatus =
+  | 'provisional'
+  | 'final'
+  | 'appealed'
+  | 'overturned';
+
+/**
+ * Who a decision is against.
+ *
+ * A penalty always has a target driver; "no action" is a finding about the
+ * incident as a whole and has none. Recording a penalty without a target — as
+ * the first live UI did — produces a call nobody can act on.
+ */
+export interface StewardDecisionTarget {
+  /** Absent for AI entries and offline sessions, where LMU reports 0. */
+  steamId?: string;
+  slotId?: number;
+  /** Display only. Driver names are user-supplied and change. */
+  driverName: string;
+}
+
+export interface StewardDecisionRevision {
+  revisionNumber: number;
+  /** Absent when the steward parked the incident rather than deciding it. */
+  outcome?: StewardDecisionOutcome;
+  reasoning?: string;
+  status: StewardDecisionStatus;
+  stewardAuthor: string;
+  revisedAt: number;
+}
+
+export interface StewardDecision {
+  id: string;
+  basis: StewardDecisionBasis;
+  /** Link, not identity — live incident ids do not survive a sidecar restart. */
+  incidentId?: string;
+  contributingIncidentIds?: string[];
+  /** Null while live; populated once the session syncs. */
+  replayHash?: string;
+
+  // Session context, denormalised so the record stands alone in an export.
+  sessionKey: string;
+  sessionTrack: string;
+  sessionType: string;
+  sessionDate?: number;
+  serverName?: string;
+
+  target?: StewardDecisionTarget;
+  involvedParties: StewardDecisionTarget[];
+
+  lapLabel?: string;
+  etSeconds?: number;
+  trackPositionLabel?: string;
+  classification?: string;
+
+  /**
+   * Absent for a FLAGGED record. Parking an incident is the most common live
+   * action and is not a call, so it must not be forced to carry one.
+   */
+  outcome?: StewardDecisionOutcome;
+  reasoning?: string;
+  stewardAuthor: string;
+  decidedAt: number;
+  state: StewardDecisionState;
+  status: StewardDecisionStatus;
+  revisions: StewardDecisionRevision[];
+}
+
+export type StewardDecisionStore = Record<string, StewardDecision>;
 
 export interface SessionIncidents {
   trackLimits: number;

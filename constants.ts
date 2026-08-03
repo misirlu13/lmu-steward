@@ -35,6 +35,7 @@ export const CONSTANTS = {
     GET_TRACK_MAP: 'get.track-map',
     GET_API_STATUS: 'get.api-status',
     GET_LIVE_SESSION_STATUS: 'get.live-session-status',
+    GET_LIVE_SESSION_DATA: 'get.live-session-data',
     GET_REPLAYS: 'get.replays',
     GET_TRACK_THUMBNAIL: 'get.track-thumbnail',
     GET_USER_SETTINGS: 'get.user-settings',
@@ -84,6 +85,10 @@ export const CONSTANTS = {
     POST_SET_IMPORTED_NOTE: 'post.set-imported-note',
     POST_EXPORT_REPLAY: 'post.export-replay',
     POST_EXPORT_WEEKEND: 'post.export-weekend',
+    /** The session *record* as CSV/Markdown/JSON — not the replay archive. */
+    POST_EXPORT_SESSION_DATA: 'post.export-session-data',
+    GET_STEWARD_DECISIONS: 'get.steward-decisions',
+    POST_STEWARD_DECISION: 'post.steward-decision',
     PUSH_IMPORT_PROGRESS: 'push.import-progress',
     PUSH_EXPORT_PROGRESS: 'push.export-progress',
   },

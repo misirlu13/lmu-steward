@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { CONSTANTS } from '@constants';
 import InfoOutlinedIcon from '@mui/icons-material/InfoOutlined';
@@ -41,6 +41,13 @@ import {
   computeReplayIncidentScorePerDriver,
 } from '../utils/replaySummaryViewModel';
 import { resolveReplayHeaderMetadata } from '../utils/replayMetadata';
+import { buildSessionExport } from '../utils/sessionExportModel';
+import {
+  SessionExportFormat,
+  sessionExportFileName,
+  serializeSessionExport,
+  toSessionMarkdown,
+} from '../utils/sessionExportFormats';
 import { useReplayDerivedData } from '../hooks/useReplayDerivedData';
 import { useReplayViewOrchestration } from '../hooks/useReplayViewOrchestration';
 
@@ -64,12 +71,15 @@ export const ReplayView: React.FC = () => {
     replays,
     experimentalFeaturesEnabled,
     exportReplay,
+    exportSessionData,
+    stewardDecisions,
     exportProgress,
     exportResult,
     clearExportResult,
     subscribeToApiChannel,
   } = useApi();
   const [isChatOpen, setIsChatOpen] = useState(false);
+  const [copyNotice, setCopyNotice] = useState<string | null>(null);
   const navigate = useNavigate();
   const {
     replayForView,
@@ -178,6 +188,54 @@ export const ReplayView: React.FC = () => {
       }),
     [lapsCompleted, maximumLaps],
   );
+
+  // Serializes what the view already holds. Nothing is recomputed here, so an
+  // export can never disagree with what the steward was looking at.
+  const buildExport = useCallback(
+    () =>
+      buildSessionExport({
+        replay: replayForView,
+        sessionLogData: currentSessionLogData,
+        rootLogData: replayForView?.logData ?? null,
+        standings,
+        incidents: timelineEvents,
+        lapsCompleted,
+        trackDisplayName: title,
+        decisions: Object.values(stewardDecisions),
+      }),
+    [
+      currentSessionLogData,
+      lapsCompleted,
+      replayForView,
+      standings,
+      stewardDecisions,
+      timelineEvents,
+      title,
+    ],
+  );
+
+  const onExportSessionData = useCallback(
+    (format: SessionExportFormat) => {
+      const data = buildExport();
+      exportSessionData({
+        fileName: sessionExportFileName(data, format),
+        contents: serializeSessionExport(data, format),
+        format,
+      });
+    },
+    [buildExport, exportSessionData],
+  );
+
+  const onCopySessionMarkdown = useCallback(async () => {
+    try {
+      await navigator.clipboard.writeText(toSessionMarkdown(buildExport()));
+      setCopyNotice('Session report copied to clipboard.');
+    } catch {
+      // Clipboard access can be refused outright, and a copy action that
+      // silently does nothing is worse than one that says it failed.
+      setCopyNotice('Could not copy to the clipboard.');
+    }
+  }, [buildExport]);
 
   const durationLabel = useMemo(
     () =>
@@ -325,6 +383,13 @@ export const ReplayView: React.FC = () => {
                   ? null
                   : 'This replay has no matched result log, so there is nothing to share alongside it.'
               }
+              sessionDataDisabledReason={
+                standings.length === 0
+                  ? 'This session has no synced standings yet, so there is nothing to export.'
+                  : null
+              }
+              onExportSessionData={onExportSessionData}
+              onCopySessionMarkdown={onCopySessionMarkdown}
               onExport={() => {
                 if (!currentReplay?.logDataFileName) {
                   return;
@@ -481,6 +546,12 @@ export const ReplayView: React.FC = () => {
       {/* A single session can still be 400 MB, so it gets the same feedback
           the dashboard's weekend export does. */}
       <ExportProgressDialog progress={exportProgress} />
+      <Snackbar
+        open={Boolean(copyNotice)}
+        autoHideDuration={4000}
+        onClose={() => setCopyNotice(null)}
+        message={copyNotice ?? ''}
+      />
       <Snackbar
         open={Boolean(exportResult && !exportResult.canceled)}
         autoHideDuration={exportResult?.status === 'error' ? 12000 : 8000}
