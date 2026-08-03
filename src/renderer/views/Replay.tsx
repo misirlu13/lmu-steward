@@ -119,9 +119,9 @@ export const ReplayView: React.FC = () => {
     [replayForView],
   );
 
-  const onBackToDashboard = () => {
+  const onBackToReplays = () => {
     sendMessage(CONSTANTS.API.POST_CLOSE_REPLAY);
-    navigate(`/`);
+    navigate('/replays');
   };
 
   const onViewReplayFromQuickView = () => {
@@ -304,9 +304,9 @@ export const ReplayView: React.FC = () => {
               variant="caption"
               color="text.secondary"
               sx={{ cursor: 'pointer' }}
-              onClick={onBackToDashboard}
+              onClick={onBackToReplays}
             >
-              Dashboard
+              Replays
             </Typography>
             <Typography variant="caption" color="text.secondary">
               /
@@ -367,7 +367,7 @@ export const ReplayView: React.FC = () => {
             ) : null}
           </Stack>
         }
-        onBack={onBackToDashboard}
+        onBack={onBackToReplays}
         actions={
           <Stack direction="row" spacing={1} alignItems="center">
             {isQuickViewModeActiveForReplay ? (

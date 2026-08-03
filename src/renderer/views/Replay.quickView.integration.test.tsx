@@ -180,7 +180,7 @@ describe('ReplayView quick view integration', () => {
 
     renderReplay();
 
-    fireEvent.click(screen.getByText('Dashboard'));
+    fireEvent.click(screen.getByText('Replays'));
 
     expect(sendMessageMock).toHaveBeenCalledWith(
       CONSTANTS.API.POST_CLOSE_REPLAY,

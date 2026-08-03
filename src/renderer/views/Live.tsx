@@ -316,7 +316,7 @@ export const LiveView: React.FC = () => {
               sx={{ cursor: 'pointer' }}
               onClick={() => navigate('/')}
             >
-              Dashboard
+              Driver
             </Typography>
             <Typography variant="caption" color="text.secondary">
               /
