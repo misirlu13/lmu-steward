@@ -14,6 +14,15 @@ import {
 } from '@types';
 import { parseStewardEvent } from './live-incident-parser';
 import { deriveIncidentEvidence } from './live-incident-evidence';
+import {
+  buildLiveIncidentContextRecord,
+  buildLiveIncidentRecord,
+  buildLiveSessionRecord,
+  deriveLiveSessionKey,
+  persistLiveIncident,
+  persistLiveIncidentContext,
+  persistLiveSession,
+} from './live-session-store';
 
 /**
  * Supervises the native live capture sidecar.
@@ -56,6 +65,12 @@ let incidents: LiveCaptureIncident[] = [];
 let trackLimitStepsPerPenalty: number | undefined;
 let incidentSequence = 0;
 let sessionKey = '';
+let sessionRaw = 0;
+let sessionTrackName = '';
+let lastSessionPersistAt = 0;
+
+/** Heartbeat for rewriting the session row; see the note in `applyStatus`. */
+const SESSION_PERSIST_MS = 30_000;
 
 // The sidecar numbers steward events itself so a context arriving seconds later
 // can be matched back to one. That counter restarts with the sidecar, so ids
@@ -91,13 +106,35 @@ const applyStatus = (parsed: Record<string, unknown>) => {
       ? parsed.trackName
       : undefined;
 
-  // A change of track or session type means a different session; drop incidents
-  // so the queue never mixes two sessions together.
-  const nextKey = `${trackName ?? ''}|${String(sessionType ?? '')}`;
-  if (nextKey !== sessionKey) {
+  /*
+    Session identity is derived from track, the raw session enum, and the
+    session's start instant reconstructed as `now - currentEt`. That last part
+    is what makes the key survive a sidecar restart: the supervisor respawns the
+    sidecar on exit, and the new process re-derives the same start from any
+    point in the session rather than opening a second one.
+
+    Falls back to track|type when the sidecar predates the currentEt field, so
+    an un-rebuilt sidecar still groups incidents rather than mixing sessions.
+  */
+  const rawSession = Number(parsed.session);
+  const currentEt = Number(parsed.currentEt);
+  const nextKey =
+    state === 'live' &&
+    Number.isFinite(currentEt) &&
+    Number.isFinite(rawSession)
+      ? deriveLiveSessionKey(trackName ?? '', rawSession, currentEt)
+      : `${trackName ?? ''}|${String(sessionType ?? '')}`;
+
+  // A change of key means a different session; drop incidents so the in-memory
+  // queue never mixes two sessions together.
+  const isNewSession = nextKey !== sessionKey;
+  if (isNewSession) {
     sessionKey = nextKey;
     incidents = [];
   }
+
+  sessionRaw = Number.isFinite(rawSession) ? rawSession : 0;
+  sessionTrackName = trackName ?? '';
 
   const steps = Number(parsed.trackLimitStepsPerPenalty);
   trackLimitStepsPerPenalty =
@@ -124,6 +161,32 @@ const applyStatus = (parsed: Record<string, unknown>) => {
     gamePhase: Number.isFinite(gamePhase) ? gamePhase : undefined,
   };
   latestAt = Date.now();
+
+  /*
+    Persisted on the first tick of a session and then at a slow heartbeat, not
+    on every status line. The row exists mainly so incidents have a session to
+    belong to, which has to be true before the first incident arrives — but
+    rewriting it at 1Hz for the whole of a 24-hour race would be tens of
+    thousands of pointless writes.
+  */
+  if (state === 'live') {
+    const now = Date.now();
+    if (isNewSession || now - lastSessionPersistAt >= SESSION_PERSIST_MS) {
+      lastSessionPersistAt = now;
+      persistLiveSession(
+        buildLiveSessionRecord({
+          sessionKey,
+          trackName: sessionTrackName,
+          session: sessionRaw,
+          sessionType: latest.sessionType,
+          driverCount: latest.driverCount,
+          trackLimitStepsPerPenalty,
+          drivers,
+          now,
+        }),
+      );
+    }
+  }
 };
 
 const applyStandings = (parsed: Record<string, unknown>) => {
@@ -163,10 +226,17 @@ const applyStewardEvent = (parsed: Record<string, unknown>) => {
       ? `live-${sidecarGeneration}-${seq}`
       : `live-${sidecarGeneration}-x${incidentSequence}`;
 
-  incidents.push({
+  const incident = {
     ...parseStewardEvent(raw, kind, Number.isFinite(et) ? et : 0, id),
     seq: Number.isFinite(seq) && seq > 0 ? seq : undefined,
-  });
+  };
+
+  incidents.push(incident);
+
+  // Written now, not at session end. SME_END_SESSION is not guaranteed to fire,
+  // and the in-memory queue is capped — an incident dropped from the tail of a
+  // long race must already be on disk.
+  persistLiveIncident(buildLiveIncidentRecord(sessionKey, incident));
 
   if (incidents.length > MAX_RETAINED_INCIDENTS) {
     incidents = incidents.slice(-MAX_RETAINED_INCIDENTS);
@@ -178,6 +248,13 @@ const applyStewardEvent = (parsed: Record<string, unknown>) => {
  * window straddles the contact and the second half does not exist yet. By then
  * the incident may have been dropped — a session change clears the queue — so
  * an unmatched context is simply discarded.
+ *
+ * Matched on the generation-qualified id, never on the bare seq. The sidecar
+ * restarts its seq counter at 1 with each process, while the incident queue
+ * survives a restart within one session, so a bare seq match attaches the new
+ * process's traces to the previous process's incidents — silently, and to an
+ * incident that happened seconds earlier. Observed live: three contexts landed
+ * on the wrong incidents after one restart.
  */
 const applyIncidentContext = (parsed: Record<string, unknown>) => {
   const seq = Number(parsed.seq);
@@ -185,7 +262,8 @@ const applyIncidentContext = (parsed: Record<string, unknown>) => {
     return;
   }
 
-  const index = incidents.findIndex((incident) => incident.seq === seq);
+  const expectedId = `live-${sidecarGeneration}-${seq}`;
+  const index = incidents.findIndex((incident) => incident.id === expectedId);
   if (index === -1) {
     return;
   }
@@ -224,6 +302,23 @@ const applyIncidentContext = (parsed: Record<string, unknown>) => {
       error,
     );
   }
+
+  /*
+    Evidence and the context window are the only two things here that the
+    post-session XML cannot rebuild, so they are written even if deriving
+    evidence just threw — a trace with no evidence is still the raw material a
+    steward can look at, whereas nothing is nothing.
+
+    Two writes, because the incident row carries the derived evidence and the
+    trace goes to its own table.
+  */
+  const record = buildLiveIncidentRecord(sessionKey, incidents[index]);
+  persistLiveIncident(record);
+  persistLiveIncidentContext(
+    // Keyed on the record's stable id, not the incident's per-process one, so
+    // the trace stays attached to its incident across an app restart.
+    buildLiveIncidentContextRecord(sessionKey, record.id, context),
+  );
 };
 
 const applyLine = (line: string) => {

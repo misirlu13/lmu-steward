@@ -95,6 +95,23 @@ That last one is the useful trick. `mCurrentET` is the session's own elapsed tim
 
 This mirrors the existing career session key, which is derived from session content rather than file name specifically so that "restarted races differ in session start time and so remain distinct" (see `CareerSessionRecord` in `types.ts`).
 
+> ✅ **Implemented** as `deriveLiveSessionKey` in `src/main/api/live-session-store.ts`,
+> quantised by `LIVE_SESSION_START_QUANTUM_MS` (30s). The sidecar had to be
+> extended to emit `session` (raw `mSession`) and `currentEt`, which its status
+> line did not carry — it published only a coarse `PRACTICE|QUALIFY|RACE` string
+> and no elapsed time. Verified live at Laguna Seca: killing the sidecar
+> mid-session respawned it and it re-derived the same key, leaving one session
+> row rather than two.
+>
+> ⚠️ **A context must be matched to its incident on the generation-qualified id,
+> not the bare `seq`.** The sidecar restarts `seq` at 1 with each process while
+> the incident queue survives a restart, so a bare-`seq` match silently attaches
+> the new process's traces to the previous process's incidents. Observed live
+> before the fix: after one restart every context landed on an incident ~30s
+> earlier, and the incidents the traces actually belonged to reported none.
+> Regression test: "should not attach a context to an incident from an earlier
+> sidecar generation" in `live-capture.test.ts`.
+
 ---
 
 ## Matching a Live Session to a Replay
@@ -205,7 +222,9 @@ The natural home is alongside the existing replay lists on the Dashboard rather 
 
 Context windows are the only bulky part.
 
-Measured from a real capture: a two-car contact window over `[-6s, +2s]` is roughly **60–80 KB of JSON**, at the sidecar's ~25Hz effective rate.
+Measured from a real capture: a two-car contact window over `[-6s, +2s]` is roughly **60–80 KB of JSON**, at the sidecar's ~25Hz effective rate. A later Laguna Seca practice capture produced windows up to **~100 KB**, so treat the table below as a floor rather than an estimate.
+
+Confirmed once persistence landed: the incident row and its trace differ by about **100×** — under 1 KB against ~100 KB — which is what justifies keeping traces in their own table.
 
 | Session | Contact incidents | Approx. context storage |
 | --- | ---: | ---: |
@@ -293,11 +312,21 @@ These are two genuinely different switches and should not be collapsed into one:
 - The sidecar takes a **machine-wide lock shared with every other consumer of LMU's shared memory**, including wheel LED software and motion rigs. Not attaching at all is the strongest possible guarantee of not disturbing them.
 - It costs CPU continuously during a session, for data most users will never open.
 
-> ⚠️ **`startLiveCapture()` currently runs unconditionally at app start**, gated
-> only on dev mode. It has to become conditional on both the experimental flag
-> and the capture setting — and has to start and stop when either changes,
-> without requiring an app restart. A setting that only takes effect after a
-> restart will be read as broken.
+> ✅ **Implemented.** `configureLiveCapture()` in `main.ts` starts the sidecar
+> only when `experimentalFeaturesEnabled && liveCaptureEnabled && !devModeEnabled`,
+> and stops it otherwise. It runs at boot and after every `POST_USER_SETTINGS`,
+> alongside `configureReplayAutoSync()`, so either switch takes effect without an
+> app restart. Transitions are logged (`live-capture: enabled/disabled by
+> settings`), guarded by a flag so the per-write calls do not spam the log.
+>
+> The capture setting is `liveCaptureEnabled` in `DEFAULT_USER_SETTINGS`. The
+> renderer's `ApiContext` exposes `liveCaptureEnabled` as the AND of both flags;
+> the navbar live indicator is hidden when it is false, because with no sidecar
+> the indicator can never leave "unavailable" and reads as breakage.
+>
+> Verified live: toggling capture on → off → on produced matching log
+> transitions with the sidecar's process start time tracking the last enable, no
+> restart involved.
 
 ### Automatic, not manually armed
 
@@ -355,8 +384,8 @@ The sweep also runs when the retention window is shortened, since that is the ca
 
 | Step | What | Notes |
 | --- | --- | --- |
-| **1** | Persist live sessions and incidents incrementally | The precondition; also fixes losing everything on a crash |
-| **2** | Persist evidence and context windows | The part that cannot be rebuilt |
+| ~~**1**~~ | ~~Persist live sessions and incidents incrementally~~ | **Done.** `live_sessions` + `live_incidents`, written per record as they arrive |
+| ~~**2**~~ | ~~Persist evidence and context windows~~ | **Done.** Evidence rides the incident row; traces are in `live_incident_contexts` |
 | **3** | Session identity + a live sessions list | Makes the data visible and deletable |
 | **4** | Matching, with proposed links confirmed by a human | Reuses `scoreLogCandidates` |
 | **5** | Merge onto the replay view's incidents | Where the time base problem bites |
@@ -365,7 +394,7 @@ The sweep also runs when the retention window is shortened, since that is the ca
 | **8** | Retention setting, expiry sweep, and clearing local storage removing live data | Needed before recordings accumulate in the wild |
 | **9** | Live data in the replay archive export | Opt-in; makes a hand-off carry its evidence |
 
-The experimental flag and the capture setting are **step 0** — they gate everything above and should land before any of it ships, not after. See [Settings and Gating](#settings-and-gating).
+The experimental flag and the capture setting were **step 0** — they gate everything above and had to land before any of it shipped. **Done**; see [Settings and Gating](#settings-and-gating). The retention setting is not part of step 0 and remains unbuilt (step 8).
 
 Steps 1 and 2 are worth doing regardless of whether linking is ever built, because they close a real hole: **live evidence currently does not survive the session that produced it.**
 

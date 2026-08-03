@@ -1002,16 +1002,26 @@ void EmitStatusJson() {
   const ScoringInfoV01& scoring = gLocal.scoring.scoringInfo;
   const bool hasSession = scoring.mNumVehicles > 0 && scoring.mTrackName[0] != '\0';
 
-  char buffer[1024];
+  // Oversized on purpose: snprintf truncates silently, and a truncated status
+  // line is malformed JSON the app discards, so the whole session goes quiet.
+  char buffer[2048];
   std::snprintf(
       buffer, sizeof(buffer),
+      // session and currentEt exist so the app can derive a session identity
+      // that survives a sidecar restart mid-session: now - currentEt
+      // reconstructs the session's start instant from any point during it, and
+      // the raw mSession separates practice 1-4 / qualifying 5-8 / race 10-13
+      // that sessionType flattens into one word.
       "{\"type\":\"status\",\"state\":\"%s\",\"trackName\":\"%s\",\"sessionType\":\"%s\","
+      "\"session\":%ld,\"currentEt\":%.3f,"
       "\"driverCount\":%ld,\"timeRemainingSeconds\":%.0f,\"gamePhase\":%u,"
       "\"trackLimitStepsPerPenalty\":%u,\"trackLength\":%.1f,"
       "\"sectorFlags\":[%d,%d,%d],\"etClockDelta\":%.3f,\"bufferedSeconds\":%.1f}",
       hasSession ? "live" : "detached",
       JsonEscape(scoring.mTrackName).c_str(),
       SessionTypeName(scoring.mSession),
+      scoring.mSession,
+      scoring.mCurrentET,
       scoring.mNumVehicles,
       scoring.mSessionTimeRemaining,
       static_cast<unsigned>(scoring.mGamePhase),

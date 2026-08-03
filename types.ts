@@ -737,6 +737,71 @@ export interface LiveSessionData {
 }
 
 /**
+ * A captured live session, persisted so its evidence outlives the process.
+ *
+ * Of everything live capture holds, only derived evidence and context windows
+ * are unrecoverable — the post-session XML carries incidents, standings and
+ * results, and is authoritative. This record exists to preserve the part logs
+ * structurally cannot hold.
+ *
+ * Written incrementally, never at session end: `SME_END_SESSION` is not
+ * guaranteed to fire, and a 24-hour race that crashes at hour 23 must not lose
+ * 23 hours of evidence.
+ */
+export interface LiveSessionRecord {
+  /**
+   * Stable across a sidecar restart mid-session. The supervisor respawns the
+   * sidecar on exit, and the new process has to keep appending to the same
+   * session rather than opening a second one.
+   *
+   * Derived from track, the raw session enum, and the session's start instant
+   * reconstructed as `now - currentEt` quantised to `LIVE_SESSION_START_QUANTUM_MS`.
+   * Track and type alone are not enough: a weekend runs practice, qualifying and
+   * a race at one track, and a restarted race repeats a type.
+   */
+  sessionKey: string;
+  trackName: string;
+  /** Coarse label for display. */
+  sessionType?: SessionType;
+  /**
+   * Raw `mSession`: 0 test day, 1-4 practice, 5-8 qualifying, 9 warmup,
+   * 10-13 race. Kept unflattened because `sessionType` cannot tell practice 1
+   * from practice 4.
+   */
+  session: number;
+  /** Reconstructed session start, quantised. Also the retention axis. */
+  startedAt: number;
+  /** Last status tick seen. Distinguishes a finished session from an abandoned one. */
+  lastSeenAt: number;
+  driverCount?: number;
+  trackLimitStepsPerPenalty?: number;
+  /** Final known standings; rebuildable from the XML, kept for unlinked sessions. */
+  drivers: LiveCaptureDriver[];
+}
+
+/**
+ * One persisted incident. The bulky context window is deliberately NOT here —
+ * it lives in its own record, because listing a session's incidents must not
+ * drag 60-80 KB of traces per incident off disk.
+ */
+export interface LiveIncidentRecord {
+  id: string;
+  sessionKey: string;
+  incident: LiveCaptureIncident;
+  /** Wall-clock instant, derived from the session start plus `etSeconds`. */
+  occurredAt: number;
+  /** True once a context window arrived and evidence was derived from it. */
+  hasContext: boolean;
+}
+
+/** The trace window for one incident, stored apart from the incident itself. */
+export interface LiveIncidentContextRecord {
+  incidentId: string;
+  sessionKey: string;
+  context: LiveIncidentContext;
+}
+
+/**
  * Steward decisions.
  *
  * The app proposes, the steward disposes: nothing here is ever written without
