@@ -9,6 +9,7 @@ import { DashboardReplay } from '../components/Dashboard/DashboardReplay';
 import { ViewHeader } from '../components/Common/ViewHeader';
 import { DashboardControls } from '../components/Dashboard/DashboardControls';
 import { DashboardFooterSummary } from '../components/Dashboard/DashboardFooterSummary';
+import { CapturedSessions } from '../components/Dashboard/CapturedSessions';
 import { ArchiveConfirmDialog } from '../components/Dashboard/ArchiveConfirmDialog';
 import { ArchiveNoteDialog } from '../components/Dashboard/ArchiveNoteDialog';
 import { useDashboardReplays } from '../hooks/useDashboardReplays';
@@ -80,6 +81,7 @@ export const DashboardView: React.FC = () => {
 
   const {
     experimentalFeaturesEnabled,
+    liveCaptureEnabled,
     exportReplay,
     exportWeekend,
     exportProgress,
@@ -368,6 +370,7 @@ export const DashboardView: React.FC = () => {
         totalPages={totalPages}
         onPageChange={setPage}
       />
+      <CapturedSessions enabled={liveCaptureEnabled} />
       <ArchiveConfirmDialog
         open={Boolean(pendingArchive)}
         replayCount={pendingArchive?.hashes.length ?? 0}

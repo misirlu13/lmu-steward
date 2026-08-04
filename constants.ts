@@ -88,6 +88,8 @@ export const CONSTANTS = {
     POST_IMPORT_REPLAY_PAIR: 'post.import-replay-pair',
     POST_IMPORT_REPLAYS: 'post.import-replays',
     POST_DELETE_IMPORTED_REPLAYS: 'post.delete-imported-replays',
+    GET_LIVE_SESSIONS: 'get.live-sessions',
+    POST_DELETE_LIVE_SESSION: 'post.delete-live-session',
     POST_SET_IMPORTED_NOTE: 'post.set-imported-note',
     POST_EXPORT_REPLAY: 'post.export-replay',
     POST_EXPORT_WEEKEND: 'post.export-weekend',

@@ -7,9 +7,13 @@ import {
   LiveIncidentContextRecord,
   LiveIncidentRecord,
   LiveSessionRecord,
+  LiveSessionSummary,
   SessionType,
 } from '@types';
-import { getMainPersistentStore } from '../storage/local-data-store';
+import {
+  deleteLiveSessionRecords,
+  getMainPersistentStore,
+} from '../storage/local-data-store';
 
 const LIVE_SESSIONS_KEY = 'liveSessions';
 const LIVE_INCIDENTS_KEY = 'liveIncidents';
@@ -80,7 +84,7 @@ export interface LiveSessionCandidate {
  * **rounding does not absorb jitter, it relocates the discontinuity.** A
  * session whose reconstructed start happens to sit near a bucket boundary
  * flips between two adjacent buckets on sub-millisecond noise and splits into
- * two records. Seen live â€” two Laguna Seca rows exactly one quantum apart, one
+ * two records. Seen live — two Laguna Seca rows exactly one quantum apart, one
  * holding 316 incidents and the other none.
  *
  * So identity is by proximity to a session that already exists, and a new key
@@ -191,6 +195,70 @@ export const readLiveIncidentContexts = (): Record<
   } catch (error) {
     log.error('live-session-store: failed to read incident contexts', error);
     return {};
+  }
+};
+
+/**
+ * Sessions newest first, each with how much was actually captured.
+ *
+ * Counts come from the incident records rather than a stored total, because a
+ * session row is written before its first incident and updated on a slow
+ * heartbeat — a cached count would lag the truth for the whole of a session.
+ */
+export const listLiveSessionSummaries = (): LiveSessionSummary[] => {
+  const sessions = Object.values(readLiveSessions());
+  if (sessions.length === 0) {
+    return [];
+  }
+
+  const incidents = Object.values(readLiveIncidents());
+  const counts = new Map<string, { incidents: number; evidence: number }>();
+
+  incidents.forEach((record) => {
+    const entry = counts.get(record.sessionKey) ?? {
+      incidents: 0,
+      evidence: 0,
+    };
+    entry.incidents += 1;
+    if (record.hasContext) {
+      entry.evidence += 1;
+    }
+    counts.set(record.sessionKey, entry);
+  });
+
+  return sessions
+    .map((session) => ({
+      sessionKey: session.sessionKey,
+      trackName: session.trackName,
+      sessionType: session.sessionType,
+      session: session.session,
+      startedAt: session.startedAt,
+      lastSeenAt: session.lastSeenAt,
+      driverCount: session.driverCount ?? session.drivers?.length ?? 0,
+      incidentCount: counts.get(session.sessionKey)?.incidents ?? 0,
+      evidenceCount: counts.get(session.sessionKey)?.evidence ?? 0,
+    }))
+    .sort((a, b) => b.startedAt - a.startedAt);
+};
+
+/**
+ * Removes a captured session and everything belonging to it.
+ *
+ * Steward decisions are deliberately untouched: they are human judgement that
+ * exists nowhere else, and the design exempts them from every deletion path.
+ * A decision outliving its evidence is the intended trade.
+ */
+export const deleteLiveSession = (sessionKey: string): boolean => {
+  try {
+    deleteLiveSessionRecords(sessionKey);
+    return true;
+  } catch (error) {
+    log.error(
+      'live-session-store: failed to delete session',
+      sessionKey,
+      error,
+    );
+    return false;
   }
 };
 

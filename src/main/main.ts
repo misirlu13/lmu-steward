@@ -29,6 +29,10 @@ import {
 } from './api/live-session';
 import { startLiveCapture, stopLiveCapture } from './api/live-capture';
 import {
+  getLiveSessions,
+  postDeleteLiveSession,
+} from './api/live-session-handlers';
+import {
   ExportSessionDataRequest,
   postExportSessionData,
 } from './api/session-export';
@@ -262,6 +266,10 @@ const CHANNEL_CALLBACK_HANDLERS: Partial<
     withEventAndData<ImportReplaysRequest>(postImportReplays),
   [CONSTANTS.API.POST_DELETE_IMPORTED_REPLAYS]:
     withEventAndData<DeleteImportedReplaysRequest>(postDeleteImportedReplays),
+  [CONSTANTS.API.GET_LIVE_SESSIONS]: withEventOnly(getLiveSessions),
+  [CONSTANTS.API.POST_DELETE_LIVE_SESSION]: withEventAndData<string>(
+    postDeleteLiveSession,
+  ),
   [CONSTANTS.API.POST_SET_IMPORTED_NOTE]:
     withEventAndData<SetImportedNoteRequest>(postSetImportedNote),
   [CONSTANTS.API.POST_EXPORT_REPLAY]:

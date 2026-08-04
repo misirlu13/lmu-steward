@@ -42,6 +42,12 @@ interface StorageManager {
   legacyProfilePath: string;
   initializationError: string | null;
   clearAll: () => void;
+  /**
+   * The one deliberate exception to upsert-never-delete on the live tables.
+   * Capture must never drop a row on its own, but a captured session is user
+   * data that accumulates, so the user has to be able to remove one.
+   */
+  deleteLiveSession: (sessionKey: string) => void;
   dispose: () => void;
 }
 
@@ -1552,6 +1558,21 @@ const createSqliteStorageManager = (
       removeFileIfExists(pendingClearPath);
       clearSqliteContents(db);
     },
+    deleteLiveSession: (sessionKey: string) => {
+      // One transaction: a session whose traces survived its incidents would
+      // leave orphaned rows that nothing can reach or remove.
+      db.transaction(() => {
+        db.prepare(
+          'DELETE FROM live_incident_contexts WHERE session_key = ?',
+        ).run(sessionKey);
+        db.prepare('DELETE FROM live_incidents WHERE session_key = ?').run(
+          sessionKey,
+        );
+        db.prepare('DELETE FROM live_sessions WHERE session_key = ?').run(
+          sessionKey,
+        );
+      })();
+    },
     dispose: () => {
       db.close();
     },
@@ -1612,6 +1633,34 @@ const createLegacyStorageManager = (
         'utf-8',
       );
     },
+    /*
+      Legacy `set` replaces a key wholesale, so filtering the collection and
+      writing it back is the delete. SQLite is unreachable this session and
+      keeps its own copy; the next successful start reconciles from here.
+    */
+    deleteLiveSession: (sessionKey: string) => {
+      const without = <T extends { sessionKey?: string }>(key: string) => {
+        const existing = (mainStore.get(key) ?? {}) as Record<string, T>;
+        return Object.fromEntries(
+          Object.entries(existing).filter(
+            ([, record]) => record?.sessionKey !== sessionKey,
+          ),
+        );
+      };
+
+      mainStore.set(
+        LIVE_INCIDENT_CONTEXTS_KEY,
+        without(LIVE_INCIDENT_CONTEXTS_KEY),
+      );
+      mainStore.set(LIVE_INCIDENTS_KEY, without(LIVE_INCIDENTS_KEY));
+
+      const sessions = (mainStore.get(LIVE_SESSIONS_KEY) ?? {}) as Record<
+        string,
+        unknown
+      >;
+      delete sessions[sessionKey];
+      mainStore.set(LIVE_SESSIONS_KEY, sessions);
+    },
     dispose: () => {},
   };
 };
@@ -1659,6 +1708,10 @@ export const getProfilePersistentStore = (): PersistentStore =>
 
 export const clearPersistentStorage = (): void => {
   getStorageManager().clearAll();
+};
+
+export const deleteLiveSessionRecords = (sessionKey: string): void => {
+  getStorageManager().deleteLiveSession(sessionKey);
 };
 
 export const getPrimaryLocalDataPath = (): string =>

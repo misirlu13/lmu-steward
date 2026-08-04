@@ -785,6 +785,14 @@ export const ApiProvider: React.FC<{ children: React.ReactNode }> = ({
       [CONSTANTS.API.GET_LIVE_SESSION_DATA]: createHandler(
         CONSTANTS.API.GET_LIVE_SESSION_DATA,
       ),
+      // Same arrangement for the captured-sessions list: owned by the section
+      // that renders it, but it still needs entries here to be dispatched.
+      [CONSTANTS.API.GET_LIVE_SESSIONS]: createHandler(
+        CONSTANTS.API.GET_LIVE_SESSIONS,
+      ),
+      [CONSTANTS.API.POST_DELETE_LIVE_SESSION]: createHandler(
+        CONSTANTS.API.POST_DELETE_LIVE_SESSION,
+      ),
       [CONSTANTS.API.GET_API_STATUS]: createHandler(
         CONSTANTS.API.GET_API_STATUS,
         (data: unknown) => {

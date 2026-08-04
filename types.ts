@@ -826,6 +826,26 @@ export interface LiveIncidentRecord {
   hasContext: boolean;
 }
 
+/**
+ * One row of the captured-sessions list.
+ *
+ * Deliberately thin. The list exists to stop captured evidence being invisible,
+ * not to become a second place to do the stewarding — so it carries enough to
+ * identify a session and decide whether to keep it, and nothing more.
+ */
+export interface LiveSessionSummary {
+  sessionKey: string;
+  trackName: string;
+  sessionType?: SessionType;
+  session: number;
+  startedAt: number;
+  lastSeenAt: number;
+  driverCount: number;
+  incidentCount: number;
+  /** Incidents that captured a trace, which is the part a replay cannot rebuild. */
+  evidenceCount: number;
+}
+
 /** The trace window for one incident, stored apart from the incident itself. */
 export interface LiveIncidentContextRecord {
   incidentId: string;
