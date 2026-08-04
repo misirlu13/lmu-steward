@@ -91,7 +91,28 @@ Proposed key components:
 - `mSession` (LMU's own session enum, which separates practice 1-4, qualifying 5-8, race 10-13)
 - **Session start, derived as `now - mCurrentET`**, quantised to ~30 seconds
 
-That last one is the useful trick. `mCurrentET` is the session's own elapsed time, so `now - mCurrentET` reconstructs the session's start instant from any point during it — including from a sidecar that attached ten minutes late. Quantising absorbs clock jitter and the ~0.2s scoring tick.
+That last one is the useful trick. `mCurrentET` is the session's own elapsed time, so `now - mCurrentET` reconstructs the session's start instant from any point during it — including from a sidecar that attached ten minutes late.
+
+> 🛑 **Quantising does not absorb jitter — it relocates the discontinuity.** This
+> claim was wrong in an earlier draft and cost a split session. Rounding to a
+> 30s bucket moves the boundary rather than removing it, so a session whose
+> reconstructed start happens to sit near one flips between two adjacent buckets
+> on sub-millisecond noise. Seen live: two Laguna Seca rows exactly one quantum
+> apart, one holding 316 incidents and the other none.
+>
+> Identity therefore has two parts, and both are needed:
+>
+> 1. **A session in progress keeps its key outright** rather than re-deriving it
+>    each tick. The reconstructed start drifts — sim and wall clocks diverge, and
+>    a pause stops one but not the other — so re-deriving would eventually
+>    disagree with itself and split a long race. A genuine restart is detected by
+>    **the session clock going backwards**, which is unambiguous and immune to
+>    that drift.
+> 2. **Rejoining prefers a session already on disk** (`resolveLiveSessionKey`),
+>    matching on track, session enum, and a start within one quantum. A new key
+>    is minted only when nothing nearby matches. The tolerance is a full quantum
+>    precisely so that any start which would round into a neighbouring bucket is
+>    recognised instead.
 
 This mirrors the existing career session key, which is derived from session content rather than file name specifically so that "restarted races differ in session start time and so remain distinct" (see `CareerSessionRecord` in `types.ts`).
 

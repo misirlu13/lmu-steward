@@ -243,6 +243,34 @@ describe('live capture supervision', () => {
   });
 
   /*
+    Regression. The reconstructed session start drifts — the sim clock and the
+    wall clock diverge, and a pause stops one but not the other. Re-deriving the
+    key every tick therefore eventually disagreed with itself and split a long
+    session in two. A session in progress now keeps its key outright.
+  */
+  it('should keep one session while the session clock advances', () => {
+    const live = { ...STATUS, session: 1, currentEt: 100 };
+
+    feed(live, STANDINGS, STEWARD_EVENT);
+    // Much later in the session, with the wall clock well past any bucket edge.
+    feed({ ...live, currentEt: 900 }, { ...STEWARD_EVENT, seq: 2, et: 900 });
+
+    expect(capture.getLiveSessionData().incidents).toHaveLength(2);
+  });
+
+  it('should start a new session when the session clock goes backwards', () => {
+    const live = { ...STATUS, session: 1, currentEt: 900 };
+
+    feed(live, STANDINGS, STEWARD_EVENT);
+    expect(capture.getLiveSessionData().incidents).toHaveLength(1);
+
+    // A restart puts the clock back to the beginning.
+    feed({ ...live, currentEt: 2 });
+
+    expect(capture.getLiveSessionData().incidents).toHaveLength(0);
+  });
+
+  /*
     Regression. The sidecar restarts its seq counter at 1 with every process,
     but the incident queue survives a restart within one session, so matching a
     context on the bare seq attached the new process's trace to the previous

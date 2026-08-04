@@ -55,6 +55,67 @@ export const startedAtFromLiveSessionKey = (sessionKey: string): number => {
   return Number.isFinite(parsed) ? parsed : 0;
 };
 
+/** Unquantised reconstruction of when the session began. */
+export const deriveLiveSessionStart = (
+  currentEtSeconds: number,
+  now: number,
+): number => {
+  const elapsedMs = Number.isFinite(currentEtSeconds)
+    ? Math.max(0, currentEtSeconds) * 1000
+    : 0;
+  return now - elapsedMs;
+};
+
+export interface LiveSessionCandidate {
+  sessionKey: string;
+  trackName: string;
+  session: number;
+  startedAt: number;
+}
+
+/**
+ * The key for a session being rejoined, preferring one already on disk.
+ *
+ * Quantising alone is not enough, and the reason is worth stating plainly:
+ * **rounding does not absorb jitter, it relocates the discontinuity.** A
+ * session whose reconstructed start happens to sit near a bucket boundary
+ * flips between two adjacent buckets on sub-millisecond noise and splits into
+ * two records. Seen live â€” two Laguna Seca rows exactly one quantum apart, one
+ * holding 316 incidents and the other none.
+ *
+ * So identity is by proximity to a session that already exists, and a new key
+ * is minted only when nothing nearby matches. The tolerance is a full quantum,
+ * which is exactly wide enough that any start that would round into a
+ * neighbouring bucket is recognised instead.
+ */
+export const resolveLiveSessionKey = (
+  trackName: string,
+  session: number,
+  currentEtSeconds: number,
+  candidates: LiveSessionCandidate[],
+  now: number = Date.now(),
+): string => {
+  const startedAt = deriveLiveSessionStart(currentEtSeconds, now);
+
+  const match = candidates
+    .filter(
+      (candidate) =>
+        candidate.trackName === trackName &&
+        candidate.session === session &&
+        Math.abs(candidate.startedAt - startedAt) <=
+          LIVE_SESSION_START_QUANTUM_MS,
+    )
+    .sort(
+      (a, b) =>
+        Math.abs(a.startedAt - startedAt) - Math.abs(b.startedAt - startedAt),
+    )[0];
+
+  return (
+    match?.sessionKey ??
+    deriveLiveSessionKey(trackName, session, currentEtSeconds, now)
+  );
+};
+
 /*
   Every write below is a single-entry map. The store upserts exactly the rows it
   is handed and never deletes, so writing one incident mid-session leaves the

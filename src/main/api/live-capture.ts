@@ -22,10 +22,11 @@ import {
   buildLiveIncidentContextRecord,
   buildLiveIncidentRecord,
   buildLiveSessionRecord,
-  deriveLiveSessionKey,
   persistLiveIncident,
   persistLiveIncidentContext,
   persistLiveSession,
+  readLiveSessions,
+  resolveLiveSessionKey,
 } from './live-session-store';
 
 /**
@@ -75,8 +76,17 @@ let sessionTrackName = '';
 let trackLengthMetres = 0;
 let lastSessionPersistAt = 0;
 
+let lastCurrentEt = 0;
+
 /** Heartbeat for rewriting the session row; see the note in `applyStatus`. */
 const SESSION_PERSIST_MS = 30_000;
+
+/**
+ * How far the session clock may slip backwards before it counts as a restart.
+ * Generous, because the clock jitters by a scoring tick and a false restart
+ * would orphan everything captured so far.
+ */
+const SESSION_RESTART_ET_TOLERANCE = 5;
 
 // The sidecar numbers steward events itself so a context arriving seconds later
 // can be matched back to one. That counter restarts with the sidecar, so ids
@@ -113,23 +123,56 @@ const applyStatus = (parsed: Record<string, unknown>) => {
       : undefined;
 
   /*
-    Session identity is derived from track, the raw session enum, and the
-    session's start instant reconstructed as `now - currentEt`. That last part
-    is what makes the key survive a sidecar restart: the supervisor respawns the
-    sidecar on exit, and the new process re-derives the same start from any
-    point in the session rather than opening a second one.
+    Session identity is track, the raw session enum, and the session's start
+    instant reconstructed as `now - currentEt`. Reconstructing the start is what
+    lets the key survive a sidecar restart: the supervisor respawns the sidecar
+    on exit, and the new process arrives at the same session rather than opening
+    a second one.
 
     Falls back to track|type when the sidecar predates the currentEt field, so
     an un-rebuilt sidecar still groups incidents rather than mixing sessions.
   */
   const rawSession = Number(parsed.session);
   const currentEt = Number(parsed.currentEt);
-  const nextKey =
+  const canDeriveIdentity =
     state === 'live' &&
     Number.isFinite(currentEt) &&
-    Number.isFinite(rawSession)
-      ? deriveLiveSessionKey(trackName ?? '', rawSession, currentEt)
-      : `${trackName ?? ''}|${String(sessionType ?? '')}`;
+    Number.isFinite(rawSession);
+
+  /*
+    A session already in progress keeps its key outright, rather than
+    re-deriving it every tick and hoping the answer stays the same. The
+    reconstructed start drifts — the sim clock and the wall clock diverge, and
+    a pause stops one but not the other — so re-deriving would eventually
+    disagree with itself and split a long session in two.
+
+    A genuine restart is caught by the session clock going backwards, which is
+    unambiguous and immune to that drift.
+  */
+  const isContinuingSession =
+    canDeriveIdentity &&
+    Boolean(sessionKey) &&
+    trackName === sessionTrackName &&
+    rawSession === sessionRaw &&
+    currentEt >= lastCurrentEt - SESSION_RESTART_ET_TOLERANCE;
+
+  let nextKey: string;
+  if (!canDeriveIdentity) {
+    nextKey = `${trackName ?? ''}|${String(sessionType ?? '')}`;
+  } else if (isContinuingSession) {
+    nextKey = sessionKey;
+  } else {
+    // Rejoining or starting: prefer a session already on disk over minting a
+    // key that may land in the neighbouring bucket.
+    nextKey = resolveLiveSessionKey(
+      trackName ?? '',
+      rawSession,
+      currentEt,
+      Object.values(readLiveSessions()),
+    );
+  }
+
+  lastCurrentEt = canDeriveIdentity ? currentEt : 0;
 
   // A change of key means a different session; drop incidents so the in-memory
   // queue never mixes two sessions together.

@@ -1,8 +1,10 @@
 import { LiveCaptureIncident, LiveIncidentContext } from '@types';
 import {
   LIVE_SESSION_START_QUANTUM_MS,
+  LiveSessionCandidate,
   buildLiveIncidentRecord,
   deriveLiveSessionKey,
+  resolveLiveSessionKey,
   startedAtFromLiveSessionKey,
 } from './live-session-store';
 
@@ -150,5 +152,103 @@ describe('buildLiveIncidentRecord', () => {
     });
 
     expect(record.hasContext).toBe(false);
+  });
+});
+
+describe('resolveLiveSessionKey', () => {
+  const candidate = (
+    startedAt: number,
+    overrides: Partial<LiveSessionCandidate> = {},
+  ): LiveSessionCandidate => ({
+    sessionKey: `live|Daytona|10|${startedAt}`,
+    trackName: 'Daytona',
+    session: 10,
+    startedAt,
+    ...overrides,
+  });
+
+  /*
+    The bug this exists for. Rounding does not absorb jitter at a bucket
+    boundary, it relocates the discontinuity — so a start sitting near one
+    flipped between adjacent buckets and split the session in two. Observed
+    live as two Laguna Seca rows exactly one quantum apart, 316 incidents and 0.
+  */
+  it('rejoins a session whose start rounds into the neighbouring bucket', () => {
+    const existing = candidate(1_800_000_030_000);
+    // Derived start lands just past the midpoint, so it would round upward.
+    const now = 1_800_000_046_000;
+
+    expect(resolveLiveSessionKey('Daytona', 10, 0, [existing], now)).toBe(
+      existing.sessionKey,
+    );
+  });
+
+  it('does not split when the derived start drifts either side of a boundary', () => {
+    const existing = candidate(1_800_000_030_000);
+
+    const keys = [-14_000, -1, 0, 1, 14_000, 29_000].map((offset) =>
+      resolveLiveSessionKey(
+        'Daytona',
+        10,
+        0,
+        [existing],
+        existing.startedAt + offset,
+      ),
+    );
+
+    expect(new Set(keys).size).toBe(1);
+    expect(keys[0]).toBe(existing.sessionKey);
+  });
+
+  it('mints a new key when nothing nearby matches', () => {
+    const existing = candidate(1_800_000_030_000);
+    const muchLater = existing.startedAt + 10 * 60_000;
+
+    expect(
+      resolveLiveSessionKey('Daytona', 10, 0, [existing], muchLater),
+    ).not.toBe(existing.sessionKey);
+  });
+
+  it('does not rejoin a different track or session type', () => {
+    const existing = candidate(1_800_000_030_000);
+    const now = existing.startedAt;
+
+    expect(
+      resolveLiveSessionKey('Laguna Seca', 10, 0, [existing], now),
+    ).not.toBe(existing.sessionKey);
+    expect(resolveLiveSessionKey('Daytona', 1, 0, [existing], now)).not.toBe(
+      existing.sessionKey,
+    );
+  });
+
+  it('rejoins from any point in the session, not just its start', () => {
+    const existing = candidate(1_800_000_030_000);
+    // Ten minutes in: elapsed time cancels the later wall clock.
+    const now = existing.startedAt + 600_000;
+
+    expect(resolveLiveSessionKey('Daytona', 10, 600, [existing], now)).toBe(
+      existing.sessionKey,
+    );
+  });
+
+  it('picks the closest candidate when two are in range', () => {
+    const near = candidate(1_800_000_030_000);
+    const far = candidate(1_800_000_055_000);
+
+    expect(
+      resolveLiveSessionKey(
+        'Daytona',
+        10,
+        0,
+        [far, near],
+        near.startedAt + 2000,
+      ),
+    ).toBe(near.sessionKey);
+  });
+
+  it('mints a key when there are no candidates at all', () => {
+    const key = resolveLiveSessionKey('Daytona', 10, 0, [], 1_800_000_030_000);
+
+    expect(key).toBe(deriveLiveSessionKey('Daytona', 10, 0, 1_800_000_030_000));
   });
 });
