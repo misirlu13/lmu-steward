@@ -15,6 +15,10 @@ import {
 import { parseStewardEvent } from './live-incident-parser';
 import { deriveIncidentEvidence } from './live-incident-evidence';
 import {
+  deriveLivePressureBattles,
+  resetLivePressureState,
+} from './live-pressure';
+import {
   buildLiveIncidentContextRecord,
   buildLiveIncidentRecord,
   buildLiveSessionRecord,
@@ -67,6 +71,8 @@ let incidentSequence = 0;
 let sessionKey = '';
 let sessionRaw = 0;
 let sessionTrackName = '';
+/** Needed to unwrap on-track gaps across the start line. */
+let trackLengthMetres = 0;
 let lastSessionPersistAt = 0;
 
 /** Heartbeat for rewriting the session row; see the note in `applyStatus`. */
@@ -131,6 +137,8 @@ const applyStatus = (parsed: Record<string, unknown>) => {
   if (isNewSession) {
     sessionKey = nextKey;
     incidents = [];
+    // Closing-speed trends belong to the session that produced them.
+    resetLivePressureState();
   }
 
   sessionRaw = Number.isFinite(rawSession) ? rawSession : 0;
@@ -139,6 +147,11 @@ const applyStatus = (parsed: Record<string, unknown>) => {
   const steps = Number(parsed.trackLimitStepsPerPenalty);
   trackLimitStepsPerPenalty =
     Number.isFinite(steps) && steps > 0 ? steps : undefined;
+
+  const length = Number(parsed.trackLength);
+  if (Number.isFinite(length) && length > 0) {
+    trackLengthMetres = length;
+  }
 
   const timeRemaining = Number(parsed.timeRemainingSeconds);
   const gamePhase = Number(parsed.gamePhase);
@@ -472,8 +485,16 @@ export const getLiveSessionData = (): LiveSessionData => {
   const status = getLiveCaptureStatus();
 
   if (status.state !== 'live') {
-    return { status, drivers: [], incidents: [] };
+    return { status, drivers: [], incidents: [], battles: [] };
   }
 
-  return { status, drivers, incidents, trackLimitStepsPerPenalty };
+  return {
+    status,
+    drivers,
+    incidents,
+    trackLimitStepsPerPenalty,
+    // Derived on read rather than cached: it is a pure function of the standings
+    // the renderer is already polling for, and it goes stale within a tick.
+    battles: deriveLivePressureBattles(drivers, trackLengthMetres),
+  };
 };

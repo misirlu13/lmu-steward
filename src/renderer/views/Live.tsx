@@ -409,7 +409,7 @@ export const LiveView: React.FC = () => {
         <LiveFieldState
           session={session}
           standings={sourceStandings}
-          battles={useFixtures ? livePressureFixture : []}
+          battles={useFixtures ? livePressureFixture : (liveData.battles ?? [])}
           captureLabel={liveIndicator.label}
           isCaptureLive={liveIndicator.state === 'live'}
           onFocusCar={onFocusCar}

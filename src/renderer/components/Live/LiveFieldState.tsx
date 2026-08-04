@@ -6,7 +6,6 @@ import {
   LivePressureBattle,
   LiveSessionState,
   LiveStanding,
-  findDriverBySteamId,
 } from './liveFixtures';
 
 const formatCountdown = (totalSeconds: number): string => {
@@ -80,9 +79,29 @@ export const LiveFieldState: React.FC<LiveFieldStateProps> = ({
         b.trackLimitStrikes - a.trackLimitStrikes,
     );
 
-  const rankedBattles = [...battles].sort(
-    (a, b) => b.closingSpeedKph - a.closingSpeedKph,
-  );
+  /*
+    Already ordered by gap upstream, and deliberately not re-sorted here.
+    Ranking by closing speed made rows swap places every second as the figure
+    moved, which read as the panel thrashing rather than as cars racing.
+  */
+  const rankedBattles = battles;
+
+  /*
+    Resolved against the standings on screen, preferring slot over steam id.
+    Steam id is 0 for every AI entry and every offline session, so a field of
+    AI cars would otherwise collapse onto one driver. Falls back to steam id
+    for the layout fixtures, which carry no slots.
+  */
+  const findBattleCar = (
+    slotId: number | undefined,
+    steamId: string | undefined,
+  ) =>
+    (slotId !== undefined
+      ? standings.find((entry) => entry.slotId === slotId)
+      : undefined) ??
+    (steamId && steamId !== '0'
+      ? standings.find((entry) => entry.steamId === steamId)
+      : undefined);
 
   return (
     <Paper
@@ -173,8 +192,14 @@ export const LiveFieldState: React.FC<LiveFieldStateProps> = ({
         <Section title="Pressure Monitor">
           <Stack spacing={1}>
             {rankedBattles.map((battle) => {
-              const ahead = findDriverBySteamId(battle.aheadSteamId);
-              const behind = findDriverBySteamId(battle.behindSteamId);
+              const ahead = findBattleCar(
+                battle.aheadSlotId,
+                battle.aheadSteamId,
+              );
+              const behind = findBattleCar(
+                battle.behindSlotId,
+                battle.behindSteamId,
+              );
               if (!ahead || !behind) {
                 return null;
               }

@@ -1,4 +1,8 @@
-import { LiveHeldDuration, LiveIncidentFrame } from '@types';
+import {
+  LiveHeldDuration,
+  LiveIncidentFrame,
+  LivePressureBattle,
+} from '@types';
 import { followingCarFrames, leadingCarFrames } from './liveTraceFixture';
 
 export type LiveIncidentState = 'NEW' | 'FLAGGED' | 'DECIDED';
@@ -120,14 +124,7 @@ export interface LiveStanding {
   isAiDriver?: boolean;
 }
 
-export interface LivePressureBattle {
-  id: string;
-  aheadSteamId: string;
-  behindSteamId: string;
-  gapSeconds: number;
-  closingSpeedKph: number;
-  isTraffic: boolean;
-}
+export type { LivePressureBattle };
 
 /**
  * No sector flags here on purpose. `mSectorFlag` is documented as local yellows

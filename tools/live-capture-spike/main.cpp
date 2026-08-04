@@ -1044,14 +1044,25 @@ void EmitStandingsJson() {
   for (long i = 0; i < scoring.mNumVehicles && i < 104; ++i) {
     const VehicleScoringInfoV01& v = gLocal.scoring.vehScoringInfo[i];
 
-    char entry[768];
+    // Speed from the scoring struct's own velocity, in vehicle-local
+    // coordinates, so its magnitude is the speed regardless of heading.
+    const TelemVect3& vel = v.mLocalVel;
+    const double speedMps =
+        std::sqrt(vel.x * vel.x + vel.y * vel.y + vel.z * vel.z);
+
+    // lapDist and speed exist so the app can derive true on-track gaps between
+    // adjacent cars. Classification order cannot serve for that: practice and
+    // qualifying rank by best lap time, so consecutive places are not
+    // neighbours on track, and mTimeBehindLeader is meaningless there.
+    char entry[896];
     std::snprintf(
         entry, sizeof(entry),
         "%s{\"slotId\":%ld,\"steamId\":\"%llu\",\"driverName\":\"%s\","
         "\"vehicleName\":\"%s\",\"vehicleClass\":\"%s\",\"place\":%u,"
         "\"lapsCompleted\":%d,\"lastLapTime\":%.3f,\"timeBehindLeader\":%.3f,"
         "\"lapsBehindLeader\":%ld,\"penalties\":%d,\"inPits\":%s,"
-        "\"control\":%d,\"flag\":%u,\"pitStops\":%d,\"finishStatus\":%d}",
+        "\"control\":%d,\"flag\":%u,\"pitStops\":%d,\"finishStatus\":%d,"
+        "\"lapDist\":%.1f,\"speedKph\":%.1f}",
         first ? "" : ",", v.mID,
         static_cast<unsigned long long>(v.mSteamID),
         JsonEscape(v.mDriverName).c_str(),
@@ -1061,7 +1072,8 @@ void EmitStandingsJson() {
         v.mLastLapTime, v.mTimeBehindLeader, v.mLapsBehindLeader,
         static_cast<int>(v.mNumPenalties), v.mInPits ? "true" : "false",
         static_cast<int>(v.mControl), static_cast<unsigned>(v.mFlag),
-        static_cast<int>(v.mNumPitstops), static_cast<int>(v.mFinishStatus));
+        static_cast<int>(v.mNumPitstops), static_cast<int>(v.mFinishStatus),
+        v.mLapDist, speedMps * 3.6);
 
     out += entry;
     first = false;

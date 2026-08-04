@@ -21,6 +21,7 @@ const EMPTY: LiveSessionData = {
   status: { state: 'detached' },
   drivers: [],
   incidents: [],
+  battles: [],
 };
 
 /**

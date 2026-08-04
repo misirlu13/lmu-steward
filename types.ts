@@ -727,6 +727,37 @@ export interface LiveCaptureDriver {
   flag: number;
   pitStops: number;
   finishStatus: number;
+  /** Metres travelled around the current lap. The basis for on-track gaps. */
+  lapDist?: number;
+  speedKph?: number;
+}
+
+/**
+ * Two cars running nose-to-tail, ordered by track position rather than
+ * classification.
+ *
+ * Classification cannot serve here: practice and qualifying rank by best lap
+ * time, so consecutive places are not neighbours on track and
+ * `timeBehindLeader` means nothing. Gaps are derived from `lapDist` instead,
+ * which is true in every session type.
+ */
+export interface LivePressureBattle {
+  id: string;
+  aheadSteamId: string;
+  behindSteamId: string;
+  /** Time for the car behind to cover the gap at its current speed. */
+  gapSeconds: number;
+  /** Positive when the car behind is faster; negative when it is dropping back. */
+  closingSpeedKph: number;
+  /** The two cars are in different classes, so this is traffic, not a fight. */
+  isTraffic: boolean;
+  /**
+   * The reliable identity. `mSteamID` is 0 for every AI entry and every offline
+   * session, so a 54-car single-player field shares one steam id and cannot be
+   * keyed on. Optional only because the layout fixtures predate it.
+   */
+  aheadSlotId?: number;
+  behindSlotId?: number;
 }
 
 export interface LiveSessionData {
@@ -734,6 +765,7 @@ export interface LiveSessionData {
   drivers: LiveCaptureDriver[];
   incidents: LiveCaptureIncident[];
   trackLimitStepsPerPenalty?: number;
+  battles: LivePressureBattle[];
 }
 
 /**

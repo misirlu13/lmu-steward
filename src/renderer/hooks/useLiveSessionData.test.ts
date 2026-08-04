@@ -149,6 +149,7 @@ describe('buildSessionState', () => {
     },
     drivers: [driver({ slotId: 1, lapsCompleted: 4 })],
     incidents: [],
+    battles: [],
     trackLimitStepsPerPenalty: 40,
   };
 
@@ -178,7 +179,12 @@ describe('buildSessionState', () => {
 
   it('should fall back to the fixture only when nothing is live', () => {
     const state = buildSessionState(
-      { status: { state: 'detached' }, drivers: [], incidents: [] },
+      {
+        status: { state: 'detached' },
+        drivers: [],
+        incidents: [],
+        battles: [],
+      },
       liveSessionFixture,
     );
 
