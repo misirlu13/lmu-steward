@@ -141,7 +141,30 @@ export const persistLiveSession = (record: LiveSessionRecord): void => {
   }
 };
 
+/*
+  Nothing is written without a session to belong to. An incident stored against
+  an empty key is unreachable from the sessions list and cannot be deleted
+  through the UI — it is invisible, permanent clutter. Four of these reached a
+  real store, written before the first status line had established a session.
+
+  Dropping the record is the right trade: the alternative is evidence the user
+  can neither find nor remove, and an incident this early has no context window
+  yet anyway.
+*/
+const hasSession = (sessionKey: string, what: string): boolean => {
+  if (sessionKey) {
+    return true;
+  }
+
+  log.warn(`live-session-store: dropped ${what} with no session key`);
+  return false;
+};
+
 export const persistLiveIncident = (record: LiveIncidentRecord): void => {
+  if (!hasSession(record.sessionKey, 'an incident')) {
+    return;
+  }
+
   try {
     getMainPersistentStore().set(LIVE_INCIDENTS_KEY, { [record.id]: record });
   } catch (error) {
@@ -152,6 +175,10 @@ export const persistLiveIncident = (record: LiveIncidentRecord): void => {
 export const persistLiveIncidentContext = (
   record: LiveIncidentContextRecord,
 ): void => {
+  if (!hasSession(record.sessionKey, 'an incident context')) {
+    return;
+  }
+
   try {
     getMainPersistentStore().set(LIVE_INCIDENT_CONTEXTS_KEY, {
       [record.incidentId]: record,

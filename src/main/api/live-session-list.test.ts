@@ -6,21 +6,29 @@ const store = {
 };
 const deleteLiveSessionRecords = jest.fn();
 
+const storeSet = jest.fn();
+
 jest.mock('../storage/local-data-store', () => ({
   getMainPersistentStore: () => ({
     get: (key: string) =>
       key === 'liveSessions' ? store.sessions : store.incidents,
-    set: () => {},
+    set: (key: string, value: unknown) => storeSet(key, value),
   }),
   deleteLiveSessionRecords: (key: string) => deleteLiveSessionRecords(key),
 }));
 
-jest.mock('electron-log', () => ({ error: jest.fn(), info: jest.fn() }));
+jest.mock('electron-log', () => ({
+  error: jest.fn(),
+  info: jest.fn(),
+  warn: jest.fn(),
+}));
 
 // eslint-disable-next-line @typescript-eslint/no-var-requires, global-require
 const {
   listLiveSessionSummaries,
   deleteLiveSession,
+  persistLiveIncident,
+  persistLiveIncidentContext,
 } = require('./live-session-store');
 
 const session = (
@@ -56,6 +64,7 @@ beforeEach(() => {
   store.sessions = {};
   store.incidents = {};
   deleteLiveSessionRecords.mockReset();
+  storeSet.mockReset();
 });
 
 describe('listLiveSessionSummaries', () => {
@@ -144,5 +153,34 @@ describe('deleteLiveSession', () => {
     });
 
     expect(deleteLiveSession('a')).toBe(false);
+  });
+});
+
+/*
+  Regression. Four incidents reached a real store with session_key = '',
+  written before the first status line had established a session. They belong to
+  no session, so they are invisible in the sessions list and cannot be deleted
+  through the UI — permanent, unreachable clutter.
+*/
+describe('writes without a session', () => {
+  it('drops an incident that has no session key', () => {
+    persistLiveIncident({ id: '#abc', sessionKey: '', hasContext: false });
+
+    expect(storeSet).not.toHaveBeenCalled();
+  });
+
+  it('drops an incident context that has no session key', () => {
+    persistLiveIncidentContext({ incidentId: '#abc', sessionKey: '' });
+
+    expect(storeSet).not.toHaveBeenCalled();
+  });
+
+  it('still writes once a session key exists', () => {
+    persistLiveIncident({ id: '#abc', sessionKey: 'live|X|1|1000' });
+
+    expect(storeSet).toHaveBeenCalledWith(
+      'liveIncidents',
+      expect.objectContaining({ '#abc': expect.anything() }),
+    );
   });
 });
