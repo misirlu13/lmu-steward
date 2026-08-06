@@ -455,7 +455,11 @@ function spawnSidecar(): void {
   }
 
   try {
-    child = spawn(sidecarPath, ['--json'], {
+    // --parent-pid lets the sidecar exit on its own when this process dies.
+    // stopLiveCapture() only covers orderly shutdowns; a crash or a Task Manager
+    // kill would otherwise strand the sidecar, still contending for LMU's
+    // machine-wide shared memory lock.
+    child = spawn(sidecarPath, ['--json', `--parent-pid=${process.pid}`], {
       windowsHide: true,
       stdio: ['ignore', 'pipe', 'pipe'],
     });

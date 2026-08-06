@@ -809,7 +809,111 @@ export interface LiveSessionRecord {
   trackLimitStepsPerPenalty?: number;
   /** Final known standings; rebuildable from the XML, kept for unlinked sessions. */
   drivers: LiveCaptureDriver[];
+  /** Set only once a human has confirmed the pairing. */
+  link?: LiveSessionLink;
+  /**
+   * The best candidate matching found, waiting on a human.
+   *
+   * Never applied on its own. A wrong link puts a driver's name against an
+   * incident they were not in, in an export a league may publish, so the app
+   * proposes and the steward disposes — as replay import already does.
+   */
+  proposal?: LiveSessionMatchProposal;
+  /**
+   * When the user rejected the proposal.
+   *
+   * Recorded so matching stops offering it. An unlinked session is a normal
+   * state — practice replays are often not kept — and must never nag.
+   */
+  matchDismissedAt?: number;
 }
+
+/** A confirmed pairing between a captured session and a replay. */
+export interface LiveSessionLink {
+  replayHash: string;
+  /**
+   * Secondary identity, mirroring `ArchivedReplayRecord.identityKey`. The app
+   * does not delete replays, so a link dropped by a re-hash would look like
+   * data loss with no cause.
+   */
+  replayIdentityKey: string;
+  /** For display, so the list can name the replay without reading the cache. */
+  replayName: string;
+  /** `roster` was proposed by matching and confirmed; `manual` was chosen outright. */
+  method: 'roster' | 'manual';
+  /** Roster overlap at the time of linking; null when the grid was too small. */
+  confidence: number | null;
+  /**
+   * Also the retention axis. A session that gained a replay to be reviewed
+   * against became more useful, so retention runs from the later of capture
+   * and link.
+   */
+  linkedAt: number;
+}
+
+/** A candidate replay for a captured session, with why it scored as it did. */
+export interface LiveSessionMatchCandidate {
+  replayHash: string;
+  replayIdentityKey: string;
+  replayName: string;
+  sceneDesc: string;
+  sessionType: SessionType;
+  /** Replay timestamp, Unix seconds — not milliseconds. */
+  timestamp: number;
+  imported: boolean;
+  confidence: number;
+  /** Drivers shared with the captured session. */
+  intersection: number;
+  liveDriverCount: number;
+  replayDriverCount: number;
+  /**
+   * Share of the session's live incidents found at the same elapsed time in the
+   * replay's log. Null when either side recorded none, which is common and not
+   * a fault — a clean session has nothing to compare.
+   */
+  incidentAgreement: number | null;
+  /** True when this session is already linked to this replay. */
+  linked: boolean;
+}
+
+/** Mirrors `RosterRankingReason`, which is main-only and cannot be imported here. */
+export type LiveSessionMatchReason =
+  | 'proposed'
+  | 'no-candidates'
+  | 'roster-too-small'
+  | 'below-floor'
+  | 'ambiguous'
+  | 'only-candidate';
+
+export interface LiveSessionMatchResult {
+  sessionKey: string;
+  candidates: LiveSessionMatchCandidate[];
+  /** Confident enough to put in front of a human; still never applied for them. */
+  proposed: LiveSessionMatchCandidate | null;
+  reason: LiveSessionMatchReason;
+}
+
+/** The stored form of a proposal, thin enough to sit on the session row. */
+export interface LiveSessionMatchProposal {
+  replayHash: string;
+  replayIdentityKey: string;
+  replayName: string;
+  confidence: number;
+  intersection: number;
+  liveDriverCount: number;
+  replayDriverCount: number;
+  incidentAgreement: number | null;
+  proposedAt: number;
+}
+
+/**
+ * Whether a captured session has a replay behind it.
+ *
+ * `unlinked` is a normal resting state, not an error: LMU only writes a replay
+ * when replay saving is on, practice replays are often not kept, and replays
+ * get overwritten.
+ */
+export type LiveSessionLinkState = 'linked' | 'proposed' | 'unlinked';
 
 /**
  * One persisted incident. The bulky context window is deliberately NOT here —
@@ -844,6 +948,25 @@ export interface LiveSessionSummary {
   incidentCount: number;
   /** Incidents that captured a trace, which is the part a replay cannot rebuild. */
   evidenceCount: number;
+  linkState: LiveSessionLinkState;
+  link?: LiveSessionLink;
+  proposal?: LiveSessionMatchProposal;
+}
+
+/**
+ * A linked captured session, in the shape the replay view merges from.
+ *
+ * Context traces are deliberately absent. They are ~100 KB each and a session
+ * can hold hundreds; the replay view needs only the evidence and a flag saying
+ * a trace exists, and loads the trace itself when a dossier is opened.
+ */
+export interface LiveDataForReplay {
+  sessionKey: string;
+  trackName: string;
+  sessionType?: SessionType;
+  startedAt: number;
+  link: LiveSessionLink;
+  incidents: LiveIncidentRecord[];
 }
 
 /** The trace window for one incident, stored apart from the incident itself. */

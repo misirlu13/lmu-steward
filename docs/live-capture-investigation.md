@@ -1,7 +1,7 @@
 # Live Capture Investigation
 
-**Status:** Phases 0–3 implemented and verified against a running game
-**Date:** 2026-07-28, updated 2026-08-02
+**Status:** Phases 0–3 implemented and verified against a running game — **dev-only; the sidecar is not yet packaged** ([details](#packaging--the-sidecar-is-not-shipped))
+**Date:** 2026-07-28, updated 2026-08-06
 **Companion documents:**
 - [Live Mode — Product Design](live-mode-product-design.md) — what live mode should be, and why it is not a variant of the replay UI
 - [Export & Steward Decisions](export-and-decisions-design.md) — the decision layer, record schema, and the three export surfaces
@@ -27,6 +27,11 @@
   - [Sidecar Language Tradeoff](#sidecar-language-tradeoff)
 - [Performance Notes](#performance-notes)
 - [Proposed Architecture](#proposed-architecture)
+- [Process Model and Lifecycle](#process-model-and-lifecycle)
+  - [One supervisor](#one-supervisor)
+  - [One sidecar, and it exits with its supervisor](#one-sidecar-and-it-exits-with-its-supervisor)
+  - [Dev loop consequence](#dev-loop-consequence)
+  - [Packaging — the sidecar is not shipped](#packaging--the-sidecar-is-not-shipped)
 - [Suggested Phasing](#suggested-phasing)
 - [Risks and Open Questions](#risks-and-open-questions)
 - [Verification Provenance](#verification-provenance)
@@ -366,6 +371,54 @@ This keeps the current log/replay pipeline untouched and lets the feature ship i
 
 ---
 
+## Process Model and Lifecycle
+
+The diagram above is the **data** path. This is the **process** path: who owns the sidecar and what bounds its lifetime. Both matter because the shared memory lock is machine-wide and shared with every other consumer, including wheel LED software and motion rigs.
+
+The invariant the whole design rests on is **one supervisor, one sidecar**. Bounded try-acquire (see [Access Pattern](#access-pattern)) keeps a *single* well-behaved consumer polite; it does nothing to make *several* safe. Two Steward sidecars contending are indistinguishable, from the game's side, from Steward fighting a user's LED software.
+
+```
+one Electron main process        ← single-instance lock
+        │  spawn --json --parent-pid=<supervisor pid>
+        ▼
+one lmu-spike sidecar            ← exits when LMU exits,
+        │                          when the supervisor exits,
+        │                          or on stopLiveCapture()
+        ▼
+   stdout JSON lines
+```
+
+### One supervisor
+
+`src/main/main.ts` calls `app.requestSingleInstanceLock()` *before* the `whenReady` handler is registered. A losing instance quits without reaching `createWindow()` or `configureLiveCapture()`, so it cannot start a sidecar even transiently — ordering matters here, because `app.quit()` is asynchronous and a handler registered first would still fire. The winner handles `second-instance` by restoring, showing and focusing the existing window.
+
+Nothing enforced this before 2026-08-06; see risk 8 for what that looked like in practice.
+
+### One sidecar, and it exits with its supervisor
+
+`configureLiveCapture()` is driven by two settings switches and is idempotent in both directions, so toggling either does not stack sidecars. `startLiveCapture()` is a no-op while a child is already live, and the supervisor respawns on exit after `RESTART_DELAY_MS` so a session starting later is picked up without user action.
+
+Shutdown is the harder half. `stopLiveCapture()` only runs on orderly paths — a crash or a Task Manager kill skips it entirely, and the sidecar is spawned without a job object. It is therefore passed `--parent-pid=<n>` and waits on the parent handle alongside LMU's, in both the wait-for-mapping loop and the main tick loop. Three things end it: LMU exiting, the supervisor exiting, `stopLiveCapture()`.
+
+Testing on 2026-08-06 did not produce an orphan even without that flag, but the mechanism was never identified and is not guaranteed for a packaged app — see risk 9 for the evidence and its limits. Diagnostic runs pass no parent pid and are unaffected.
+
+### Dev loop consequence
+
+The lock changes hot reload: on a `src/main/**` edit, electronmon spawns replacements (observed: five inside 65ms), the incumbent still holds the lock, and every replacement quits. **The app keeps running the old bundle** — a visible window is not evidence the edit loaded. Restart `npm start` fully after main-process changes, freeing port 1212 first. Renderer changes are unaffected.
+
+That same burst is what made the pre-lock behavior so damaging: each of those processes used to start its own sidecar.
+
+### Packaging — the sidecar is not shipped
+
+⚠️ **OPEN.** `resolveSidecarPath()` searches `process.cwd()`, `app.getAppPath()` and the executable's directory for either `tools/live-capture-spike/build/lmu-spike.exe` or `resources/lmu-spike.exe`. In dev the first hits from the repo root. **In a packaged build neither exists:**
+
+- electron-builder's `extraResources` is `./assets/**` only, so nothing ever places `lmu-spike.exe` into `resources/`.
+- `tools/live-capture-spike/build/` is gitignored, so the binary is not in the repo for CI to copy — any release step must *build* it (`tools/live-capture-spike/build.bat`, needs an MSVC toolset and the LMU SDK headers, which cannot be redistributed).
+
+A packaged release therefore reports "Live capture sidecar not found" and the feature is silently unavailable. Live capture is **dev-only until this is resolved**, which is also why the parent-pid change above currently only takes effect in dev. Resolving it means deciding how the sidecar gets built and signed for release, not just adding a path to `extraResources`.
+
+---
+
 ## Suggested Phasing
 
 **Phase 0 — Spike (highest value, ~1–2 days)**
@@ -504,6 +557,8 @@ Detections the game does not report itself, built on captured context.
 5. **Remote vehicle accuracy.** The header warns `mInPits` is "not always accurate for remote vehicles." Multiplayer-derived state needs tolerance.
 6. **Slot ID reuse.** `mID` is reused after a driver leaves a multiplayer session. Key on `mSteamID`.
 7. **`stewardResults` path.** LMU exposes its own stewarding-results concept via `SharedMemoryPathData`. Not yet investigated — may overlap with or complement this feature.
+8. **Multiple Steward instances.** ✅ MITIGATED 2026-08-06. Nothing stopped several copies of the app running at once, and each one called `configureLiveCapture()` and spawned its own sidecar. Observed live: four `lmu-spike` processes alongside ~21 Electron processes, with three "starting sidecar" log lines inside 60ms. Several sidecars contending for the machine-wide lock is precisely the hazard bounded try-acquire exists to avoid — try-acquire keeps *one* sidecar polite, it does not make *several* safe. Double-clicking the desktop shortcut twice was enough to reproduce it. `src/main/main.ts` now takes `app.requestSingleInstanceLock()` before the `whenReady` handler is registered, so a losing instance quits without ever creating a window or a sidecar. **Dev cost:** electronmon hot-restart no longer applies `src/main/**` edits — the incumbent holds the lock and each replacement quits — so a full `npm start` restart is needed after main-process changes.
+9. **Sidecar lifetime is tied to the supervisor by convention, not contract.** `stopLiveCapture()` only runs on orderly shutdown; a crash or a Task Manager kill skips it. The sidecar is spawned without a job object and watches only *LMU's* process, so nothing in either codebase guaranteed it would exit with the app. Testing on 2026-08-06 did **not** reproduce an orphan — killing the Electron main process alone ended the sidecar within 8s — but the mechanism was never identified: `IsProcessInJob` is uninformative on Windows 10 (every process sampled, including user-launched LMU, reports true), so whether job teardown or a broken stdout pipe ended it is unknown, and neither is guaranteed for a packaged app launched from a shortcut. The sidecar now accepts `--parent-pid=<n>` and waits on the parent handle alongside LMU's, making the exit explicit rather than incidental. Verified causally: with the flag the sidecar exits when an isolated dummy parent is killed; without it, that same parent's death leaves it running. Diagnostic runs pass no parent pid and are unaffected.
 
 ---
 
@@ -518,6 +573,8 @@ Facts in this document were verified directly against a local LMU installation o
 - Incident XML shape confirmed against `fixture-test-set/replay-log-data-files/`
 
 Re-verify the header contents after major LMU updates before relying on this document.
+
+Risks 8 and 9 were verified separately on **2026-08-06** against a running LMU practice session (Laguna Seca, 37 drivers) with live capture enabled, by launching the app twice and by killing the supervisor out from under the sidecar.
 
 ---
 

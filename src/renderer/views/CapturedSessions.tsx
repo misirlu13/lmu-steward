@@ -1,18 +1,12 @@
 import { useCallback, useEffect, useState } from 'react';
-import {
-  Box,
-  Button,
-  Chip,
-  Paper,
-  Stack,
-  Tooltip,
-  Typography,
-} from '@mui/material';
-import DeleteOutlineIcon from '@mui/icons-material/DeleteOutline';
+import { useNavigate } from 'react-router-dom';
+import { Box, Paper, Stack, Typography } from '@mui/material';
 import { CONSTANTS } from '@constants';
-import { LiveSessionSummary } from '@types';
+import { LiveSessionMatchResult, LiveSessionSummary } from '@types';
 import { ViewHeader } from '../components/Common/ViewHeader';
+import { CapturedSessionRow } from '../components/CapturedSessions/CapturedSessionRow';
 import { DeleteCapturedSessionDialog } from '../components/CapturedSessions/DeleteCapturedSessionDialog';
+import { LinkReplayDialog } from '../components/CapturedSessions/LinkReplayDialog';
 import { sendMessage } from '../utils/postMessage';
 import { useApi } from '../providers/ApiContext';
 
@@ -28,11 +22,17 @@ import { useApi } from '../providers/ApiContext';
  * invisibly on disk.
  */
 export const CapturedSessionsView = () => {
+  const navigate = useNavigate();
   const { subscribeToApiChannel, liveCaptureEnabled } = useApi();
   const [sessions, setSessions] = useState<LiveSessionSummary[]>([]);
   const [pendingDelete, setPendingDelete] = useState<LiveSessionSummary | null>(
     null,
   );
+  const [linking, setLinking] = useState<LiveSessionSummary | null>(null);
+  const [matches, setMatches] = useState<LiveSessionMatchResult | null>(null);
+  const [matchesLoading, setMatchesLoading] = useState(false);
+  const [matchError, setMatchError] = useState('');
+  const [selectedHash, setSelectedHash] = useState('');
   const [deletingKey, setDeletingKey] = useState<string | null>(null);
   const [error, setError] = useState('');
 
@@ -51,6 +51,42 @@ export const CapturedSessionsView = () => {
     setDeletingKey(null);
   }, []);
 
+  const applyMatches = useCallback((payload: unknown) => {
+    const response = payload as {
+      status?: string;
+      message?: string;
+      data?: LiveSessionMatchResult;
+    };
+
+    setMatchesLoading(false);
+
+    if (response?.status === 'error') {
+      setMatchError(response.message ?? 'Unable to look for a replay.');
+      return;
+    }
+
+    setMatchError('');
+    setMatches(response?.data ?? null);
+    // The proposal starts selected so confirming a good match is one click,
+    // while still being an explicit confirmation rather than an auto-link.
+    setSelectedHash(response?.data?.proposed?.replayHash ?? '');
+  }, []);
+
+  const closeLinkDialog = useCallback(() => {
+    setLinking(null);
+    setMatches(null);
+    setSelectedHash('');
+    setMatchError('');
+  }, []);
+
+  const applyLinkResult = useCallback(
+    (payload: unknown) => {
+      applyList(payload);
+      closeLinkDialog();
+    },
+    [applyList, closeLinkDialog],
+  );
+
   useEffect(() => {
     const unsubscribeList = subscribeToApiChannel(
       CONSTANTS.API.GET_LIVE_SESSIONS,
@@ -60,14 +96,29 @@ export const CapturedSessionsView = () => {
       CONSTANTS.API.POST_DELETE_LIVE_SESSION,
       applyList,
     );
+    const unsubscribeMatches = subscribeToApiChannel(
+      CONSTANTS.API.GET_LIVE_SESSION_MATCHES,
+      applyMatches,
+    );
+    const unsubscribeLink = subscribeToApiChannel(
+      CONSTANTS.API.POST_LINK_LIVE_SESSION,
+      applyLinkResult,
+    );
+    const unsubscribeDismiss = subscribeToApiChannel(
+      CONSTANTS.API.POST_DISMISS_LIVE_SESSION_MATCH,
+      applyList,
+    );
 
     sendMessage(CONSTANTS.API.GET_LIVE_SESSIONS);
 
     return () => {
       unsubscribeList();
       unsubscribeDelete();
+      unsubscribeMatches();
+      unsubscribeLink();
+      unsubscribeDismiss();
     };
-  }, [applyList, subscribeToApiChannel]);
+  }, [applyList, applyLinkResult, applyMatches, subscribeToApiChannel]);
 
   const onConfirmDelete = () => {
     if (!pendingDelete) {
@@ -80,6 +131,51 @@ export const CapturedSessionsView = () => {
       pendingDelete.sessionKey,
     );
     setPendingDelete(null);
+  };
+
+  const openLinkDialog = (session: LiveSessionSummary) => {
+    setLinking(session);
+    setMatches(null);
+    setSelectedHash('');
+    setMatchError('');
+    setMatchesLoading(true);
+    sendMessage(CONSTANTS.API.GET_LIVE_SESSION_MATCHES, session.sessionKey);
+  };
+
+  const onConfirmLink = () => {
+    if (!linking || !selectedHash) {
+      return;
+    }
+
+    sendMessage(CONSTANTS.API.POST_LINK_LIVE_SESSION, {
+      sessionKey: linking.sessionKey,
+      replayHash: selectedHash,
+      method:
+        selectedHash === matches?.proposed?.replayHash ? 'roster' : 'manual',
+    });
+  };
+
+  const onUnlink = () => {
+    if (!linking) {
+      return;
+    }
+
+    sendMessage(CONSTANTS.API.POST_LINK_LIVE_SESSION, {
+      sessionKey: linking.sessionKey,
+      replayHash: null,
+    });
+  };
+
+  const onDismiss = () => {
+    if (!linking) {
+      return;
+    }
+
+    sendMessage(
+      CONSTANTS.API.POST_DISMISS_LIVE_SESSION_MATCH,
+      linking.sessionKey,
+    );
+    closeLinkDialog();
   };
 
   return (
@@ -125,52 +221,14 @@ export const CapturedSessionsView = () => {
         ) : null}
 
         {sessions.map((session) => (
-          <Paper
+          <CapturedSessionRow
             key={session.sessionKey}
-            variant="outlined"
-            sx={{ borderColor: 'divider', borderRadius: 1, p: 2 }}
-          >
-            <Stack direction="row" alignItems="center" spacing={2}>
-              <Box sx={{ minWidth: 0, flexGrow: 1 }}>
-                <Typography variant="body1" noWrap>
-                  {session.trackName || 'Unknown track'}
-                </Typography>
-                <Typography variant="caption" color="text.secondary">
-                  {session.sessionType ?? 'Session'} ·{' '}
-                  {new Date(session.startedAt).toLocaleString()} ·{' '}
-                  {session.driverCount} drivers
-                </Typography>
-              </Box>
-
-              <Tooltip title="Incidents captured">
-                <Chip
-                  size="small"
-                  label={`${session.incidentCount} incidents`}
-                />
-              </Tooltip>
-              {/*
-                Called out separately because it is the only part a replay
-                cannot rebuild: traces exist nowhere else once this is deleted.
-              */}
-              <Tooltip title="Incidents with a recorded trace">
-                <Chip
-                  size="small"
-                  color={session.evidenceCount > 0 ? 'primary' : 'default'}
-                  label={`${session.evidenceCount} with evidence`}
-                />
-              </Tooltip>
-
-              <Button
-                size="small"
-                color="error"
-                startIcon={<DeleteOutlineIcon />}
-                disabled={deletingKey === session.sessionKey}
-                onClick={() => setPendingDelete(session)}
-              >
-                {deletingKey === session.sessionKey ? 'Deleting…' : 'Delete'}
-              </Button>
-            </Stack>
-          </Paper>
+            session={session}
+            isDeleting={deletingKey === session.sessionKey}
+            onViewReplay={(replayHash) => navigate(`/replay/${replayHash}`)}
+            onLinkReplay={openLinkDialog}
+            onDelete={setPendingDelete}
+          />
         ))}
       </Stack>
 
@@ -178,6 +236,19 @@ export const CapturedSessionsView = () => {
         session={pendingDelete}
         onCancel={() => setPendingDelete(null)}
         onConfirm={onConfirmDelete}
+      />
+
+      <LinkReplayDialog
+        session={linking}
+        matches={matches}
+        loading={matchesLoading}
+        error={matchError}
+        selectedHash={selectedHash}
+        onSelect={setSelectedHash}
+        onCancel={closeLinkDialog}
+        onConfirm={onConfirmLink}
+        onUnlink={onUnlink}
+        onDismiss={onDismiss}
       />
     </Box>
   );

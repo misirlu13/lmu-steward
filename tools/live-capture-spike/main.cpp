@@ -1194,9 +1194,14 @@ int main(int argc, char* argv[]) {
   SetConsoleOutputCP(CP_UTF8);
 
   DWORD pidArg = 0;
+  DWORD parentPidArg = 0;
   for (int i = 1; i < argc; ++i) {
     if (std::strcmp(argv[i], "--json") == 0) {
       gJsonMode = true;
+    } else if (std::strncmp(argv[i], "--parent-pid=", 13) == 0) {
+      // Single token rather than "--parent-pid N": the bare-number branch below
+      // is the LMU pid, so a detached value would be swallowed as the game pid.
+      parentPidArg = static_cast<DWORD>(std::strtoul(argv[i] + 13, nullptr, 10));
     } else {
       pidArg = static_cast<DWORD>(std::strtoul(argv[i], nullptr, 10));
     }
@@ -1231,6 +1236,25 @@ int main(int argc, char* argv[]) {
     return 1;
   }
 
+  // Steward passes its own pid so this process cannot outlive its supervisor.
+  // Nothing else stops that: we are spawned without a job object, so a
+  // Task-Manager kill or a crash of the app leaves this process alive and still
+  // contending for LMU's shared-memory lock every tick — the machine-wide lock
+  // that wheel LED and motion software also use. Watching the parent turns that
+  // orphan window from "until someone notices in Task Manager" into one tick.
+  //
+  // Left unsupervised when the handle cannot be opened: the alternative is
+  // exiting, and the supervisor would respawn us on a timer into the same
+  // failure. Diagnostic runs pass no parent pid at all and are unaffected.
+  HANDLE parentProcess = nullptr;
+  if (parentPidArg != 0) {
+    parentProcess = OpenProcess(SYNCHRONIZE, FALSE, parentPidArg);
+    if (!parentProcess && !gJsonMode) {
+      std::printf("Could not watch parent pid %lu (err %lu); running unsupervised.\n",
+                  parentPidArg, GetLastError());
+    }
+  }
+
   // The event and mapping do not exist while LMU sits at the main menu; they
   // appear once a session loads. Wait rather than failing.
   HANDLE event = nullptr;
@@ -1254,6 +1278,12 @@ int main(int argc, char* argv[]) {
       } else {
         std::printf("\nLMU exited before shared memory became available.\n");
       }
+      return 1;
+    }
+
+    // A session can sit unloaded for a long time, so the supervisor can die
+    // while we are still in here. No status emit: nobody is reading stdout.
+    if (parentProcess && WaitForSingleObject(parentProcess, 0) == WAIT_OBJECT_0) {
       return 1;
     }
 
@@ -1291,17 +1321,27 @@ int main(int argc, char* argv[]) {
                 (kBufferFrames * sizeof(BufferFrame)) / (1024.0 * 1024.0));
   }
 
-  HANDLE waitOn[2] = {process, event};
+  // Parent goes last so the existing WAIT_OBJECT_0 / +1 indices keep their
+  // meaning; the count drops to 2 when there is no parent to watch.
+  HANDLE waitOn[3] = {process, event, parentProcess};
+  const DWORD waitCount = parentProcess ? 3 : 2;
   DWORD lastDiagnostic = GetTickCount();
 
   for (;;) {
-    const DWORD signalled = WaitForMultipleObjects(2, waitOn, FALSE, INFINITE);
+    const DWORD signalled = WaitForMultipleObjects(waitCount, waitOn, FALSE, INFINITE);
 
     if (signalled == WAIT_OBJECT_0) {
       if (gJsonMode) {
         EmitJson("{\"type\":\"status\",\"state\":\"detached\",\"detail\":\"LMU exited.\"}");
       } else {
         std::printf("\nLMU exited.\n");
+      }
+      break;
+    }
+    // Steward exited. Leave now rather than keep contending for the lock.
+    if (signalled == WAIT_OBJECT_0 + 2) {
+      if (!gJsonMode) {
+        std::printf("\nSupervisor exited.\n");
       }
       break;
     }

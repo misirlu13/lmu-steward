@@ -90,6 +90,12 @@ export const CONSTANTS = {
     POST_DELETE_IMPORTED_REPLAYS: 'post.delete-imported-replays',
     GET_LIVE_SESSIONS: 'get.live-sessions',
     POST_DELETE_LIVE_SESSION: 'post.delete-live-session',
+    /** Ranked replays a captured session might belong to. Nothing is linked. */
+    GET_LIVE_SESSION_MATCHES: 'get.live-session-matches',
+    POST_LINK_LIVE_SESSION: 'post.link-live-session',
+    POST_DISMISS_LIVE_SESSION_MATCH: 'post.dismiss-live-session-match',
+    /** A replay's linked captured session, for merging onto its incidents. */
+    GET_LIVE_DATA_FOR_REPLAY: 'get.live-data-for-replay',
     POST_SET_IMPORTED_NOTE: 'post.set-imported-note',
     POST_EXPORT_REPLAY: 'post.export-replay',
     POST_EXPORT_WEEKEND: 'post.export-weekend',

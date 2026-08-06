@@ -1,6 +1,6 @@
 import { useMemo } from 'react';
 import { CONSTANTS } from '@constants';
-import { LMUReplay } from '@types';
+import { LiveDataForReplay, LMUReplay } from '@types';
 import { ReplayIncidentEvent } from '../components/Replay/ReplayMasterIncidentTimeline';
 import { ReplayDriverStanding } from '../components/Replay/ReplayDriverStandings';
 import {
@@ -10,6 +10,7 @@ import {
 import { TrackPoints } from '../utils/trackMapToSVG';
 import { buildReplayStandings } from '../utils/replayStandings';
 import { buildReplayTimelineEvents } from '../utils/replayTimeline';
+import { attachLiveEvidenceToEvents } from '../utils/liveIncidentMerge';
 import {
   computeFirstReplayEventEtSeconds,
   computeReplayTimeBaselineSeconds,
@@ -41,6 +42,8 @@ interface UseReplayDerivedDataArgs {
   standingsHistoryData: Record<string, unknown> | null;
   currentTrackMap: { data?: unknown } | null;
   cachedTrackMapData: { data?: unknown } | null;
+  /** The linked captured session, when this replay has one. */
+  liveDataForReplay?: LiveDataForReplay | null;
 }
 
 export const useReplayDerivedData = ({
@@ -49,6 +52,7 @@ export const useReplayDerivedData = ({
   standingsHistoryData,
   currentTrackMap,
   cachedTrackMapData,
+  liveDataForReplay,
 }: UseReplayDerivedDataArgs) => {
   const currentSessionLogData = useMemo<ReplaySessionLogDataLike | null>(
     () =>
@@ -99,17 +103,38 @@ export const useReplayDerivedData = ({
     [standingsEntries],
   );
 
+  /*
+    Live evidence is attached after the events are built, never during. The
+    events carry the replay's own time normalisation — a replay of a session
+    joined late has its own zero point — and merging beforehand would attach
+    evidence to raw elapsed times and leave every enriched incident offset by
+    the baseline. The offset is zero in ordinary testing and non-zero exactly
+    when someone is reviewing a partial replay.
+  */
   const timelineEvents = useMemo<ReplayIncidentEvent[]>(() => {
-    return buildReplayTimelineEvents({
+    const events = buildReplayTimelineEvents({
       currentSessionLogData,
       standingsEntries,
       replayTimeBaselineSeconds,
       shouldNormalizeReplayTimeForView,
       isPartialReplayDataDetected,
     });
+
+    return attachLiveEvidenceToEvents(
+      events,
+      (liveDataForReplay?.incidents ?? []).map((record) => ({
+        id: record.id,
+        etSeconds: record.incident?.etSeconds ?? 0,
+        raw: record.incident?.raw ?? '',
+        parties: record.incident?.parties ?? [],
+        evidence: record.incident?.evidence,
+        hasContext: record.hasContext,
+      })),
+    );
   }, [
     currentSessionLogData,
     isPartialReplayDataDetected,
+    liveDataForReplay,
     replayTimeBaselineSeconds,
     shouldNormalizeReplayTimeForView,
     standingsEntries,

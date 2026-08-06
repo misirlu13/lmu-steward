@@ -793,6 +793,18 @@ export const ApiProvider: React.FC<{ children: React.ReactNode }> = ({
       [CONSTANTS.API.POST_DELETE_LIVE_SESSION]: createHandler(
         CONSTANTS.API.POST_DELETE_LIVE_SESSION,
       ),
+      [CONSTANTS.API.GET_LIVE_SESSION_MATCHES]: createHandler(
+        CONSTANTS.API.GET_LIVE_SESSION_MATCHES,
+      ),
+      [CONSTANTS.API.POST_LINK_LIVE_SESSION]: createHandler(
+        CONSTANTS.API.POST_LINK_LIVE_SESSION,
+      ),
+      [CONSTANTS.API.POST_DISMISS_LIVE_SESSION_MATCH]: createHandler(
+        CONSTANTS.API.POST_DISMISS_LIVE_SESSION_MATCH,
+      ),
+      [CONSTANTS.API.GET_LIVE_DATA_FOR_REPLAY]: createHandler(
+        CONSTANTS.API.GET_LIVE_DATA_FOR_REPLAY,
+      ),
       [CONSTANTS.API.GET_API_STATUS]: createHandler(
         CONSTANTS.API.GET_API_STATUS,
         (data: unknown) => {

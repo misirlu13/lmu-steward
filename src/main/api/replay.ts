@@ -9,7 +9,7 @@ import {
   SessionType,
 } from '@types';
 import { readFile } from 'fs/promises';
-import { resolve as resolvePath, join } from 'path';
+import { resolve as resolvePath, join, dirname } from 'path';
 import { parseStringPromise } from 'xml2js';
 import { generateReplayHash } from '../util';
 import { readUserSettings, writeUserSettings } from './user-settings';
@@ -77,6 +77,8 @@ interface ReplayCacheEntry {
   hash?: string;
   multiplayer?: boolean;
   logData?: ParsedRaceResults | null;
+  logDataDirectory?: string;
+  logDataFileName?: string;
   logDataLoaded?: boolean;
   archived?: boolean;
   archivedAt?: number;
@@ -520,6 +522,68 @@ export const getCachedReplaysForCareer = (): {
     replayDirectory: replay.replayDirectory,
     replayName: replay.replayName,
   }));
+};
+
+/**
+ * A replay a captured live session might belong to.
+ *
+ * Both the cache and the imported store, because a live session can pair with a
+ * replay of the same race handed over from another machine — the case the
+ * reconciliation design calls out as "a replay appears later".
+ *
+ * The identity key travels with it so a confirmed link survives a re-hash, the
+ * same fallback the archive store uses.
+ */
+export interface ReplayMatchTarget {
+  hash: string;
+  identityKey: string;
+  replayName: string;
+  sceneDesc: string;
+  sessionType: SessionType | null;
+  /** Unix SECONDS, as everything replay-side is. */
+  timestamp: number;
+  /** Absolute path to the result log, or null when the replay has none. */
+  logPath: string | null;
+  imported: boolean;
+}
+
+export const listReplayMatchTargets = (): ReplayMatchTarget[] => {
+  const cached =
+    (getReplayStore().get('replays') as Record<string, ReplayCacheEntry>) || {};
+
+  const fromCache = Object.values(cached)
+    .filter((replay) => Boolean(replay?.hash))
+    .map((replay) => ({
+      hash: String(replay.hash),
+      identityKey: buildReplayCacheIdentityKey(replay),
+      replayName: replay.replayName ?? '',
+      sceneDesc: replay.metadata?.sceneDesc ?? '',
+      sessionType: replay.metadata?.session ?? null,
+      timestamp: Number(replay.timestamp ?? 0),
+      logPath:
+        replay.logDataDirectory && replay.logDataFileName
+          ? join(replay.logDataDirectory, replay.logDataFileName)
+          : null,
+      imported: false,
+    }));
+
+  const fromImports = Object.values(readImportedReplays()).map((record) => ({
+    hash: record.hash,
+    identityKey: buildReplayCacheIdentityKey({
+      metadata: { sceneDesc: record.sceneDesc, session: record.session },
+      replayName: record.replayName,
+      timestamp: record.timestamp,
+      replayDirectory: dirname(record.vcrPath ?? ''),
+    }),
+    replayName: record.originalReplayName || record.replayName,
+    sceneDesc: record.sceneDesc,
+    sessionType: record.session,
+    timestamp: Number(record.timestamp ?? 0),
+    logPath: record.logPath || null,
+    imported: true,
+  }));
+
+  return [...fromCache, ...fromImports];
 };
 
 export const getReplayData = async (): Promise<LMUReplay[]> => {

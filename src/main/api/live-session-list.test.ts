@@ -27,8 +27,13 @@ jest.mock('electron-log', () => ({
 const {
   listLiveSessionSummaries,
   deleteLiveSession,
+  dismissLiveSessionMatch,
+  findLiveSessionForReplay,
+  linkLiveSessionToReplay,
+  listLiveIncidentTimesBySession,
   persistLiveIncident,
   persistLiveIncidentContext,
+  unlinkLiveSession,
 } = require('./live-session-store');
 
 const session = (
@@ -137,6 +142,131 @@ describe('listLiveSessionSummaries', () => {
 
   it('returns nothing when no session was ever captured', () => {
     expect(listLiveSessionSummaries()).toEqual([]);
+  });
+});
+
+describe('link state', () => {
+  const link = {
+    replayHash: 'hash-1',
+    replayIdentityKey: 'identity-1',
+    replayName: 'Sebring International Raceway R1 9',
+    method: 'roster' as const,
+    confidence: 0.9,
+    linkedAt: 4000,
+  };
+
+  const written = () =>
+    storeSet.mock.calls
+      .filter(([key]: [string]) => key === 'liveSessions')
+      .map(([, value]: [string, Record<string, unknown>]) =>
+        Object.values(value)[0],
+      )
+      .pop() as LiveSessionRecord;
+
+  it('reports a session with neither link nor proposal as unlinked', () => {
+    store.sessions = { a: session('a') };
+
+    expect(listLiveSessionSummaries()[0].linkState).toBe('unlinked');
+  });
+
+  it('reports a confirmed link', () => {
+    store.sessions = { a: session('a', { link }) };
+
+    const [summary] = listLiveSessionSummaries();
+
+    expect(summary.linkState).toBe('linked');
+    expect(summary.link.replayName).toBe(link.replayName);
+  });
+
+  /*
+    A proposal is a suggestion, never a link. The list has to say which it is,
+    because confirming one is the only thing that puts a driver's name against
+    an incident in an export.
+  */
+  it('reports a proposal as awaiting confirmation, not as linked', () => {
+    store.sessions = {
+      a: session('a', {
+        proposal: { replayHash: 'hash-1', replayName: 'R1 9', confidence: 0.9 },
+      } as Partial<LiveSessionRecord>),
+    };
+
+    expect(listLiveSessionSummaries()[0].linkState).toBe('proposed');
+  });
+
+  it('clears the proposal once the link is confirmed', () => {
+    store.sessions = {
+      a: session('a', {
+        proposal: { replayHash: 'hash-1' },
+      } as Partial<LiveSessionRecord>),
+    };
+
+    linkLiveSessionToReplay('a', link);
+
+    expect(written().link).toEqual(link);
+    expect(written().proposal).toBeUndefined();
+  });
+
+  /*
+    Unlinking has to dismiss as well, or the next match pass immediately
+    re-proposes the replay the user has just rejected.
+  */
+  it('dismisses further suggestions when a link is removed', () => {
+    store.sessions = { a: session('a', { link }) };
+
+    unlinkLiveSession('a');
+
+    expect(written().link).toBeUndefined();
+    expect(written().matchDismissedAt).toEqual(expect.any(Number));
+  });
+
+  it('records a dismissal without touching what was captured', () => {
+    store.sessions = {
+      a: session('a', {
+        proposal: { replayHash: 'hash-1' },
+      } as Partial<LiveSessionRecord>),
+    };
+
+    dismissLiveSessionMatch('a');
+
+    expect(written().proposal).toBeUndefined();
+    expect(written().matchDismissedAt).toEqual(expect.any(Number));
+    expect(written().trackName).toBe('Laguna Seca');
+  });
+
+  it('finds the session behind a replay by hash', () => {
+    store.sessions = { a: session('a', { link }) };
+
+    expect(findLiveSessionForReplay('hash-1')?.sessionKey).toBe('a');
+  });
+
+  // The replay cache re-hashes; the archive store's fallback exists for the
+  // same reason and a link must not quietly disappear either.
+  it('finds the session by identity key when the hash has moved', () => {
+    store.sessions = { a: session('a', { link }) };
+
+    expect(findLiveSessionForReplay('other-hash', 'identity-1')?.sessionKey).toBe(
+      'a',
+    );
+  });
+
+  it('finds nothing for an unlinked replay', () => {
+    store.sessions = { a: session('a') };
+
+    expect(findLiveSessionForReplay('hash-1', 'identity-1')).toBeNull();
+  });
+});
+
+describe('listLiveIncidentTimesBySession', () => {
+  it('groups incident elapsed times by the session that captured them', () => {
+    store.incidents = {
+      i1: incident('i1', 'a', false),
+      i2: incident('i2', 'b', false),
+    };
+
+    const times = listLiveIncidentTimesBySession();
+
+    expect(times.get('a')).toEqual([1]);
+    expect(times.get('b')).toEqual([1]);
   });
 });
 

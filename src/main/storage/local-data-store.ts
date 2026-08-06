@@ -497,8 +497,10 @@ class SqliteNamespaceStore implements PersistentStore {
           const statement = this.db.prepare(`
             INSERT INTO live_sessions (
               session_key, track_name, session_type, session,
-              started_at, last_seen_at, driver_count, payload, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+              started_at, last_seen_at, driver_count,
+              linked_replay_hash, linked_replay_identity_key,
+              payload, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(session_key) DO UPDATE SET
               track_name = excluded.track_name,
               session_type = excluded.session_type,
@@ -506,6 +508,8 @@ class SqliteNamespaceStore implements PersistentStore {
               started_at = excluded.started_at,
               last_seen_at = excluded.last_seen_at,
               driver_count = excluded.driver_count,
+              linked_replay_hash = excluded.linked_replay_hash,
+              linked_replay_identity_key = excluded.linked_replay_identity_key,
               payload = excluded.payload,
               updated_at = excluded.updated_at
           `);
@@ -521,6 +525,8 @@ class SqliteNamespaceStore implements PersistentStore {
               Number(record?.startedAt ?? 0),
               Number(record?.lastSeenAt ?? 0),
               record?.driverCount ?? null,
+              record?.link?.replayHash ?? null,
+              record?.link?.replayIdentityKey ?? null,
               serializeValue(record),
               updatedAt,
             );
@@ -779,6 +785,40 @@ const ensureKvUpdatedAtColumn = (db: SqliteDatabase) => {
   db.prepare('UPDATE kv_store SET updated_at = ?').run(Date.now());
 };
 
+/**
+ * Adds the link columns to a live_sessions table created before they existed.
+ *
+ * Live capture shipped its tables before matching did, so an install that has
+ * already captured sessions has the older shape. Dropping and recreating would
+ * take real evidence with it.
+ */
+const ensureLiveSessionLinkColumns = (db: SqliteDatabase) => {
+  const columns = db
+    .prepare('PRAGMA table_info(live_sessions)')
+    .all() as Array<{
+    name: string;
+  }>;
+
+  const existing = new Set(columns.map((column) => column.name));
+
+  if (!existing.has('linked_replay_hash')) {
+    db.exec('ALTER TABLE live_sessions ADD COLUMN linked_replay_hash TEXT');
+  }
+
+  if (!existing.has('linked_replay_identity_key')) {
+    db.exec(
+      'ALTER TABLE live_sessions ADD COLUMN linked_replay_identity_key TEXT',
+    );
+  }
+
+  // After the columns exist, never in the schema block — the index would be
+  // created against a table that has not been altered yet.
+  db.exec(`
+    CREATE INDEX IF NOT EXISTS idx_live_sessions_linked_replay
+      ON live_sessions(linked_replay_hash);
+  `);
+};
+
 const initializeSqliteSchema = (db: SqliteDatabase) => {
   db.exec(`
     PRAGMA journal_mode = WAL;
@@ -921,6 +961,13 @@ const initializeSqliteSchema = (db: SqliteDatabase) => {
       started_at INTEGER NOT NULL DEFAULT 0,
       last_seen_at INTEGER NOT NULL DEFAULT 0,
       driver_count INTEGER,
+      /*
+        The confirmed replay, by hash and by the cache's own fallback identity.
+        Both are columns rather than payload fields because the replay view
+        looks a session up by them, and a re-hash must not drop the link.
+      */
+      linked_replay_hash TEXT,
+      linked_replay_identity_key TEXT,
       payload TEXT NOT NULL,
       updated_at INTEGER NOT NULL
     );
@@ -959,6 +1006,7 @@ const initializeSqliteSchema = (db: SqliteDatabase) => {
   `);
 
   ensureKvUpdatedAtColumn(db);
+  ensureLiveSessionLinkColumns(db);
 };
 
 const getMeta = (db: SqliteDatabase, key: string): string | undefined => {

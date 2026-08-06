@@ -29,8 +29,13 @@ import {
 } from './api/live-session';
 import { startLiveCapture, stopLiveCapture } from './api/live-capture';
 import {
+  getLiveDataForReplay,
+  getLiveSessionMatches,
   getLiveSessions,
+  LinkLiveSessionRequest,
   postDeleteLiveSession,
+  postDismissLiveSessionMatch,
+  postLinkLiveSession,
 } from './api/live-session-handlers';
 import {
   ExportSessionDataRequest,
@@ -270,6 +275,18 @@ const CHANNEL_CALLBACK_HANDLERS: Partial<
   [CONSTANTS.API.POST_DELETE_LIVE_SESSION]: withEventAndData<string>(
     postDeleteLiveSession,
   ),
+  [CONSTANTS.API.GET_LIVE_SESSION_MATCHES]: withEventAndData<string>(
+    getLiveSessionMatches,
+  ),
+  [CONSTANTS.API.POST_LINK_LIVE_SESSION]:
+    withEventAndData<LinkLiveSessionRequest>(postLinkLiveSession),
+  [CONSTANTS.API.POST_DISMISS_LIVE_SESSION_MATCH]: withEventAndData<string>(
+    postDismissLiveSessionMatch,
+  ),
+  [CONSTANTS.API.GET_LIVE_DATA_FOR_REPLAY]: withEventAndData<{
+    replayHash?: string;
+    replayIdentityKey?: string;
+  }>(getLiveDataForReplay),
   [CONSTANTS.API.POST_SET_IMPORTED_NOTE]:
     withEventAndData<SetImportedNoteRequest>(postSetImportedNote),
   [CONSTANTS.API.POST_EXPORT_REPLAY]:
@@ -772,17 +789,57 @@ app.on('window-all-closed', () => {
   }
 });
 
-app
-  .whenReady()
-  .then(() => {
-    createWindow();
-    void configureLiveCapture();
-    app.on('activate', () => {
-      // On macOS it's common to re-create a window in the app when the
-      // dock icon is clicked and there are no other windows open.
-      if (mainWindow === null) createWindow();
+/**
+ * Only one copy of Steward may run at a time. Every instance calls
+ * configureLiveCapture() and spawns its own lmu-spike sidecar, and those
+ * sidecars then contend for LMU's shared-memory lock — which is machine-wide and
+ * shared with wheel LED and motion software. See docs/live-capture-investigation.md;
+ * bounded try-acquire keeps a single sidecar polite, it does not make several
+ * sidecars safe. Double-clicking the desktop shortcut twice is enough to hit this.
+ *
+ * The lock is taken before the whenReady handler is registered, so an instance
+ * that loses it quits without ever creating a window or starting a sidecar.
+ */
+const gotSingleInstanceLock = app.requestSingleInstanceLock();
+
+const focusExistingWindow = () => {
+  const existingWindow = mainWindow ?? crashWindow;
+
+  if (!existingWindow || existingWindow.isDestroyed()) {
+    return;
+  }
+
+  if (existingWindow.isMinimized()) {
+    existingWindow.restore();
+  }
+
+  // The main window is created hidden and only shown on ready-to-show, so a
+  // second launch during startup has to show it rather than just focus it.
+  if (!existingWindow.isVisible()) {
+    existingWindow.show();
+  }
+
+  existingWindow.focus();
+};
+
+if (!gotSingleInstanceLock) {
+  log.info('single-instance: another instance holds the lock, quitting');
+  app.quit();
+} else {
+  app.on('second-instance', focusExistingWindow);
+
+  app
+    .whenReady()
+    .then(() => {
+      createWindow();
+      void configureLiveCapture();
+      app.on('activate', () => {
+        // On macOS it's common to re-create a window in the app when the
+        // dock icon is clicked and there are no other windows open.
+        if (mainWindow === null) createWindow();
+      });
+    })
+    .catch((error: unknown) => {
+      log.error('Application bootstrap failed', error);
     });
-  })
-  .catch((error: unknown) => {
-    log.error('Application bootstrap failed', error);
-  });
+}

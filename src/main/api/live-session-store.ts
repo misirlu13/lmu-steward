@@ -6,6 +6,9 @@ import {
   LiveIncidentContext,
   LiveIncidentContextRecord,
   LiveIncidentRecord,
+  LiveSessionLink,
+  LiveSessionLinkState,
+  LiveSessionMatchProposal,
   LiveSessionRecord,
   LiveSessionSummary,
   SessionType,
@@ -225,6 +228,16 @@ export const readLiveIncidentContexts = (): Record<
   }
 };
 
+export const resolveLinkState = (
+  session: Pick<LiveSessionRecord, 'link' | 'proposal'>,
+): LiveSessionLinkState => {
+  if (session.link?.replayHash) {
+    return 'linked';
+  }
+
+  return session.proposal?.replayHash ? 'proposed' : 'unlinked';
+};
+
 /**
  * Sessions newest first, each with how much was actually captured.
  *
@@ -264,8 +277,154 @@ export const listLiveSessionSummaries = (): LiveSessionSummary[] => {
       driverCount: session.driverCount ?? session.drivers?.length ?? 0,
       incidentCount: counts.get(session.sessionKey)?.incidents ?? 0,
       evidenceCount: counts.get(session.sessionKey)?.evidence ?? 0,
+      linkState: resolveLinkState(session),
+      link: session.link,
+      proposal: session.proposal,
     }))
     .sort((a, b) => b.startedAt - a.startedAt);
+};
+
+/**
+ * Every captured incident's elapsed time, grouped by session.
+ *
+ * Read once per matching pass rather than per session: the incident rows are
+ * small, but there is one collection on disk and re-reading it per session
+ * would be quadratic in a library with a weekend's worth of captures.
+ */
+export const listLiveIncidentTimesBySession = (): Map<string, number[]> => {
+  const times = new Map<string, number[]>();
+
+  Object.values(readLiveIncidents()).forEach((record) => {
+    const et = Number(record?.incident?.etSeconds);
+    if (!record?.sessionKey || !Number.isFinite(et)) {
+      return;
+    }
+
+    const existing = times.get(record.sessionKey);
+    if (existing) {
+      existing.push(et);
+    } else {
+      times.set(record.sessionKey, [et]);
+    }
+  });
+
+  return times;
+};
+
+export const readLiveSession = (sessionKey: string): LiveSessionRecord | null =>
+  readLiveSessions()[sessionKey] ?? null;
+
+/*
+  Link state is written by rewriting the whole session row, which is safe here
+  and nowhere else in this file: these four run from a user action rather than
+  from the capture path, so there is no concurrent writer to race with, and the
+  record being rewritten is the one just read.
+*/
+const updateLiveSession = (
+  sessionKey: string,
+  apply: (session: LiveSessionRecord) => LiveSessionRecord,
+): LiveSessionRecord | null => {
+  const existing = readLiveSession(sessionKey);
+  if (!existing) {
+    log.warn('live-session-store: no session to update', sessionKey);
+    return null;
+  }
+
+  const next = apply(existing);
+  persistLiveSession(next);
+  return next;
+};
+
+const withoutKeys = (
+  session: LiveSessionRecord,
+  keys: Array<keyof LiveSessionRecord>,
+): LiveSessionRecord => {
+  const next = { ...session };
+  keys.forEach((key) => delete next[key]);
+  return next;
+};
+
+/**
+ * Confirms a pairing.
+ *
+ * Only ever called from a human confirming — matching itself writes a proposal
+ * and stops. The proposal is cleared because it has been answered, and the
+ * dismissal with it, so a link made after a rejection is not immediately
+ * treated as still-rejected.
+ */
+export const linkLiveSessionToReplay = (
+  sessionKey: string,
+  link: LiveSessionLink,
+): LiveSessionRecord | null =>
+  updateLiveSession(sessionKey, (session) => ({
+    ...withoutKeys(session, ['proposal', 'matchDismissedAt']),
+    link,
+  }));
+
+export const unlinkLiveSession = (
+  sessionKey: string,
+): LiveSessionRecord | null =>
+  updateLiveSession(sessionKey, (session) => ({
+    /*
+      Unlinking also dismisses. Without it, the next matching pass would
+      immediately re-propose the replay the user has just rejected, which is
+      the nagging the design rules out.
+    */
+    ...withoutKeys(session, ['link', 'proposal']),
+    matchDismissedAt: Date.now(),
+  }));
+
+export const setLiveSessionProposal = (
+  sessionKey: string,
+  proposal: LiveSessionMatchProposal | null,
+): LiveSessionRecord | null =>
+  updateLiveSession(sessionKey, (session) =>
+    proposal ? { ...session, proposal } : withoutKeys(session, ['proposal']),
+  );
+
+export const dismissLiveSessionMatch = (
+  sessionKey: string,
+): LiveSessionRecord | null =>
+  updateLiveSession(sessionKey, (session) => ({
+    ...withoutKeys(session, ['proposal']),
+    matchDismissedAt: Date.now(),
+  }));
+
+/**
+ * Every persisted incident for one session, oldest first.
+ *
+ * Traces are not included: they live in their own table precisely so that
+ * listing a session's incidents does not drag ~100 KB per incident off disk.
+ */
+export const readLiveIncidentsForSession = (
+  sessionKey: string,
+): LiveIncidentRecord[] =>
+  Object.values(readLiveIncidents())
+    .filter((record) => record?.sessionKey === sessionKey)
+    .sort(
+      (a, b) => (a.incident?.etSeconds ?? 0) - (b.incident?.etSeconds ?? 0),
+    );
+
+/**
+ * The captured session behind a replay, by hash and then by identity key.
+ *
+ * Two tiers for the same reason the archive store has them: a replay that
+ * re-hashes must not silently lose its live evidence.
+ */
+export const findLiveSessionForReplay = (
+  replayHash: string,
+  replayIdentityKey?: string,
+): LiveSessionRecord | null => {
+  const sessions = Object.values(readLiveSessions());
+
+  return (
+    sessions.find((session) => session.link?.replayHash === replayHash) ??
+    (replayIdentityKey
+      ? (sessions.find(
+          (session) => session.link?.replayIdentityKey === replayIdentityKey,
+        ) ?? null)
+      : null)
+  );
 };
 
 /**

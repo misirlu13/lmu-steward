@@ -36,6 +36,12 @@ export interface LogCandidate {
   trackCourse: string;
   trackEvent: string;
   driverNames: string[];
+  /**
+   * Session elapsed times of the log's `<Incident>` records, when the caller
+   * asked for them. Live↔replay matching uses these as a confirming signal;
+   * replay import never reads them.
+   */
+  incidentTimes?: number[];
 }
 
 export interface RankedLogCandidate {
@@ -46,19 +52,21 @@ export interface RankedLogCandidate {
   logCount: number;
 }
 
+/** Every verdict scoring itself can reach. */
+export type RosterRankingReason =
+  | 'proposed'
+  | 'only-candidate'
+  | 'roster-too-small'
+  | 'no-candidates'
+  | 'below-floor'
+  | 'ambiguous';
+
 export interface PairingResult {
   ranked: RankedLogCandidate[];
   /** The candidate confident enough to propose without the user choosing. */
   proposed: RankedLogCandidate | null;
-  reason:
-    | 'proposed'
-    /** Named by a Steward export manifest, so nothing was scored. */
-    | 'manifest'
-    | 'only-candidate'
-    | 'roster-too-small'
-    | 'no-candidates'
-    | 'below-floor'
-    | 'ambiguous';
+  /** `manifest` is set by the caller: a Steward export named the log outright. */
+  reason: RosterRankingReason | 'manifest';
 }
 
 const normalizeDriverName = (value: string): string =>
@@ -104,15 +112,49 @@ export interface ScoreOptions {
   confidenceMargin?: number;
 }
 
+export interface RankedRosterCandidate<T> {
+  candidate: T;
+  confidence: number;
+  intersection: number;
+  /** Size of the roster being matched *from*. */
+  sourceCount: number;
+  /** Size of the candidate's roster. */
+  candidateCount: number;
+}
+
+export interface RosterRanking<T> {
+  ranked: RankedRosterCandidate<T>[];
+  proposed: RankedRosterCandidate<T> | null;
+  reason: RosterRankingReason;
+}
+
+interface RankRosterOptions<T> extends ScoreOptions {
+  getNames: (candidate: T) => string[];
+  /** Last-resort ordering, so ties do not depend on input order. */
+  tieBreak: (candidate: T) => string;
+  /**
+   * Whether a lone candidate is proposed without being scored.
+   *
+   * True for replay import, where a single .Vcr handed over with a single log
+   * is the user asserting they belong together. False everywhere the candidate
+   * set was assembled by us — one replay at the right track is a coincidence,
+   * not a claim, and proposing it unscored would be inventing confidence.
+   */
+  acceptSoleCandidate: boolean;
+}
+
 /**
- * Ranks candidate logs for one replay. Candidates are expected to be
- * pre-filtered to the same session type and track — this scores the grid.
+ * The one place the floor, the margin and the minimum roster size are applied.
+ *
+ * Generic over the candidate so live↔replay matching reuses it rather than
+ * growing a second matcher with its own idea of what "confident" means. A
+ * divergence there would show up as a link the import path would have refused.
  */
-export const scoreLogCandidates = (
-  trailer: VcrTrailer,
-  candidates: LogCandidate[],
-  options: ScoreOptions = {},
-): PairingResult => {
+export const rankRosterCandidates = <T>(
+  sourceNames: string[],
+  candidates: T[],
+  options: RankRosterOptions<T>,
+): RosterRanking<T> => {
   const confidenceFloor = options.confidenceFloor ?? DEFAULT_CONFIDENCE_FLOOR;
   const confidenceMargin =
     options.confidenceMargin ?? DEFAULT_CONFIDENCE_MARGIN;
@@ -121,40 +163,37 @@ export const scoreLogCandidates = (
     return { ranked: [], proposed: null, reason: 'no-candidates' };
   }
 
-  const vcrNames = toNameSet(trailer.drivers.map((driver) => driver.name));
+  const sourceSet = toNameSet(sourceNames);
 
   const ranked = candidates
     .map((candidate) => {
-      const logNames = toNameSet(candidate.driverNames);
+      const candidateSet = toNameSet(options.getNames(candidate));
       const { confidence, intersection } = scoreRosterOverlap(
-        vcrNames,
-        logNames,
+        sourceSet,
+        candidateSet,
       );
 
       return {
         candidate,
         confidence,
         intersection,
-        vcrCount: vcrNames.size,
-        logCount: logNames.size,
+        sourceCount: sourceSet.size,
+        candidateCount: candidateSet.size,
       };
     })
     .sort(
       (a, b) =>
         b.confidence - a.confidence ||
-        a.candidate.fileName.localeCompare(b.candidate.fileName),
+        options
+          .tieBreak(a.candidate)
+          .localeCompare(options.tieBreak(b.candidate)),
     );
 
-  /*
-   * One candidate and nothing to choose between: a single .Vcr handed over with
-   * a single log. Scoring it would only invent a reason to reject an import the
-   * user has already told us belongs together.
-   */
-  if (candidates.length === 1) {
+  if (candidates.length === 1 && options.acceptSoleCandidate) {
     return { ranked, proposed: ranked[0], reason: 'only-candidate' };
   }
 
-  if (vcrNames.size < MIN_ROSTER_SIZE) {
+  if (sourceSet.size < MIN_ROSTER_SIZE) {
     return { ranked, proposed: null, reason: 'roster-too-small' };
   }
 
@@ -169,6 +208,43 @@ export const scoreLogCandidates = (
   }
 
   return { ranked, proposed: best, reason: 'proposed' };
+};
+
+/**
+ * Ranks candidate logs for one replay. Candidates are expected to be
+ * pre-filtered to the same session type and track — this scores the grid.
+ */
+export const scoreLogCandidates = (
+  trailer: VcrTrailer,
+  candidates: LogCandidate[],
+  options: ScoreOptions = {},
+): PairingResult => {
+  const ranking = rankRosterCandidates(
+    trailer.drivers.map((driver) => driver.name),
+    candidates,
+    {
+      ...options,
+      getNames: (candidate) => candidate.driverNames,
+      tieBreak: (candidate) => candidate.fileName,
+      acceptSoleCandidate: true,
+    },
+  );
+
+  const toLogRanked = (
+    entry: RankedRosterCandidate<LogCandidate>,
+  ): RankedLogCandidate => ({
+    candidate: entry.candidate,
+    confidence: entry.confidence,
+    intersection: entry.intersection,
+    vcrCount: entry.sourceCount,
+    logCount: entry.candidateCount,
+  });
+
+  return {
+    ranked: ranking.ranked.map(toLogRanked),
+    proposed: ranking.proposed ? toLogRanked(ranking.proposed) : null,
+    reason: ranking.reason,
+  };
 };
 
 /**

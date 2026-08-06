@@ -153,6 +153,57 @@ The incident set is a signal the import matcher does not have, and it is a stron
 
 > 🛑 **Never auto-link below the confidence floor.** A wrong link attaches penalties and evidence to the wrong race — it puts a driver's name against an incident they were not in, in an export a league may publish. Below the floor, or within the ambiguity margin of a second candidate, the link must be proposed and confirmed by a human, exactly as replay import does. Silence is better than a confident mistake here.
 
+> ✅ **Implemented** as `matchLiveSession` in `src/main/api/live-replay-match.ts`.
+> The ranking itself was **extracted rather than rewritten**: `rankRosterCandidates`
+> in `replay-import-match.ts` is now generic over the candidate and is the one
+> place the floor, the margin and the minimum roster size are applied.
+> `scoreLogCandidates` is a thin adapter over it, so import and live↔replay
+> cannot drift apart on what "confident" means.
+>
+> **Nothing is ever linked automatically, at any confidence.** A confident match
+> becomes a *proposal* on the session row and the list shows "Replay found"
+> until a human confirms it. The scoring differs from import in exactly one
+> place: import accepts a lone candidate unscored, because the user handed over
+> both files and asserted they belong together. Here the candidate set is one we
+> assembled, so `acceptSoleCandidate: false` — one replay at the right track on
+> the right day is a coincidence, not a claim.
+>
+> Candidates come from the replay cache **and** the imported store, pre-filtered
+> by session type, track alias and a ±36h window on the replay timestamp. The
+> window bounds the search rather than discriminating within it; the roster does
+> the discriminating.
+>
+> ⚠️ **The offline AI grid makes roster overlap alone useless.** Measured against
+> a real store: two Laguna Seca practice sessions three hours apart, both with
+> the same 38-car AI field, scored a roster overlap of exactly **1.00 against
+> both replays**. Every offline quick race at one track looks like this. Incident
+> agreement is what separates them — it read 1.00 for the right replay and 0.17
+> for the wrong one — so it is consulted in exactly one place: reordering the
+> group of candidates the roster scored within the ambiguity margin of each
+> other. It needs at least 4 captured incidents and a 0.3 lead to be treated as
+> decisive; below that the session stays ambiguous and a human picks.
+>
+> 🛑 **Read agreement off the whole tied group, never off the ranking's first
+> place.** Candidates the roster scored identically come back in name order,
+> which is arbitrary. An earlier version compared `candidates[0]` with
+> `candidates[1]` and proposed the wrong replay for one of those two real Laguna
+> Seca sessions. Regression test: "picks the best agreement in the tied group,
+> not the roster's first place".
+>
+> ℹ️ **Driver names need the multiplayer discriminator stripped on the live
+> side.** Shared memory carries `Steve Davis#1924`; the log's `<Driver><Name>`
+> does not. Stripped in `liveSessionRoster` only, because that is the only side
+> it appears on.
+>
+> **Considered and declined: timestamp proximity as a third signal.** In the
+> real store the correct replay was within 2–8 seconds of the captured session's
+> start every time, which would have resolved the one case that stayed ambiguous
+> (a Daytona session with a single captured incident). It was left out because a
+> replay timestamp is the .Vcr's creation time — reset by Windows on copy, and
+> restamped from the log for an imported replay — so it is exactly the signal
+> the import matcher exists because it could not trust. The ambiguous case shows
+> the timestamps in the dialog and a human resolves it in one look.
+
 ### When there is no replay
 
 Common, and not an error condition:
@@ -163,6 +214,23 @@ Common, and not an error condition:
 - Replays are overwritten
 
 An unlinked live session must remain fully usable as a record, and must never nag. If a replay appears later — imported from another PC, or synced after the fact — matching should re-run and link retroactively.
+
+> ✅ **Implemented.** The match pass runs when the Captured Sessions list is
+> opened, not on a timer and not at app start: it costs nothing for a user who
+> never opens the view, and it is also what makes matching retroactive without
+> any extra machinery — a replay synced or imported after the fact is simply a
+> new candidate the next time the list is read. **This is step 7, delivered by
+> the shape of step 4 rather than as separate work.**
+>
+> The pass is isolated: a results directory that cannot be read logs and is
+> swallowed, because a proposal is a convenience and must not stop a steward
+> seeing what was captured.
+>
+> **Unlinked gets no chip.** Linked and "Replay found" are marked; unlinked is
+> not, because a replay is often simply not kept and marking that state would
+> flag something the user cannot fix. Rejecting a proposal (`matchDismissedAt`)
+> stops it being offered again, and unlinking dismisses too — otherwise the next
+> pass immediately re-proposes the replay just rejected.
 
 ---
 
@@ -179,6 +247,46 @@ Once linked, the same incident exists twice: once from the session XML, once fro
 Proposed merge key: **`et` within a small tolerance, plus at least one shared participant slot.** `et` alone is not safe — two incidents can share a timestamp in a large field — and participants alone are not safe either, since the same two drivers may collide more than once in a race.
 
 > ⚠️ **The mirrored-collision fold changes the participant sets.** The sidecar folds LMU's two `<Incident>` records for one collision into a single incident with two parties, and the written XML contains both records separately. So one live incident may match *two* XML incidents. The merge must expect that and attach the same context to both, rather than assuming a one-to-one mapping.
+
+> ✅ **Implemented** as `attachLiveEvidenceToEvents` in
+> `src/renderer/utils/liveIncidentMerge.ts`, and the key is **stronger than the
+> one proposed above**. Measuring against three real linked sessions changed it:
+>
+> **The live `raw` string is byte-identical to the XML `<Incident>` element.**
+> Both come from the same place, so the incident text itself is available on
+> both sides and matches exactly rather than fuzzily. Across the three sessions
+> it matched **316/316, 801/801 and 1/1** live incidents — nothing unmatched.
+>
+> 🛑 **Text alone is not safe either, and this was measured, not guessed.** One
+> real log repeats `Bradley Drake(0) reported contact (20.56) with Immovable`
+> **seven times** across a session — et 20.0, 647.4, 727.1, 767.5, 778.6, 783.6
+> — same driver, same wall, same impact force. Keying on text alone smears one
+> incident's evidence across all seven. **43 distinct texts recur in that one
+> log.**
+>
+> 🛑 **And `et` plus participants is not safe either.** A real multiplayer log
+> holds three records at et 122.3 for `Gildas BEN(7) ... with Post`, identical
+> but for the impact force. Same time, same driver, three separate incidents.
+>
+> So the key is **`et` within tolerance AND identical incident text**, with a
+> second **mirror key** — same `et`, reversed participant pair — for the one case
+> no text can match. Tolerance is 0.5s; the largest disagreement measured on a
+> confirmed match was 0.1s, one scoring tick.
+>
+> ⚠️ **Mirrors are a multiplayer phenomenon, not a universal one.** The claim
+> that one collision always produces two `<Incident>` records is **false for
+> offline sessions**: across two captured Laguna Seca practice sessions with 122
+> car-to-car contacts between them, **not one had a mirrored record**. The
+> multiplayer fixture has them on every contact, at *exactly* the same `et`
+> rather than the ~0.1s apart recorded earlier. The mirror path is therefore
+> covered by unit tests built from the multiplayer format, because no offline
+> capture can exercise it.
+>
+> ℹ️ **Unenriched XML rows are normal.** In one session 90 of 406 incidents
+> carried no live evidence: 83 happened before capture attached (the session
+> was already at et 292 when the sidecar arrived at et 1432), and most of the
+> rest were a car scraping a barrier once a second. They render exactly as they
+> did before live capture existed.
 
 Live incidents that match nothing are worth keeping visible somewhere as a diagnostic — a persistent mismatch means either the merge key is wrong or the link is.
 
@@ -198,6 +306,14 @@ Live incident times come from `mCurrentET`. The XML's `et=` attribute is the sam
 But **the replay view does not display raw `et`.** It already normalises for partial replays — see `computeReplayTimeBaselineSeconds`, `computeFirstReplayEventEtSeconds`, `detectPartialReplayData` and `shouldNormalizeReplayTime` in `replayViewState.ts` — because a replay that started after the session was underway has its own zero point.
 
 > ⚠️ **Live data must go through the same normalisation as the replay's own incidents, or every live-enriched incident will be offset by the replay's baseline** — and the offset will be zero in ordinary testing and non-zero exactly when someone is reviewing a partial replay of a race they joined late. Attach live context to the *already-normalised* incident rather than seeking on the raw live `et`.
+
+> ✅ **Resolved by ordering rather than by conversion.** The merge runs *after*
+> `buildReplayTimelineEvents`, on the finished events. Each event already
+> carries both clocks — `etSeconds` is the log's raw value and `timestampLabel`
+> and `jumpToSeconds` are the normalised ones — so the merge matches raw against
+> raw, which is what both sides quote, and everything displayed or sought stays
+> the event's own already-normalised value. Nothing converts a live `et`, which
+> means nothing can convert one wrongly.
 
 The captured context frames carry `t` relative to their own incident, so they need no normalisation themselves. Only the incident anchor does.
 
@@ -408,10 +524,10 @@ The sweep also runs when the retention window is shortened, since that is the ca
 | ~~**1**~~ | ~~Persist live sessions and incidents incrementally~~ | **Done.** `live_sessions` + `live_incidents`, written per record as they arrive |
 | ~~**2**~~ | ~~Persist evidence and context windows~~ | **Done.** Evidence rides the incident row; traces are in `live_incident_contexts` |
 | ~~**3**~~ | ~~Session identity + a live sessions list~~ | **Done.** Captured Sessions on the Dashboard, with delete. Link state deferred to step 4 |
-| **4** | Matching, with proposed links confirmed by a human | Reuses `scoreLogCandidates` |
-| **5** | Merge onto the replay view's incidents | Where the time base problem bites |
+| ~~**4**~~ | ~~Matching, with proposed links confirmed by a human~~ | **Done.** `live-replay-match.ts`, over the now-generic `rankRosterCandidates` |
+| ~~**5**~~ | ~~Merge onto the replay view's incidents~~ | **Done.** `liveIncidentMerge.ts`, keyed on `et` + incident text, with a mirror key |
 | **6** | Dossier + seek + decide on the replay view | The payoff |
-| **7** | Retroactive matching when a replay appears later | Small, once 4 exists |
+| ~~**7**~~ | ~~Retroactive matching when a replay appears later~~ | **Done with 4** — the pass runs on each list load, so a later replay is just a new candidate |
 | **8** | Retention setting, expiry sweep, and clearing local storage removing live data | Needed before recordings accumulate in the wild |
 | **9** | Live data in the replay archive export | Opt-in; makes a hand-off carry its evidence |
 
@@ -454,6 +570,22 @@ Live links must not break when a replay re-hashes, because the app does not othe
 Reuse the existing secondary-identity pattern: `ArchivedReplayRecord.identityKey` already exists for exactly this, mirroring the replay cache's own fallback lookup so a replay that re-hashes stays archived rather than reappearing. Live links should carry the same fallback key.
 
 This is also what raised [Carrying Live Data in a Replay Export](#carrying-live-data-in-a-replay-export): if a link can survive a re-hash locally, it should survive a hand-off to another install too.
+
+### An offline AI grid is a stronger limitation than roster churn
+
+Recorded after step 4 landed, because it turned out to bite harder than the case
+below it.
+
+Every offline quick race at one track fields the **same AI roster**, so roster
+overlap scores 1.00 against every replay of that track and separates none of
+them. This is not a degraded signal like open-practice churn — it is no signal
+at all, and it is the common case for a single-player install.
+
+Incident agreement carries those sessions, and does so well when there are
+incidents to compare. A **clean** offline session at a track with several
+replays is therefore expected to stay unlinked until a human picks, and that is
+the correct outcome rather than a gap to close: nothing in the data
+distinguishes those replays.
 
 ### Roster churn in open practice is accepted
 

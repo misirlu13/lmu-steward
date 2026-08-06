@@ -49,6 +49,7 @@ import {
   toSessionMarkdown,
 } from '../utils/sessionExportFormats';
 import { useReplayDerivedData } from '../hooks/useReplayDerivedData';
+import { useLiveDataForReplay } from '../hooks/useLiveDataForReplay';
 import { useReplayViewOrchestration } from '../hooks/useReplayViewOrchestration';
 
 const PARTIAL_REPLAY_DATA_NOTICE =
@@ -132,6 +133,8 @@ export const ReplayView: React.FC = () => {
     setIsChatOpen((prev) => !prev);
   };
 
+  const liveDataForReplay = useLiveDataForReplay(replayForView?.hash);
+
   const {
     currentSessionLogData,
     isPartialReplayDataDetected,
@@ -149,6 +152,7 @@ export const ReplayView: React.FC = () => {
     standingsHistoryData,
     currentTrackMap: currentTrackMap ?? null,
     cachedTrackMapData: cachedReplayData?.trackMapData ?? null,
+    liveDataForReplay,
   });
 
   const replaySessionInfo = sessionInfoData as {
