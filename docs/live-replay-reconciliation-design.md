@@ -407,7 +407,7 @@ The sweep also runs when the retention window is shortened, since that is the ca
 | --- | --- | --- |
 | ~~**1**~~ | ~~Persist live sessions and incidents incrementally~~ | **Done.** `live_sessions` + `live_incidents`, written per record as they arrive |
 | ~~**2**~~ | ~~Persist evidence and context windows~~ | **Done.** Evidence rides the incident row; traces are in `live_incident_contexts` |
-| **3** | Session identity + a live sessions list | Makes the data visible and deletable |
+| ~~**3**~~ | ~~Session identity + a live sessions list~~ | **Done.** Captured Sessions on the Dashboard, with delete. Link state deferred to step 4 |
 | **4** | Matching, with proposed links confirmed by a human | Reuses `scoreLogCandidates` |
 | **5** | Merge onto the replay view's incidents | Where the time base problem bites |
 | **6** | Dossier + seek + decide on the replay view | The payoff |

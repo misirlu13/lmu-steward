@@ -16,6 +16,7 @@ import theme from './theme';
 import { ReplayView } from './views/Replay';
 import { DriverAnalysisView } from './views/DriverAnalysis';
 import { LiveView } from './views/Live';
+import { CapturedSessionsView } from './views/CapturedSessions';
 import { DriverDashboardView } from './views/DriverDashboard';
 import { UserSettingsView } from './views/UserSettings';
 import { LmuDisconnectedDialog } from './components/Common/LmuDisconnectedDialog';
@@ -69,6 +70,7 @@ const AppRoutesShell = () => {
             element={<DriverAnalysisView />}
           />
           <Route path="/live" element={<LiveView />} />
+          <Route path="/captured-sessions" element={<CapturedSessionsView />} />
           <Route path="/user-settings" element={<UserSettingsView />} />
         </Routes>
       </Container>

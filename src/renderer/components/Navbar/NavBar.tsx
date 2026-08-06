@@ -134,6 +134,24 @@ export const NavBar = () => {
             >
               Replays
             </Button>
+            {/*
+              Only when capture is on. With it off nothing new is ever recorded,
+              so the link would lead to a page that can only ever be empty.
+            */}
+            {liveCaptureEnabled ? (
+              <Button
+                color="inherit"
+                size="small"
+                onClick={() => navigate('/captured-sessions')}
+                sx={{
+                  fontWeight: pathname.startsWith('/captured-sessions')
+                    ? 700
+                    : 400,
+                }}
+              >
+                Captured
+              </Button>
+            ) : null}
           </Box>
           <Box sx={{ flexGrow: 1 }} />
           <Box
