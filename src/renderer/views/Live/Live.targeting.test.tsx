@@ -1,18 +1,20 @@
 import React from 'react';
 import '@testing-library/jest-dom';
-import { MemoryRouter } from 'react-router-dom';
+import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { fireEvent, render, screen } from '@testing-library/react';
-import { LiveView } from './Live';
-import { useApi } from '../providers/ApiContext';
-import { useLiveSessionData } from '../hooks/useLiveSessionData';
-import { liveIncidentsFixture } from '../components/Live/liveFixtures';
+import { LiveShell } from './LiveShell';
+import { LiveOverview } from './LiveOverview';
+import { LiveIncidents } from './LiveIncidents';
+import { useApi } from '../../providers/ApiContext';
+import { useLiveSessionData } from '../../hooks/useLiveSessionData';
+import { liveIncidentsFixture } from '../../components/Live/liveFixtures';
 
-jest.mock('../providers/ApiContext', () => ({ useApi: jest.fn() }));
-jest.mock('../hooks/useLiveSessionData', () => ({
-  ...jest.requireActual('../hooks/useLiveSessionData'),
+jest.mock('../../providers/ApiContext', () => ({ useApi: jest.fn() }));
+jest.mock('../../hooks/useLiveSessionData', () => ({
+  ...jest.requireActual('../../hooks/useLiveSessionData'),
   useLiveSessionData: jest.fn(),
 }));
-jest.mock('../utils/postMessage', () => ({ sendMessage: jest.fn() }));
+jest.mock('../../utils/postMessage', () => ({ sendMessage: jest.fn() }));
 
 const useApiMock = useApi as jest.MockedFunction<typeof useApi>;
 const useLiveSessionDataMock = useLiveSessionData as jest.MockedFunction<
@@ -60,12 +62,22 @@ beforeEach(() => {
   );
 });
 
-const renderLive = () =>
-  render(
-    <MemoryRouter>
-      <LiveView />
-    </MemoryRouter>,
-  );
+/*
+  The real route tree, not the incidents section on its own. Selection now
+  lives in the provider at the shell, so a test that mounted only one section
+  could not tell whether it survives a navigation.
+*/
+const liveRoutes = () => (
+  <Routes>
+    <Route path="/live" element={<LiveShell />}>
+      <Route index element={<LiveOverview />} />
+      <Route path="incidents" element={<LiveIncidents />} />
+    </Route>
+  </Routes>
+);
+
+const renderLive = (path = '/live/incidents') =>
+  render(<MemoryRouter initialEntries={[path]}>{liveRoutes()}</MemoryRouter>);
 
 // The queue row is identified by its timestamp. The driver name appears in the
 // queue, the dossier, the measurements table and the trace labels, so the
@@ -77,34 +89,32 @@ const selectIncidentAndDriver = () => {
   );
 };
 
+/** The dossier's footer line, which names whoever a penalty would land on. */
+const targetLine = () =>
+  screen.queryByText(
+    new RegExp(`Penalty applies to ${contact.drivers[0].displayName}`, 'i'),
+  );
+
 describe('live decision targeting', () => {
   it('should keep the selected driver when the incident list is replaced', () => {
     const { rerender } = renderLive();
 
     selectIncidentAndDriver();
-    expect(
-      screen.getByText(
-        new RegExp(`Penalty applies to ${contact.drivers[0].displayName}`, 'i'),
-      ),
-    ).toBeInTheDocument();
+    expect(targetLine()).toBeInTheDocument();
 
     // Simulate the next poll: same incidents, new array and object identities.
     useLiveSessionDataMock.mockReturnValue(
       pollResult() as unknown as ReturnType<typeof useLiveSessionData>,
     );
     rerender(
-      <MemoryRouter>
-        <LiveView />
+      <MemoryRouter initialEntries={['/live/incidents']}>
+        {liveRoutes()}
       </MemoryRouter>,
     );
 
     // Before the fix this reverted to "Select a driver above" a second after
     // the steward chose one.
-    expect(
-      screen.getByText(
-        new RegExp(`Penalty applies to ${contact.drivers[0].displayName}`, 'i'),
-      ),
-    ).toBeInTheDocument();
+    expect(targetLine()).toBeInTheDocument();
   });
 
   it('should clear the target when the steward moves to another incident', () => {
@@ -128,5 +138,33 @@ describe('live decision targeting', () => {
     fireEvent.click(screen.getByText(liveIncidentsFixture[1].timestampLabel));
 
     expect(screen.getByText(/select a driver above/i)).toBeInTheDocument();
+  });
+});
+
+describe('live shell navigation', () => {
+  it('should keep the selected incident and target across a section change', () => {
+    renderLive();
+
+    selectIncidentAndDriver();
+    expect(targetLine()).toBeInTheDocument();
+
+    // Out to the overview and back, via the rail the steward would use.
+    fireEvent.click(screen.getByText('Overview'));
+    expect(screen.getByText('Needs Attention')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByText('Incidents'));
+
+    expect(targetLine()).toBeInTheDocument();
+  });
+
+  it('should open the incident queue on an incident chosen from the overview', () => {
+    renderLive('/live');
+
+    // The overview is a summary, so choosing something from it is a request to
+    // go and work on it.
+    fireEvent.click(screen.getByText(contact.timestampLabel));
+
+    expect(screen.getByText('Incident Dossier')).toBeInTheDocument();
+    expect(screen.getByText(contact.id)).toBeInTheDocument();
   });
 });
