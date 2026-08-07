@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { CONSTANTS } from '@constants';
 import {
   LiveCaptureDriver,
@@ -212,6 +212,85 @@ const identityForSlot = (
     : `slot-${slotId ?? fallbackLabel ?? ''}`;
 };
 
+const buildIncident = (
+  incident: LiveCaptureIncident,
+  bySlot: Map<number, LiveCaptureDriver>,
+): LiveIncident => {
+  const parties = incident.parties.map((party) => {
+    const match =
+      party.slotId !== undefined ? bySlot.get(party.slotId) : undefined;
+    return {
+      steamId: identityForSlot(party.slotId, bySlot, party.displayName),
+      slotId: party.slotId,
+      displayName: party.displayName,
+      carNumber: match ? toCarNumber(match) : String(party.slotId ?? ''),
+      carClass: match ? toCarClassCode(match.vehicleClass) : '',
+      isAiDriver: match?.control === 1,
+    };
+  });
+
+  const nameForSlot = (slotId: number) =>
+    incident.parties.find((party) => party.slotId === slotId)?.displayName ??
+    bySlot.get(slotId)?.driverName ??
+    `Car ${slotId}`;
+
+  const derived = incident.evidence;
+
+  return {
+    /*
+      The persisted id when there is one, which is almost always. It is
+      stable where `incident.id` is not: that carries the sidecar
+      generation, so a mid-session sidecar restart renumbers every incident
+      — moving the steward's selection and detaching decisions from the
+      incidents they were made on.
+    */
+    id: incident.persistedId ?? incident.id,
+    etSeconds: incident.etSeconds,
+    timestampLabel: formatEt(incident.etSeconds),
+    lapLabel: incident.lap !== undefined ? `L${incident.lap}` : '—',
+    classification: classifyIncident(incident),
+    contactMagnitude: incident.magnitude,
+    drivers: parties,
+    // Fault is the steward's call, never the app's.
+    atFaultSteamId: undefined,
+    rawText: incident.raw.replace(/<[^>]*>/g, '').trim(),
+    // Lifted onto the incident by capture so it survives the context strip;
+    // the fallback is for fixtures and anything still carrying a full window.
+    anchorErrorSeconds:
+      incident.anchorErrorSeconds ?? incident.context?.anchorErrorSeconds,
+    evidence: {
+      closingSpeedKph: derived?.closingSpeedKph,
+      aheadDriverSteamId:
+        derived?.aheadSlotId === undefined
+          ? undefined
+          : identityForSlot(derived.aheadSlotId, bySlot),
+      isTrafficIncident: derived?.isTrafficIncident,
+      trackPositionLabel: derived?.trackPositionLabel,
+      cars: (derived?.cars ?? []).map((car) => ({
+        steamId: identityForSlot(car.slotId, bySlot),
+        speedKph: car.speedKph,
+        peakDecelMps2: car.peakDecelMps2,
+        brakeApplied: car.brakeApplied,
+        blueFlagShown: car.blueFlagShown,
+        peakYawRateDegPerSec: car.peakYawRateDegPerSec,
+        offTrack: car.offTrack,
+      })),
+    },
+    /*
+      Present only when a full window came with the incident, which live is
+      never — capture strips it and the dossier fetches the one window it is
+      actually showing. Dev-mode fixtures still carry theirs inline.
+    */
+    traces: incident.context?.cars.map((car) => ({
+      steamId: identityForSlot(car.slotId, bySlot),
+      displayName: nameForSlot(car.slotId),
+      frames: car.frames,
+    })),
+    hasTrace: incident.hasContext ?? Boolean(incident.context),
+    state: 'NEW' as const,
+  };
+};
+
 export const buildIncidents = (
   captured: LiveCaptureIncident[],
   drivers: LiveCaptureDriver[],
@@ -221,73 +300,108 @@ export const buildIncidents = (
 
   return [...captured]
     .sort((a, b) => b.etSeconds - a.etSeconds)
-    .map((incident) => {
-      const parties = incident.parties.map((party) => {
-        const match =
-          party.slotId !== undefined ? bySlot.get(party.slotId) : undefined;
-        return {
-          steamId: identityForSlot(party.slotId, bySlot, party.displayName),
-          slotId: party.slotId,
-          displayName: party.displayName,
-          carNumber: match ? toCarNumber(match) : String(party.slotId ?? ''),
-          carClass: match ? toCarClassCode(match.vehicleClass) : '',
-          isAiDriver: match?.control === 1,
-        };
-      });
+    .map((incident) => buildIncident(incident, bySlot));
+};
 
-      const nameForSlot = (slotId: number) =>
-        incident.parties.find((party) => party.slotId === slotId)
-          ?.displayName ??
-        bySlot.get(slotId)?.driverName ??
-        `Car ${slotId}`;
+/**
+ * Everything about the roster that a built incident actually depends on.
+ *
+ * Not the whole driver record: place, gap and last lap change every tick and
+ * change nothing about an incident. Rebuilding four hundred incidents because
+ * somebody set a lap time is the churn this cache exists to avoid.
+ */
+const rosterSignature = (drivers: LiveCaptureDriver[]): string =>
+  drivers
+    .map(
+      (driver) =>
+        `${driver.slotId}:${driverIdentity(driver)}:${driver.vehicleName}:${
+          driver.vehicleClass
+        }:${driver.control}`,
+    )
+    .join('|');
 
-      const derived = incident.evidence;
+/**
+ * What can change about one captured incident after it first arrives.
+ *
+ * In practice, exactly one thing: its context window lands a few seconds late
+ * and brings the derived evidence with it. Everything else is written once at
+ * push time and never touched again — see `applyIncidentContext` in
+ * live-capture.ts, the only code that updates a held incident.
+ */
+const incidentRevision = (incident: LiveCaptureIncident): string =>
+  `${incident.hasContext || incident.context ? 1 : 0}:${
+    incident.evidence ? 1 : 0
+  }:${incident.etSeconds}:${incident.parties.length}`;
 
-      return {
-        /*
-          The persisted id when there is one, which is almost always. It is
-          stable where `incident.id` is not: that carries the sidecar
-          generation, so a mid-session sidecar restart renumbers every incident
-          — moving the steward's selection and detaching decisions from the
-          incidents they were made on.
-        */
-        id: incident.persistedId ?? incident.id,
-        etSeconds: incident.etSeconds,
-        timestampLabel: formatEt(incident.etSeconds),
-        lapLabel: incident.lap !== undefined ? `L${incident.lap}` : '—',
-        classification: classifyIncident(incident),
-        contactMagnitude: incident.magnitude,
-        drivers: parties,
-        // Fault is the steward's call, never the app's.
-        atFaultSteamId: undefined,
-        rawText: incident.raw.replace(/<[^>]*>/g, '').trim(),
-        anchorErrorSeconds: incident.context?.anchorErrorSeconds,
-        evidence: {
-          closingSpeedKph: derived?.closingSpeedKph,
-          aheadDriverSteamId:
-            derived?.aheadSlotId === undefined
-              ? undefined
-              : identityForSlot(derived.aheadSlotId, bySlot),
-          isTrafficIncident: derived?.isTrafficIncident,
-          trackPositionLabel: derived?.trackPositionLabel,
-          cars: (derived?.cars ?? []).map((car) => ({
-            steamId: identityForSlot(car.slotId, bySlot),
-            speedKph: car.speedKph,
-            peakDecelMps2: car.peakDecelMps2,
-            brakeApplied: car.brakeApplied,
-            blueFlagShown: car.blueFlagShown,
-            peakYawRateDegPerSec: car.peakYawRateDegPerSec,
-            offTrack: car.offTrack,
-          })),
-        },
-        traces: incident.context?.cars.map((car) => ({
-          steamId: identityForSlot(car.slotId, bySlot),
-          displayName: nameForSlot(car.slotId),
-          frames: car.frames,
-        })),
-        state: 'NEW' as const,
-      };
+export interface LiveIncidentCache {
+  roster: string;
+  byId: Map<string, { revision: string; built: LiveIncident }>;
+  last: LiveIncident[];
+}
+
+export const createLiveIncidentCache = (): LiveIncidentCache => ({
+  roster: '',
+  byId: new Map(),
+  last: [],
+});
+
+/**
+ * `buildIncidents`, but reusing the object it built last time for every
+ * incident that has not changed.
+ *
+ * The poll hands the renderer a freshly deserialised array once a second, so
+ * without this every incident has a new identity every second and nothing
+ * downstream — no `React.memo`, no `useMemo` — can skip any work. The building
+ * itself is cheap (measured under a millisecond at four hundred incidents);
+ * what is expensive is what the new identities force everything else to redo.
+ *
+ * Returns the previous array outright when nothing at all changed, so the
+ * whole live view can bail out on a quiet tick rather than just its rows.
+ */
+export const buildIncidentsCached = (
+  captured: LiveCaptureIncident[],
+  drivers: LiveCaptureDriver[],
+  cache: LiveIncidentCache,
+): LiveIncident[] => {
+  const bySlot = new Map<number, LiveCaptureDriver>();
+  drivers.forEach((driver) => bySlot.set(driver.slotId, driver));
+
+  const roster = rosterSignature(drivers);
+  const previous = cache.roster === roster ? cache.byId : undefined;
+
+  // Rebuilt rather than pruned, so an incident that has left the queue — a
+  // session change clears it — cannot keep its entry alive forever.
+  const byId = new Map<string, { revision: string; built: LiveIncident }>();
+  let changed = captured.length !== cache.last.length || previous === undefined;
+
+  const built = [...captured]
+    .sort((a, b) => b.etSeconds - a.etSeconds)
+    .map((incident, index) => {
+      const id = incident.persistedId ?? incident.id;
+      const revision = incidentRevision(incident);
+      const cached = previous?.get(id);
+
+      if (cached?.revision === revision) {
+        byId.set(id, cached);
+        if (cache.last[index] !== cached.built) {
+          changed = true;
+        }
+        return cached.built;
+      }
+
+      changed = true;
+      const entry = { revision, built: buildIncident(incident, bySlot) };
+      byId.set(id, entry);
+      return entry.built;
     });
+
+  cache.roster = roster;
+  cache.byId = byId;
+  if (changed) {
+    cache.last = built;
+  }
+
+  return cache.last;
 };
 
 /**
@@ -361,8 +475,15 @@ export const useLiveSessionData = () => {
     () => buildStandings(data.drivers, data.incidents),
     [data.drivers, data.incidents],
   );
+  /*
+    A ref, not state: the cache is an implementation detail of building the
+    list and must never itself cause a render. It lives for the life of the
+    hook, which is the life of the view.
+  */
+  const incidentCache = useRef(createLiveIncidentCache());
   const incidents = useMemo(
-    () => buildIncidents(data.incidents, data.drivers),
+    () =>
+      buildIncidentsCached(data.incidents, data.drivers, incidentCache.current),
     [data.drivers, data.incidents],
   );
 

@@ -11,7 +11,7 @@
  * back by sequence number and turned into evidence.
  */
 import { EventEmitter } from 'events';
-import { LiveSessionData } from '@types';
+import { LiveIncidentContextRecord, LiveSessionData } from '@types';
 import { daytonaContactContext } from './live-incident-context.fixture';
 
 interface FakeChild extends EventEmitter {
@@ -143,6 +143,9 @@ type Capture = {
   startLiveCapture: () => void;
   stopLiveCapture: () => void;
   getLiveSessionData: () => LiveSessionData;
+  getLiveIncidentContextInMemory: (
+    incidentId: string,
+  ) => LiveIncidentContextRecord | null;
 };
 
 let capture: Capture;
@@ -192,16 +195,52 @@ describe('live capture supervision', () => {
 
   it('should attach a context that arrives after its incident', () => {
     feed(STATUS, STANDINGS, STEWARD_EVENT);
-    expect(capture.getLiveSessionData().incidents[0].context).toBeUndefined();
+    expect(capture.getLiveSessionData().incidents[0].hasContext).toBeFalsy();
 
     feed(CONTEXT);
 
     const [incident] = capture.getLiveSessionData().incidents;
+    const held = capture.getLiveIncidentContextInMemory(
+      incident.persistedId ?? incident.id,
+    );
 
-    expect(incident.context?.cars.map((car) => car.slotId)).toEqual([19, 44]);
+    expect(incident.hasContext).toBe(true);
+    expect(held?.context.cars.map((car) => car.slotId)).toEqual([19, 44]);
     expect(incident.evidence?.aheadSlotId).toBe(19);
     expect(incident.evidence?.isTrafficIncident).toBe(true);
     expect(incident.evidence?.closingSpeedKph).toBeGreaterThan(0);
+  });
+
+  /*
+    The reply goes out once a second. Carrying the windows made it roughly
+    24 MB a tick at four hundred incidents — an order of magnitude more work
+    than everything the renderer then does with the payload put together — to
+    draw the one trace chart that is actually on screen.
+  */
+  it('should not ship the context window with the polled session data', () => {
+    feed(STATUS, STANDINGS, STEWARD_EVENT, CONTEXT);
+
+    const [incident] = capture.getLiveSessionData().incidents;
+
+    expect(incident.context).toBeUndefined();
+    expect(incident.hasContext).toBe(true);
+    // The one number off the window the dossier still needs, lifted out so it
+    // survives the strip.
+    expect(incident.anchorErrorSeconds).toBeGreaterThanOrEqual(0);
+  });
+
+  it('should keep the window reachable for an incident that was never persisted', () => {
+    feed(STATUS, STANDINGS, STEWARD_EVENT, CONTEXT);
+
+    const [incident] = capture.getLiveSessionData().incidents;
+    const held = capture.getLiveIncidentContextInMemory(
+      incident.persistedId ?? incident.id,
+    );
+
+    expect(held?.context.cars).toHaveLength(2);
+    expect(capture.getLiveIncidentContextInMemory('nothing-like-this')).toBe(
+      null,
+    );
   });
 
   it('should reassemble a line split across stdout chunks', () => {
@@ -305,8 +344,8 @@ describe('live capture supervision', () => {
 
       expect(firstGeneration?.etSeconds).toBe(575.9);
       expect(secondGeneration?.etSeconds).toBe(800.1);
-      expect(firstGeneration?.context).toBeUndefined();
-      expect(secondGeneration?.context).toBeDefined();
+      expect(firstGeneration?.hasContext).toBeFalsy();
+      expect(secondGeneration?.hasContext).toBe(true);
       expect(secondGeneration?.evidence).toBeDefined();
     } finally {
       jest.useRealTimers();

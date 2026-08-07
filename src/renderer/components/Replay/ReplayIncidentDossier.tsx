@@ -85,6 +85,12 @@ export const ReplayIncidentDossier: React.FC<Props> = ({
       id: record.id,
       timestampLabel: event.timestampLabel,
       lapLabel: event.lapLabel,
+      /*
+        The window is fetched here and handed down inline, so the dossier must
+        not go and fetch it a second time on its own account. False until it
+        has landed; true once it is already in `traces`.
+      */
+      hasTrace: Boolean(context),
     };
   }, [context, event, liveData?.drivers, record]);
 

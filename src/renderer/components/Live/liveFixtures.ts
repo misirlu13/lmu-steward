@@ -1,4 +1,6 @@
 import {
+  LiveCaptureDriver,
+  LiveCaptureIncident,
   LiveHeldDuration,
   LiveIncidentFrame,
   LivePressureBattle,
@@ -96,7 +98,18 @@ export interface LiveIncident {
   atFaultSteamId?: string;
   rawText: string;
   evidence: LiveIncidentEvidence;
+  /**
+   * Only ever set from fixtures. A live incident's window is fetched by the
+   * dossier when it is opened rather than carried on the list — see
+   * `hasTrace`.
+   */
   traces?: LiveIncidentTrace[];
+  /**
+   * Whether a captured window exists for this incident, so the dossier knows
+   * whether asking for one is worth a round trip. Most incidents have none:
+   * only car-to-car contact gets a window.
+   */
+  hasTrace?: boolean;
   /** How precisely the contact instant could be located, in seconds. */
   anchorErrorSeconds?: number;
   state: LiveIncidentState;
@@ -526,3 +539,288 @@ export const findDriverBySteamId = (
   steamId
     ? Object.values(drivers).find((d) => d.steamId === steamId)
     : undefined;
+
+/* -------------------------------------------------------------------------- */
+/* Session-scale fixtures                                                     */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * The seven-incident fixture above is a layout fixture: it exists so the
+ * dossier and the queue can be iterated on without a running game. It says
+ * nothing about how either behaves at the scale a real endurance race reaches
+ * — a long multi-class race routinely passes 400 incidents, mostly track
+ * limits, and that is where the live view was reported to crawl.
+ *
+ * These generators produce that scale deterministically, in both shapes:
+ *
+ * - `buildLiveCaptureFixture` is the *capture* shape, as `live-capture.ts`
+ *   holds it and ships it over IPC — full context windows and all. It is what
+ *   `buildIncidents` and the IPC payload cost have to be measured against.
+ * - `buildLiveIncidentsFixture` is the *renderer* shape, as the triage queue
+ *   and dossier consume it, for measuring the render path on its own.
+ *
+ * Deterministic on purpose: a performance guard that generates a different
+ * workload each run measures nothing. No randomness, no `Date.now()`.
+ */
+
+/** Frames per car in a context window: an 8s window at the sidecar's ~30ms emit floor. */
+const FRAMES_PER_CAR = 268;
+
+/** How the mix falls out in practice — track limits dominate a real session. */
+const TRACK_LIMIT_SHARE = 0.55;
+const LOSS_OF_CONTROL_SHARE = 0.1;
+
+const captureDriverNames = [
+  'Bradley Drake',
+  'Luc Moreau',
+  'Elena Vasquez',
+  'Sam Okonkwo',
+  'Nils Lindqvist',
+  'Gia Ferrara',
+  'Kenji Aoki',
+  'Marta Silva',
+  'Tom Whitfield',
+  'Ingrid Bauer',
+];
+
+const captureClasses = ['Hyper', 'LMP2', 'LMGT3'];
+
+/**
+ * A plausible braking-into-contact trace, generated rather than replayed.
+ *
+ * The real capture in `liveTraceFixture.ts` is 21 frames — trimmed for
+ * readability in a source file. A live context window is an order of magnitude
+ * longer, and the difference is the entire point of these fixtures: the cost
+ * being measured is dominated by frame count.
+ */
+const buildFrames = (seed: number, frameCount: number): LiveIncidentFrame[] => {
+  const frames: LiveIncidentFrame[] = [];
+  for (let i = 0; i < frameCount; i += 1) {
+    const t = -6 + i * (8 / frameCount);
+    // Deterministic wobble, so no two frames are identical and nothing
+    // downstream can accidentally dedupe them.
+    const jitter = Math.sin((seed + i) * 0.37);
+    const speed = 62 + jitter * 4 - Math.max(0, t) * 6;
+    frames.push({
+      t: Number(t.toFixed(3)),
+      x: 560 + i * 2.1 + jitter,
+      y: 9.3,
+      z: -470 + i * 3.2,
+      vx: speed * 0.57,
+      vy: -0.1,
+      vz: speed * 0.82,
+      speed,
+      yaw: jitter * 20,
+      throttle: t < -1 ? 1 : 0,
+      brake: t < -1 ? 0 : Math.min(1, Math.abs(jitter)),
+      steering: jitter * 0.2,
+      lapDist: 3700 + i * 4.2,
+      pathLateral: jitter * 3,
+      trackEdge: 5 + jitter,
+      flag: 0,
+      sector: 0,
+      lap: 2,
+    });
+  }
+  return frames;
+};
+
+export const liveCaptureDriversFixture = (count = 24): LiveCaptureDriver[] =>
+  Array.from({ length: count }, (_, index) => ({
+    // Half the field on real Steam IDs, half unset — an offline or AI entry
+    // reports "0", and the identity fallback has to survive at scale too.
+    steamId: index % 2 === 0 ? `7656119800000${1000 + index}` : '0',
+    driverName: captureDriverNames[index % captureDriverNames.length],
+    vehicleName: `#${index + 1} Fixture Car`,
+    vehicleClass: captureClasses[index % captureClasses.length],
+    slotId: index + 1,
+    place: index + 1,
+    lapsCompleted: 41,
+    lastLapTime: 95 + (index % 7),
+    timeBehindLeader: index * 4.1,
+    lapsBehindLeader: 0,
+    penalties: index % 5 === 0 ? 1 : 0,
+    inPits: index % 11 === 0,
+    control: index % 3 === 0 ? 1 : 0,
+    flag: 0,
+    pitStops: 1,
+    finishStatus: 0,
+  }));
+
+interface LiveCaptureFixtureOptions {
+  /** Incidents to generate. The reported problem starts around 400. */
+  count?: number;
+  driverCount?: number;
+  /** Dial down to keep a test's memory footprint sane; leave alone to measure IPC cost. */
+  framesPerCar?: number;
+}
+
+/**
+ * A whole session's worth of capture-shape incidents, oldest first — the order
+ * `live-capture.ts` accumulates them in.
+ */
+export const buildLiveCaptureFixture = ({
+  count = 400,
+  driverCount = 24,
+  framesPerCar = FRAMES_PER_CAR,
+}: LiveCaptureFixtureOptions = {}): {
+  drivers: LiveCaptureDriver[];
+  incidents: LiveCaptureIncident[];
+} => {
+  const captureDrivers = liveCaptureDriversFixture(driverCount);
+  const trackLimitCutoff = Math.floor(count * TRACK_LIMIT_SHARE);
+  const lossOfControlCutoff =
+    trackLimitCutoff + Math.floor(count * LOSS_OF_CONTROL_SHARE);
+
+  const incidents: LiveCaptureIncident[] = [];
+
+  for (let index = 0; index < count; index += 1) {
+    const seq = index + 1;
+    const etSeconds = 120 + index * 8.5;
+    const lap = 1 + Math.floor(index / 6);
+    const first = captureDrivers[index % captureDrivers.length];
+    const second =
+      captureDrivers[(index * 7 + 3) % captureDrivers.length] === first
+        ? captureDrivers[(index + 1) % captureDrivers.length]
+        : captureDrivers[(index * 7 + 3) % captureDrivers.length];
+
+    const shared = {
+      id: `live-1-${seq}`,
+      persistedId: `fixture-session#${String(seq).padStart(4, '0')}`,
+      seq,
+      etSeconds,
+      lap,
+    };
+
+    if (index < trackLimitCutoff) {
+      incidents.push({
+        ...shared,
+        kind: 'track-limits',
+        raw: `${first.driverName} exceeded track limits`,
+        parties: [{ slotId: first.slotId, displayName: first.driverName }],
+        warningPoints: index % 4 === 0 ? 0 : 23.75,
+        currentPoints: 23.75 * (1 + (index % 4)),
+      });
+      continue;
+    }
+
+    if (index < lossOfControlCutoff) {
+      incidents.push({
+        ...shared,
+        kind: 'incident',
+        objectStruck: 'Immovable',
+        magnitude: 400 + (index % 30) * 90,
+        raw: `${first.driverName} reported contact with Immovable`,
+        parties: [{ slotId: first.slotId, displayName: first.driverName }],
+      });
+      continue;
+    }
+
+    // Contacts are the ones that carry a context window, and the context
+    // window is where the weight is.
+    incidents.push({
+      ...shared,
+      kind: 'incident',
+      objectStruck: 'another vehicle',
+      magnitude: 200 + (index % 40) * 95,
+      raw: `${second.driverName}(${second.slotId}) reported contact with ${first.driverName}(${first.slotId})`,
+      parties: [
+        { slotId: first.slotId, displayName: first.driverName },
+        { slotId: second.slotId, displayName: second.driverName },
+      ],
+      evidence: {
+        closingSpeedKph: 12 + (index % 60),
+        aheadSlotId: first.slotId,
+        offTrackSlotIds: index % 5 === 0 ? [second.slotId] : [],
+        isTrafficIncident: index % 3 === 0,
+        trackPositionLabel: `Sector ${1 + (index % 3)} · ${1000 + index} m`,
+        cars: [
+          {
+            slotId: first.slotId,
+            speedKph: 150 + (index % 50),
+            peakDecelMps2: 18 + (index % 8),
+            offTrack: false,
+          },
+          {
+            slotId: second.slotId,
+            speedKph: 160 + (index % 50),
+            peakDecelMps2: 20 + (index % 8),
+            offTrack: index % 5 === 0,
+          },
+        ],
+      },
+      // Both the window and the two fields capture lifts off it, because both
+      // shapes are real: main holds the window, the renderer sees only these.
+      hasContext: true,
+      anchorErrorSeconds: 0.02 * (index % 5),
+      context: {
+        seq,
+        et: etSeconds,
+        trackLength: 5412,
+        anchorErrorSeconds: 0.02 * (index % 5),
+        sectorFlags: [0, 0, 0],
+        cars: [
+          { slotId: first.slotId, frames: buildFrames(index, framesPerCar) },
+          {
+            slotId: second.slotId,
+            frames: buildFrames(index + 500, framesPerCar),
+          },
+        ],
+      },
+    });
+  }
+
+  return { drivers: captureDrivers, incidents };
+};
+
+/**
+ * The renderer shape, newest first, matching what `buildIncidents` produces.
+ *
+ * Every fifth incident carries a decision so the queue's state buckets and the
+ * decision merge are both exercised at scale rather than on an all-`NEW` list.
+ */
+export const buildLiveIncidentsFixture = (count = 400): LiveIncident[] => {
+  const roster = Object.values(drivers);
+  const classifications: LiveIncidentClassification[] = [
+    'track-limits',
+    'contact',
+    'loss-of-control',
+  ];
+
+  return Array.from({ length: count }, (_, index) => {
+    const etSeconds = 120 + (count - index) * 8.5;
+    const first = roster[index % roster.length];
+    const second = roster[(index * 3 + 1) % roster.length];
+    const classification =
+      index < Math.floor(count * TRACK_LIMIT_SHARE)
+        ? classifications[0]
+        : classifications[1 + (index % 2)];
+    const isContact = classification === 'contact';
+    const state: LiveIncidentState =
+      index % 5 === 0 ? 'DECIDED' : index % 5 === 1 ? 'FLAGGED' : 'NEW';
+
+    return {
+      id: `fixture-session#${String(count - index).padStart(4, '0')}`,
+      etSeconds,
+      timestampLabel: `${Math.floor(etSeconds / 60)}:${String(
+        Math.floor(etSeconds % 60),
+      ).padStart(2, '0')}`,
+      lapLabel: `L${1 + Math.floor(index / 6)}`,
+      classification,
+      contactMagnitude: isContact ? 200 + (index % 40) * 95 : undefined,
+      drivers: isContact && first !== second ? [first, second] : [first],
+      atFaultSteamId: undefined,
+      rawText: `${first.displayName} — fixture incident ${index + 1}`,
+      anchorErrorSeconds: 0.02 * (index % 5),
+      evidence: {
+        closingSpeedKph: isContact ? 12 + (index % 60) : undefined,
+        aheadDriverSteamId: isContact ? first.steamId : undefined,
+        isTrafficIncident: index % 3 === 0,
+        trackPositionLabel: `Sector ${1 + (index % 3)} · ${1000 + index} m`,
+        cars: [],
+      },
+      state,
+      decision: state === 'DECIDED' ? 'no-action' : undefined,
+    };
+  });
+};

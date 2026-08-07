@@ -50,6 +50,10 @@ beforeEach(() => {
     liveSessionStatus: { state: 'live' },
     stewardDecisions: {},
     saveStewardDecision: jest.fn(),
+    // The dossier pulls the captured trace on demand rather than reading it
+    // off the polled incident, so it subscribes even when there is nothing to
+    // fetch.
+    subscribeToApiChannel: jest.fn(),
   } as unknown as ReturnType<typeof useApi>);
   useLiveSessionDataMock.mockReturnValue(
     pollResult() as unknown as ReturnType<typeof useLiveSessionData>,

@@ -8,6 +8,7 @@ import {
   LiveCaptureDriver,
   LiveCaptureIncident,
   LiveIncidentContext,
+  LiveIncidentContextRecord,
   LiveIncidentKind,
   LiveSessionData,
   LiveSessionStatus,
@@ -447,6 +448,8 @@ const applyIncidentContext = (parsed: Record<string, unknown>) => {
     incidents[index] = {
       ...incidents[index],
       context,
+      hasContext: true,
+      anchorErrorSeconds: context.anchorErrorSeconds,
       evidence: deriveIncidentEvidence(context, drivers),
     };
   } catch (error) {
@@ -634,6 +637,42 @@ export const getLiveCaptureStatus = (): LiveSessionStatus => {
   return latest;
 };
 
+/**
+ * The captured window for one incident, from the in-memory queue.
+ *
+ * Keyed the way the renderer knows the incident — persisted id where there is
+ * one — because that is what a dossier asks with. Memory rather than disk
+ * matters for the one case disk cannot serve: watching a replay captures
+ * incidents and shows them live but deliberately persists nothing, so a trace
+ * that only ever existed in memory would otherwise be unreachable.
+ */
+export const getLiveIncidentContextInMemory = (
+  incidentId: string,
+): LiveIncidentContextRecord | null => {
+  const context = incidents.find(
+    (incident) => (incident.persistedId ?? incident.id) === incidentId,
+  )?.context;
+
+  return context ? { incidentId, sessionKey, context } : null;
+};
+
+/**
+ * Strips the context window, leaving everything the queue and dossier render.
+ *
+ * This reply goes out once a second. Carrying the windows made it roughly 24 MB
+ * per tick at 400 incidents — measured — which is an order of magnitude more
+ * work than everything the renderer then does with it put together. The
+ * replay side already reached the same conclusion; see `getLiveIncidentContext`
+ * in live-session-handlers.ts.
+ */
+const withoutContext = (incident: LiveCaptureIncident): LiveCaptureIncident => {
+  if (!incident.context) {
+    return incident;
+  }
+  const { context: _window, ...rest } = incident;
+  return rest;
+};
+
 export const getLiveSessionData = (): LiveSessionData => {
   const status = getLiveCaptureStatus();
 
@@ -644,7 +683,7 @@ export const getLiveSessionData = (): LiveSessionData => {
   return {
     status,
     drivers,
-    incidents,
+    incidents: incidents.map(withoutContext),
     trackLimitStepsPerPenalty,
     // Derived on read rather than cached: it is a pure function of the standings
     // the renderer is already polling for, and it goes stale within a tick.

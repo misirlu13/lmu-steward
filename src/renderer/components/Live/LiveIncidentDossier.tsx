@@ -1,3 +1,4 @@
+import { useMemo } from 'react';
 import CenterFocusStrongIcon from '@mui/icons-material/CenterFocusStrong';
 import FlagIcon from '@mui/icons-material/Flag';
 import {
@@ -12,10 +13,12 @@ import {
 import { CarClassBadge } from '../CarClassBadge/CarClassBadge';
 import { AiBadge } from '../Common/AiBadge';
 import { StatDisplay } from '../Common/StatDisplay';
+import { useLiveIncidentContext } from '../../hooks/useLiveIncidentContext';
 import { LiveIncidentTraceChart } from './LiveIncidentTraceChart';
 import {
   LiveDecisionOutcome,
   LiveIncident,
+  LiveIncidentTrace,
   isDriverScopedOutcome,
 } from './liveFixtures';
 
@@ -200,6 +203,38 @@ export const LiveIncidentDossier: React.FC<LiveIncidentDossierProps> = ({
   targetSteamId,
   onSelectTarget,
 }) => {
+  /*
+    The window is pulled when the dossier is opened rather than carried on the
+    incident list. A window is a few hundred frames per car and a race holds
+    hundreds of them, so shipping them all at 1Hz to draw the one chart on
+    screen cost roughly 24 MB a second at four hundred incidents. Asked for
+    only when capture says there is one to ask for.
+  */
+  const { context, isLoading } = useLiveIncidentContext(
+    incident?.hasTrace && !incident.traces?.length ? incident.id : undefined,
+  );
+
+  const traces = useMemo<LiveIncidentTrace[] | undefined>(() => {
+    // Fixtures carry theirs inline, so dev mode never needs a round trip.
+    if (incident?.traces?.length) {
+      return incident.traces;
+    }
+    if (!incident || !context) {
+      return undefined;
+    }
+
+    return context.cars.map((car) => {
+      const party = incident.drivers.find(
+        (driver) => driver.slotId === car.slotId,
+      );
+      return {
+        steamId: party?.steamId ?? `slot-${car.slotId}`,
+        displayName: party?.displayName ?? `Car ${car.slotId}`,
+        frames: car.frames,
+      };
+    });
+  }, [context, incident]);
+
   if (!incident) {
     return (
       <Paper
@@ -442,11 +477,19 @@ export const LiveIncidentDossier: React.FC<LiveIncidentDossierProps> = ({
 
         <CarMeasurements incident={incident} />
 
-        {incident.traces?.length ? (
+        {traces?.length ? (
           <LiveIncidentTraceChart
-            traces={incident.traces}
-            anchorErrorSeconds={incident.anchorErrorSeconds}
+            traces={traces}
+            anchorErrorSeconds={
+              incident.anchorErrorSeconds ?? context?.anchorErrorSeconds
+            }
           />
+        ) : null}
+
+        {isLoading ? (
+          <Typography variant="caption" color="text.secondary" sx={{ mt: 2 }}>
+            Loading captured trace…
+          </Typography>
         ) : null}
 
         {incident.state === 'DECIDED' && incident.decision ? (

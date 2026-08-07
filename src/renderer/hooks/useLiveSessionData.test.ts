@@ -3,11 +3,16 @@ import {
   LiveCaptureIncident,
   LiveSessionData,
 } from '@types';
-import { liveSessionFixture } from '../components/Live/liveFixtures';
+import {
+  buildLiveCaptureFixture,
+  liveSessionFixture,
+} from '../components/Live/liveFixtures';
 import {
   buildIncidents,
+  buildIncidentsCached,
   buildSessionState,
   buildStandings,
+  createLiveIncidentCache,
   driverIdentity,
   tallyByDriver,
   toSessionPhase,
@@ -109,6 +114,99 @@ describe('buildIncidents identity', () => {
     );
 
     expect(built.id).toBe('live-3-17');
+  });
+});
+
+/*
+  The poll hands the renderer a freshly deserialised array once a second. Left
+  alone, every incident gets a new identity every second and nothing downstream
+  — no React.memo, no useMemo — can skip any work: a session with 400 incidents
+  re-rendered 400 rows a second, forever, and the view was reported crawling.
+
+  Building is not the expensive part (measured under a millisecond at 400).
+  Stable identity is, because of what it lets everything else skip.
+*/
+describe('buildIncidentsCached', () => {
+  const { drivers, incidents } = buildLiveCaptureFixture({
+    count: 400,
+    framesPerCar: 4,
+  });
+
+  // What the next poll delivers: identical content, all new objects.
+  const nextTick = () => incidents.map((incident) => ({ ...incident }));
+
+  it('should hand back the very same array when nothing has changed', () => {
+    const cache = createLiveIncidentCache();
+    const first = buildIncidentsCached(nextTick(), drivers, cache);
+    const second = buildIncidentsCached(nextTick(), drivers, cache);
+
+    expect(second).toBe(first);
+  });
+
+  it('should rebuild only the incident whose context has just landed', () => {
+    const cache = createLiveIncidentCache();
+    const before = buildIncidentsCached(
+      incidents.map((incident) => ({
+        ...incident,
+        hasContext: false,
+        evidence: undefined,
+      })),
+      drivers,
+      cache,
+    );
+
+    const withOneContext = nextTick();
+    const arrived = withOneContext.findIndex((i) => i.hasContext);
+    const after = buildIncidentsCached(
+      withOneContext.map((incident, index) => ({
+        ...incident,
+        hasContext: index === arrived,
+        evidence: index === arrived ? incident.evidence : undefined,
+      })),
+      drivers,
+      cache,
+    );
+
+    const rebuilt = after.filter(
+      (incident, index) => incident !== before[index],
+    );
+
+    expect(rebuilt).toHaveLength(1);
+    expect(rebuilt[0].hasTrace).toBe(true);
+  });
+
+  it('should rebuild everything when the roster itself changes', () => {
+    const cache = createLiveIncidentCache();
+    const before = buildIncidentsCached(nextTick(), drivers, cache);
+
+    // A name the incident rows actually display, not a lap time.
+    const renamed = drivers.map((entry, index) =>
+      index === 0 ? { ...entry, vehicleName: '#99 Different Car' } : entry,
+    );
+    const after = buildIncidentsCached(nextTick(), renamed, cache);
+
+    expect(after).not.toBe(before);
+    expect(after.some((incident, index) => incident !== before[index])).toBe(
+      true,
+    );
+  });
+
+  // The cache is keyed by incident id; a session change empties the queue, and
+  // holding those entries forever would leak for the life of the app.
+  it('should not keep entries for incidents that have left the queue', () => {
+    const cache = createLiveIncidentCache();
+    buildIncidentsCached(nextTick(), drivers, cache);
+    buildIncidentsCached(nextTick().slice(0, 5), drivers, cache);
+
+    expect(cache.byId.size).toBe(5);
+  });
+
+  it('should agree with the uncached builder', () => {
+    const cache = createLiveIncidentCache();
+
+    expect(buildIncidentsCached(nextTick(), drivers, cache)).toEqual(
+      buildIncidents(nextTick(), drivers),
+    );
   });
 });
 

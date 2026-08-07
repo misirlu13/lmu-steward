@@ -24,6 +24,7 @@ import { previewExpiredLiveSessions } from './live-retention';
 import { readStewardDecisions } from './steward-decisions';
 import { matchLiveSession, runLiveSessionMatchPass } from './live-replay-match';
 import { listReplayMatchTargets } from './replay';
+import { getLiveIncidentContextInMemory } from './live-capture';
 
 export const getLiveSessions = async (event: Electron.IpcMainEvent) => {
   try {
@@ -300,6 +301,13 @@ export const getLiveDataForReplay = async (
  * Its own channel rather than part of the per-replay payload: a window is
  * ~100 KB and a race holds hundreds, so shipping them all to open a replay
  * would cost tens of megabytes to render a list nobody has clicked into yet.
+ * The live view now reads through here for the same reason.
+ *
+ * Disk first, because it answers for every session ever captured and the live
+ * queue only holds the last few hundred of the current one. Memory is the
+ * fallback for the two cases disk cannot serve: an incident whose window has
+ * arrived but not yet been written, and a replay-playback session, which is
+ * shown live but deliberately persists nothing.
  */
 export const getLiveIncidentContext = async (
   event: Electron.IpcMainEvent,
@@ -308,11 +316,15 @@ export const getLiveIncidentContext = async (
   const id = typeof incidentId === 'string' ? incidentId.trim() : '';
 
   try {
+    const record = id
+      ? (readLiveIncidentContext(id) ?? getLiveIncidentContextInMemory(id))
+      : null;
+
     event.reply(CONSTANTS.API.GET_LIVE_INCIDENT_CONTEXT, {
       status: 'success',
       // Null rather than an error when there is none: most incidents never get
       // a window, because only car-to-car contact does.
-      data: id ? readLiveIncidentContext(id) : null,
+      data: record,
     });
   } catch (error: unknown) {
     event.reply(CONSTANTS.API.GET_LIVE_INCIDENT_CONTEXT, {

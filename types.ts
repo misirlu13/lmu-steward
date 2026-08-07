@@ -610,7 +610,30 @@ export interface LiveCaptureIncident {
    * after the session must resolve to one record, not two.
    */
   persistedId?: string;
+  /**
+   * The captured window. Held in main; **not** shipped to the renderer.
+   *
+   * A window is a few hundred frames per car — roughly 100 KB — and a long race
+   * holds hundreds of them. `getLiveSessionData` therefore strips this before
+   * replying and the renderer pulls one window at a time over
+   * `GET_LIVE_INCIDENT_CONTEXT`, exactly as the replay side already does. See
+   * `hasContext` for what survives the strip.
+   */
   context?: LiveIncidentContext;
+  /**
+   * Whether a window is held, carried in the renderer payload in place of the
+   * window itself. Also the cheap change-detector for the renderer's per-
+   * incident memo cache: an incident's context is the one thing about it that
+   * arrives late, so `persistedId` plus this flag is enough to know whether a
+   * rebuild is needed.
+   */
+  hasContext?: boolean;
+  /**
+   * Lifted off the context so it survives the strip: it is one number the
+   * dossier reads to say how precisely the contact instant could be located,
+   * and it would be absurd to ship 100 KB of frames to carry it.
+   */
+  anchorErrorSeconds?: number;
   evidence?: LiveCaptureEvidence;
 }
 
