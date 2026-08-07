@@ -313,6 +313,84 @@ Beyond the results stream, `VehicleScoringInfoV01` and `ScoringInfoV01` expose s
 
 ---
 
+## Field Expansion — Observed Values, 2026-08-07
+
+The sidecar originally read a deliberately narrow slice of the two scoring structs. It now also
+carries session conditions on the status line and timing, pit state and world position on each
+standings row. Every field below was **observed live** across one practice, one qualifying and one
+race session at WeatherTech Raceway Laguna Seca (37 AI cars, dry) on 2026-08-07. Values are quoted
+as read, not as the header describes them, because in four places the two disagree.
+
+### The header is not the last word
+
+| Field | Header says | Observed |
+| --- | --- | --- |
+| `mPitState` | `0=none, 1=request, 2=entering, 3=stopped, 4=exiting` | **5** is the resting value for a car sitting in the pits or garage — 34 of 37 cars carried it at the qualifying green. `0`, `1` and `2` were also seen; `3` and `4` were not. **The documented range is wrong**, so nothing may treat this as a five-entry lookup. |
+| "no time" sentinel | `-1` throughout | **Inconsistent within one row.** A driver with no completed lap has `mBestLapTime` `-1` but `mLastSector1` `0`. Filter on `> 0`; a `!== -1` check lets the zeros through onto a timing screen. |
+| `mServerName` | "name of the server" | The literal string `"-none-"` offline, matching the REST `sessionInfo` payload in `session.ts:17`. It is a placeholder, not a name, and is dropped rather than carried. |
+| `mCloudCoverage`, `mTrackGripLevel` | *(LMU additions, undocumented)* | Small integers, **not percentages** — `cloudCoverage` read 1 in a clear practice and 0 in a clear qualifying; `trackGripLevel` a constant 3 across all three sessions. Enums or steps of some kind. Carried raw; do not render until a wet or green-track session says what the scale is. |
+
+### What checks out exactly
+
+- **`mTimeOfDay` = `mStartET` + `mCurrentET`**, confirmed to 0.1s in all three sessions
+  (practice `43200.0 + 2844.4 = 46044.4`, i.e. a session started at noon, 47 minutes in). Both are
+  seconds since midnight, and the session start is a *time of day*, not an elapsed offset.
+- **Sector 2 is cumulative (S1+S2)**, exactly as the header claims, and the three sectors
+  reconstruct the lap to the millisecond. Race leader: S1 `29.008`, `mLastSector2` `60.249`,
+  `mLastLapTime` `77.233` → S2 = `31.241`, S3 = `16.984`, sum `77.233`. Getting this wrong is the
+  classic timing-screen bug; the arithmetic is `S2 = last2 - last1`, `S3 = lap - last2`.
+- **`mBestSector1` ≠ `mBestLapSector1`**, as the header warns and as real data confirms — a
+  practice leader held a best S1 of `28.708` while the S1 *from* their best lap was `28.748`. Two
+  genuinely different numbers; a timing screen that conflates them is lying by a few hundredths.
+- **`mTimeBehindNext` is a true interval in a race**, and composes into `mTimeBehindLeader`
+  exactly: P2 `0.653`, P3 `0.543`, P4 `0.395` against leader gaps `0.653`, `1.196`, `1.591`. This
+  is the `INT` column.
+- **`mPos.x` / `mPos.z` share the world coordinate space of `/rest/watch/trackMap`.** Cars in a
+  lap-1 train read `x ≈ −390…−404` with `z` stepping `−190 → −100` in running order, inside the
+  map's own extent. No calibration is needed between the two.
+- **`mTimeIntoLap` goes negative before the start** (`−19.6` observed in the REST sample, `−3.19`
+  live at the qualifying green), so it is carried whenever it is a number rather than only when
+  positive.
+
+### What is *not* trustworthy
+
+> ⚠️ **`mTimeBehindNext` and `mTimeBehindLeader` are meaningless outside a race.** In practice they
+> read `0.0` for almost the whole field, with stray values of `40.993`, `68.269` and a **negative**
+> `−0.829`. Practice and qualifying rank by best lap, so the car "one place higher" is not the car
+> ahead on track. This is the same reason `live-pressure.ts` derives gaps from `lapDist` instead.
+> An `INT` column must be suppressed, not zeroed, outside a race.
+
+> ⚠️ **`mQualification` is a grid position, not a qualifying result, and it is populated before
+> one exists.** It read a clean `1…37` straight down the entry list in practice *and* in qualifying
+> before any car had set a lap. In the race it became a real permutation — the pole-sitter
+> (`qualification: 1`) had dropped to P4 by the first tick — so it *is* the grid once a grid exists.
+> Nothing in the value distinguishes "real result" from "placeholder ordering", so it should only be
+> shown in a race.
+
+> ⚠️ **`mYellowFlagState` read a constant `0` (None) through all three sessions.** No caution was
+> triggered, so this neither confirms nor refutes the standing assumption that LMU does not
+> meaningfully implement full-course yellows — the same assumption that already makes `gamePhase` 6
+> get treated as green. `live-capture.ts` logs every transition of this field, so the question will
+> answer itself from a session that has one. Until then, build nothing on it.
+>
+> `mSectorFlag` remains excluded: still a constant `[11, 11, 11]` in every green session observed.
+
+### Cost
+
+The standings line grew from roughly 350 to **695 bytes per car**, measured on a 37-car race tick.
+At the 1 Hz poll rate and LMU's 104-car ceiling that is ~72 KB/s over the sidecar's stdout pipe,
+against ~36 KB/s before. `LiveSessionRecord.drivers` persists the final standings, so a stored
+session row roughly doubles for the same reason.
+
+`EmitStatusJson` and the per-row `snprintf` in `EmitStandingsJson` were replaced with a `FormatJson`
+helper that measures with `snprintf`'s return value and re-formats into a heap buffer when the
+stack buffer will not fit. The row had a fixed `char entry[896]` and the ~18 new fields would have
+overflowed it; **`snprintf` truncates silently**, and a truncated row is malformed JSON that
+`applyLine` discards with a `live-capture: unparseable line:` warning almost nobody reads. Sizing
+the buffer larger only moves that cliff. Truncation is now impossible rather than detected.
+
+---
+
 ## Language and Runtime Analysis
 
 ### Why Node Alone Is Not Enough
@@ -667,6 +745,8 @@ Facts in this document were verified directly against a local LMU installation o
 Re-verify the header contents after major LMU updates before relying on this document.
 
 Risks 8 and 9 were verified separately on **2026-08-06** against a running LMU practice session (Laguna Seca, 37 drivers) with live capture enabled, by launching the app twice and by killing the supervisor out from under the sidecar.
+
+The field expansion values above were verified on **2026-08-07** against three consecutive live sessions at WeatherTech Raceway Laguna Seca (37 AI cars, dry, `session` 1 / 5 / 10), by running the rebuilt sidecar standalone with `--json` and reading its emitted lines directly. `/rest/watch/trackMap` was confirmed to serve geometry during a live session in the same sitting — see Step 8 of `plans/live-steward-ui-plan.md`.
 
 ---
 

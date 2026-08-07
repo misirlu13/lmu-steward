@@ -240,6 +240,37 @@ void EmitJson(const std::string& body) {
   std::fflush(stdout);
 }
 
+// Formats a JSON fragment without a fixed size to get wrong.
+//
+// snprintf truncates silently, and a truncated line is malformed JSON that the
+// app discards — which reads as the session having gone quiet rather than as an
+// error. Sizing a buffer generously only moves that cliff further away; it does
+// not remove it, and the standings row has grown twice already.
+//
+// snprintf reports the length it *would* have written, so the first pass both
+// formats the common case and measures the overflow case exactly. Truncation
+// stops being possible rather than being detected after the fact.
+template <typename... Args>
+std::string FormatJson(const char* format, Args... args) {
+  char stack[2048];
+  const int needed = std::snprintf(stack, sizeof(stack), format, args...);
+  if (needed < 0) {
+    return std::string();
+  }
+  if (static_cast<size_t>(needed) < sizeof(stack)) {
+    return std::string(stack, static_cast<size_t>(needed));
+  }
+  std::vector<char> heap(static_cast<size_t>(needed) + 1);
+  std::snprintf(heap.data(), heap.size(), format, args...);
+  return std::string(heap.data(), static_cast<size_t>(needed));
+}
+
+// The SDK's fixed char arrays are not guaranteed to be null-terminated when the
+// value fills them exactly.
+std::string FixedString(const char* value, size_t capacity) {
+  return std::string(value, strnlen(value, capacity));
+}
+
 std::string gLastStream;
 
 // LMU emits each <TrackLimits> element twice on the live stream (the written
@@ -1002,11 +1033,7 @@ void EmitStatusJson() {
   const ScoringInfoV01& scoring = gLocal.scoring.scoringInfo;
   const bool hasSession = scoring.mNumVehicles > 0 && scoring.mTrackName[0] != '\0';
 
-  // Oversized on purpose: snprintf truncates silently, and a truncated status
-  // line is malformed JSON the app discards, so the whole session goes quiet.
-  char buffer[2048];
-  std::snprintf(
-      buffer, sizeof(buffer),
+  EmitJson(FormatJson(
       // session and currentEt exist so the app can derive a session identity
       // that survives a sidecar restart mid-session: now - currentEt
       // reconstructs the session's start instant from any point during it, and
@@ -1016,9 +1043,17 @@ void EmitStatusJson() {
       "\"session\":%ld,\"currentEt\":%.3f,"
       "\"driverCount\":%ld,\"timeRemainingSeconds\":%.0f,\"gamePhase\":%u,"
       "\"trackLimitStepsPerPenalty\":%u,\"trackLength\":%.1f,"
-      "\"sectorFlags\":[%d,%d,%d],\"etClockDelta\":%.3f,\"bufferedSeconds\":%.1f}",
+      "\"sectorFlags\":[%d,%d,%d],\"etClockDelta\":%.3f,\"bufferedSeconds\":%.1f,"
+      // Session conditions. Emitted raw, sentinels and all: what counts as an
+      // absent value is decided once, in applyStatus, rather than twice.
+      "\"timeOfDay\":%.1f,\"startTimeOfDay\":%.1f,"
+      "\"ambientTempC\":%.2f,\"trackTempC\":%.2f,"
+      "\"raining\":%.3f,\"darkCloud\":%.3f,"
+      "\"cloudCoverage\":%u,\"trackGripLevel\":%u,"
+      "\"minPathWetness\":%.3f,\"maxPathWetness\":%.3f,\"avgPathWetness\":%.3f,"
+      "\"yellowFlagState\":%d,\"serverName\":\"%s\"}",
       hasSession ? "live" : "detached",
-      JsonEscape(scoring.mTrackName).c_str(),
+      JsonEscape(FixedString(scoring.mTrackName, sizeof(scoring.mTrackName))).c_str(),
       SessionTypeName(scoring.mSession),
       scoring.mSession,
       scoring.mCurrentET,
@@ -1031,8 +1066,20 @@ void EmitStatusJson() {
       static_cast<int>(scoring.mSectorFlag[1]),
       static_cast<int>(scoring.mSectorFlag[2]),
       gEtClockDelta,
-      BufferedSeconds());
-  EmitJson(buffer);
+      BufferedSeconds(),
+      scoring.mTimeOfDay,
+      scoring.mStartET,
+      scoring.mAmbientTemp,
+      scoring.mTrackTemp,
+      scoring.mRaining,
+      scoring.mDarkCloud,
+      static_cast<unsigned>(scoring.mCloudCoverage),
+      static_cast<unsigned>(scoring.mTrackGripLevel),
+      scoring.mMinPathWetness,
+      scoring.mMaxPathWetness,
+      scoring.mAvgPathWetness,
+      static_cast<int>(scoring.mYellowFlagState),
+      JsonEscape(FixedString(scoring.mServerName, sizeof(scoring.mServerName))).c_str()));
 }
 
 void EmitStandingsJson() {
@@ -1054,28 +1101,47 @@ void EmitStandingsJson() {
     // adjacent cars. Classification order cannot serve for that: practice and
     // qualifying rank by best lap time, so consecutive places are not
     // neighbours on track, and mTimeBehindLeader is meaningless there.
-    char entry[896];
-    std::snprintf(
-        entry, sizeof(entry),
+    out += FormatJson(
         "%s{\"slotId\":%ld,\"steamId\":\"%llu\",\"driverName\":\"%s\","
         "\"vehicleName\":\"%s\",\"vehicleClass\":\"%s\",\"place\":%u,"
         "\"lapsCompleted\":%d,\"lastLapTime\":%.3f,\"timeBehindLeader\":%.3f,"
         "\"lapsBehindLeader\":%ld,\"penalties\":%d,\"inPits\":%s,"
         "\"control\":%d,\"flag\":%u,\"pitStops\":%d,\"finishStatus\":%d,"
-        "\"lapDist\":%.1f,\"speedKph\":%.1f}",
+        "\"lapDist\":%.1f,\"speedKph\":%.1f,"
+        // Timing. Sector 2 is cumulative in the SDK (S1+S2) and is carried
+        // that way rather than being differenced here — a value the app is
+        // told the meaning of beats a value it has to trust was converted.
+        "\"lastSector1\":%.3f,\"lastSector2\":%.3f,"
+        "\"curSector1\":%.3f,\"curSector2\":%.3f,"
+        "\"bestSector1\":%.3f,\"bestSector2\":%.3f,\"bestLapTime\":%.3f,"
+        "\"bestLapSector1\":%.3f,\"bestLapSector2\":%.3f,"
+        "\"timeIntoLap\":%.3f,\"estimatedLapTime\":%.3f,"
+        // Pit state, gap to the car ahead, grid position, and the world
+        // position the live track map needs. mPos.y is height and no map uses
+        // it, so it is left out of a row that goes out 104 times a second.
+        "\"pitState\":%u,\"inGarageStall\":%s,"
+        "\"timeBehindNext\":%.3f,\"lapsBehindNext\":%ld,"
+        "\"qualification\":%ld,\"posX\":%.1f,\"posZ\":%.1f}",
         first ? "" : ",", v.mID,
         static_cast<unsigned long long>(v.mSteamID),
-        JsonEscape(v.mDriverName).c_str(),
-        JsonEscape(v.mVehicleName).c_str(),
-        JsonEscape(v.mVehicleClass).c_str(),
+        JsonEscape(FixedString(v.mDriverName, sizeof(v.mDriverName))).c_str(),
+        JsonEscape(FixedString(v.mVehicleName, sizeof(v.mVehicleName))).c_str(),
+        JsonEscape(FixedString(v.mVehicleClass, sizeof(v.mVehicleClass))).c_str(),
         static_cast<unsigned>(v.mPlace), static_cast<int>(v.mTotalLaps),
         v.mLastLapTime, v.mTimeBehindLeader, v.mLapsBehindLeader,
         static_cast<int>(v.mNumPenalties), v.mInPits ? "true" : "false",
         static_cast<int>(v.mControl), static_cast<unsigned>(v.mFlag),
         static_cast<int>(v.mNumPitstops), static_cast<int>(v.mFinishStatus),
-        v.mLapDist, speedMps * 3.6);
+        v.mLapDist, speedMps * 3.6,
+        v.mLastSector1, v.mLastSector2,
+        v.mCurSector1, v.mCurSector2,
+        v.mBestSector1, v.mBestSector2, v.mBestLapTime,
+        v.mBestLapSector1, v.mBestLapSector2,
+        v.mTimeIntoLap, v.mEstimatedLapTime,
+        static_cast<unsigned>(v.mPitState), v.mInGarageStall ? "true" : "false",
+        v.mTimeBehindNext, v.mLapsBehindNext,
+        v.mQualification, v.mPos.x, v.mPos.z);
 
-    out += entry;
     first = false;
   }
 

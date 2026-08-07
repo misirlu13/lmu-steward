@@ -570,6 +570,65 @@ export interface LiveSessionStatus {
    * start procedure and 6 is FCY, which LMU does not meaningfully implement.
    */
   gamePhase?: number;
+
+  /*
+    Session conditions, all read from ScoringInfoV01 by the sidecar.
+
+    Every one of these is optional and absent means absent. Two separate things
+    make a value absent and neither may be rendered as a zero: a sidecar built
+    before these fields existed emits nothing at all, and LMU itself leaves
+    values unfilled outside a session.
+  */
+
+  /** Current time of day, seconds since midnight. */
+  timeOfDay?: number;
+  /** Time of day the session started, seconds since midnight (mStartET). */
+  startTimeOfDay?: number;
+  /** Ambient air temperature, °C. */
+  ambientTempC?: number;
+  /** Track surface temperature, °C. */
+  trackTempC?: number;
+  /** Rain severity, 0-1. */
+  raining?: number;
+  /**
+   * Cloud darkness, 0-1. The SDK's own comment is "cloud darkness? 0.0-1.0",
+   * question mark included; prefer `cloudCoverage` where both are present.
+   */
+  darkCloud?: number;
+  /**
+   * LMU's own cloud cover byte, not part of the base rF2 struct and
+   * undocumented beyond its type.
+   *
+   * Observed live as a small integer, not a percentage — 1 in a clear practice
+   * session and 0 in a clear qualifying session on the same day, while
+   * `darkCloud` sat at 0.000 throughout. It appears to be a step or an enum.
+   * Carried raw; do not render it as a number until a cloudy session says what
+   * the scale is.
+   */
+  cloudCoverage?: number;
+  /**
+   * LMU's own track grip byte. Undocumented, and observed live as a small
+   * integer (a constant 3 across practice and qualifying), not a percentage.
+   * Carried raw.
+   */
+  trackGripLevel?: number;
+  /** Wetness on the racing line, 0-1. */
+  minPathWetness?: number;
+  maxPathWetness?: number;
+  avgPathWetness?: number;
+  /**
+   * Full-course flag state: 0 none, 1 pending, 2 pits closed, 3 pit lead lap,
+   * 4 pits open, 5 last lap, 6 resume, 7 race halt. LMU's own -1 (invalid) is
+   * dropped rather than carried.
+   *
+   * Unverified against live behaviour — `gamePhase` handling already treats FCY
+   * as green because LMU does not meaningfully implement it, and this may well
+   * sit at 0 for the same reason. Do not build UI on it before a session with a
+   * real caution says otherwise.
+   */
+  yellowFlagState?: number;
+  /** Server name, when hosted. Absent offline. */
+  serverName?: string;
 }
 
 export type LiveIndicatorState = 'unavailable' | 'standby' | 'live';
@@ -762,6 +821,81 @@ export interface LiveCaptureDriver {
   /** Metres travelled around the current lap. The basis for on-track gaps. */
   lapDist?: number;
   speedKph?: number;
+
+  /*
+    Timing, pit state and world position, all read from VehicleScoringInfoV01.
+
+    Optional throughout, and absent means absent. LMU writes -1 for a time it
+    does not have — a driver who has not completed a lap, an invalidated sector
+    — and a sidecar built before these fields existed emits nothing. Both are
+    dropped here rather than reaching a timing screen as 0.000.
+  */
+
+  /**
+   * Last-lap sector times. **Sector 2 is cumulative**: it is S1+S2, exactly as
+   * the SDK reports it. S2 alone is `lastSector2 - lastSector1`, and S3 is
+   * `lastLapTime - lastSector2`.
+   */
+  lastSector1?: number;
+  lastSector2?: number;
+  /** Current lap's sectors, only populated while the lap is still valid. */
+  curSector1?: number;
+  curSector2?: number;
+  /** Personal bests. `bestSector2` is cumulative in the same way. */
+  bestSector1?: number;
+  bestSector2?: number;
+  bestLapTime?: number;
+  /**
+   * The sectors *from* the best lap, which are not the same thing as the best
+   * sectors — the best lap rarely contains all three of them.
+   */
+  bestLapSector1?: number;
+  bestLapSector2?: number;
+  /**
+   * Estimated progress through the current lap. Goes negative before the start,
+   * so it is carried whenever it is a number rather than only when positive.
+   */
+  timeIntoLap?: number;
+  /** LMU's own estimate of this car's lap time, used for its gap arithmetic. */
+  estimatedLapTime?: number;
+  /**
+   * Richer than `inPits`, which is a bare in-the-pit-lane boolean. 0 is a real
+   * state — not pitting — rather than an absence.
+   *
+   * The SDK documents 0 none, 1 request, 2 entering, 3 stopped, 4 exiting, but
+   * **5 was observed live** at Laguna Seca on 2026-08-07 alongside 0 and 2, so
+   * the range is wider than the header claims and LMU has not said what 5
+   * means. Anything reading this must fall through to the raw number rather
+   * than assuming a five-entry lookup covers it.
+   */
+  pitState?: number;
+  inGarageStall?: boolean;
+  /**
+   * Gap to the car one place higher in the classification — the interval.
+   *
+   * Verified live to compose exactly into `timeBehindLeader` in a race. **Only
+   * in a race**: practice and qualifying rank by best lap, so the car one place
+   * higher is not the car ahead on track, and this read 0 for most of a
+   * practice field with stray values including a negative one. Suppress it
+   * outside a race rather than showing a zero.
+   */
+  timeBehindNext?: number;
+  lapsBehindNext?: number;
+  /**
+   * Grid position, 1-based. LMU's -1 is dropped.
+   *
+   * Not a qualifying *result*: observed live reading a clean 1…37 straight down
+   * the entry list during practice and during qualifying before any car had set
+   * a lap. It becomes the real grid in a race, but nothing in the value
+   * distinguishes that from the placeholder ordering, so only show it in one.
+   */
+  qualification?: number;
+  /**
+   * World position in metres, for the live track map. The vertical axis is
+   * omitted: no map uses it and this row is emitted for every car every second.
+   */
+  posX?: number;
+  posZ?: number;
 }
 
 /**

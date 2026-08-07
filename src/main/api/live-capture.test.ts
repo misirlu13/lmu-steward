@@ -354,6 +354,216 @@ describe('live capture supervision', () => {
 });
 
 /*
+  The sidecar field expansion.
+
+  Every field below is optional in both directions, and the two directions have
+  different causes. An un-rebuilt sidecar — the committed binary is older than
+  the app more often than not — emits none of them; LMU writes -1 for a time or
+  a position it does not have yet. Both have to reach the renderer as absent,
+  because a timing screen that shows 0.000 for a driver who has not completed a
+  lap is stating a fact that is not true.
+
+  `STATUS` and `STANDINGS` above deliberately stay at the pre-expansion shape,
+  so every other test in this file doubles as the un-rebuilt-sidecar case.
+*/
+describe('expanded sidecar fields', () => {
+  /** A status line from a rebuilt sidecar, mid-morning, dry. */
+  const EXPANDED_STATUS = {
+    ...STATUS,
+    timeOfDay: 52925.4,
+    startTimeOfDay: 50400,
+    ambientTempC: 24.53,
+    trackTempC: 31.87,
+    raining: 0,
+    darkCloud: 0.2,
+    cloudCoverage: 40,
+    trackGripLevel: 90,
+    minPathWetness: 0,
+    maxPathWetness: 0,
+    avgPathWetness: 0,
+    yellowFlagState: 0,
+    serverName: 'Sunday League',
+  };
+
+  /** Two laps in: a last lap and a personal best, no qualifying time. */
+  const EXPANDED_STANDINGS = {
+    ...STANDINGS,
+    drivers: [
+      {
+        ...STANDINGS.drivers[0],
+        lastSector1: 32.104,
+        lastSector2: 71.882,
+        curSector1: 31.98,
+        curSector2: -1,
+        bestSector1: 31.98,
+        bestSector2: 71.44,
+        bestLapTime: 108.905,
+        bestLapSector1: 32.104,
+        bestLapSector2: 71.882,
+        timeIntoLap: 44.2,
+        estimatedLapTime: 109.4,
+        pitState: 0,
+        inGarageStall: false,
+        timeBehindNext: 1.284,
+        lapsBehindNext: 0,
+        qualification: -1,
+        posX: 412.6,
+        posZ: -1180.3,
+      },
+      {
+        ...STANDINGS.drivers[1],
+        /*
+          A driver who has not completed a lap. LMU is not consistent about the
+          sentinel it writes — observed live, the last-lap sectors read 0 while
+          the bests read -1, in the same row — so both appear here.
+        */
+        lastSector1: 0,
+        lastSector2: 0,
+        curSector1: -1,
+        curSector2: -1,
+        bestSector1: -1,
+        bestSector2: -1,
+        bestLapTime: -1,
+        bestLapSector1: -1,
+        bestLapSector2: -1,
+        // Negative before the start, which is a real reading rather than a gap.
+        timeIntoLap: -19.6,
+        estimatedLapTime: 122.8,
+        pitState: 3,
+        inGarageStall: true,
+        timeBehindNext: 0,
+        lapsBehindNext: 0,
+        qualification: 4,
+        posX: 26.7,
+        posZ: -213.4,
+      },
+    ],
+  };
+
+  it('should carry the session conditions off an expanded status line', () => {
+    feed(EXPANDED_STATUS);
+
+    const { status } = capture.getLiveSessionData();
+
+    expect(status.timeOfDay).toBe(52925.4);
+    expect(status.startTimeOfDay).toBe(50400);
+    expect(status.ambientTempC).toBe(24.53);
+    expect(status.trackTempC).toBe(31.87);
+    expect(status.darkCloud).toBe(0.2);
+    expect(status.cloudCoverage).toBe(40);
+    expect(status.avgPathWetness).toBe(0);
+    expect(status.yellowFlagState).toBe(0);
+    expect(status.serverName).toBe('Sunday League');
+  });
+
+  it('should leave the conditions absent when the sidecar predates them', () => {
+    feed(STATUS);
+
+    const { status } = capture.getLiveSessionData();
+
+    expect(status.state).toBe('live');
+    expect(status.timeOfDay).toBeUndefined();
+    expect(status.ambientTempC).toBeUndefined();
+    expect(status.raining).toBeUndefined();
+    expect(status.yellowFlagState).toBeUndefined();
+    expect(status.serverName).toBeUndefined();
+  });
+
+  it('should drop LMU’s -1 yellow flag state rather than carry it', () => {
+    feed({ ...EXPANDED_STATUS, yellowFlagState: -1 });
+
+    expect(capture.getLiveSessionData().status.yellowFlagState).toBeUndefined();
+  });
+
+  /*
+    Observed live: offline, LMU fills mServerName with the literal "-none-",
+    which is what the REST sessionInfo payload documented in session.ts shows
+    too. Carrying it through would put "Server: -none-" in a session header.
+  */
+  it('should treat LMU’s offline server placeholder as no server', () => {
+    feed({ ...EXPANDED_STATUS, serverName: '-none-' });
+
+    expect(capture.getLiveSessionData().status.serverName).toBeUndefined();
+  });
+
+  it('should drop a wetness reading outside the documented 0-1 range', () => {
+    feed({ ...EXPANDED_STATUS, raining: -1, maxPathWetness: 0.35 });
+
+    const { status } = capture.getLiveSessionData();
+
+    expect(status.raining).toBeUndefined();
+    expect(status.maxPathWetness).toBe(0.35);
+  });
+
+  it('should carry sectors, pit state, gaps and world position per driver', () => {
+    feed(EXPANDED_STATUS, EXPANDED_STANDINGS);
+
+    const [lead] = capture.getLiveSessionData().drivers;
+
+    // Sector 2 stays cumulative, exactly as the SDK reports it — the timing
+    // view differences it, so the raw value is what has to survive the trip.
+    expect(lead.lastSector1).toBe(32.104);
+    expect(lead.lastSector2).toBe(71.882);
+    expect(lead.bestLapTime).toBe(108.905);
+    expect(lead.timeBehindNext).toBe(1.284);
+    expect(lead.posX).toBe(412.6);
+    expect(lead.posZ).toBe(-1180.3);
+  });
+
+  it('should drop the sentinel times of a driver with no completed lap', () => {
+    feed(EXPANDED_STATUS, EXPANDED_STANDINGS);
+
+    const [, second] = capture.getLiveSessionData().drivers;
+
+    expect(second.lastSector1).toBeUndefined();
+    expect(second.bestLapTime).toBeUndefined();
+    expect(second.bestLapSector2).toBeUndefined();
+    // An invalidated current sector on a driver who has otherwise set times.
+    expect(capture.getLiveSessionData().drivers[0].curSector2).toBeUndefined();
+  });
+
+  it('should keep the readings where zero and negative are real values', () => {
+    feed(EXPANDED_STATUS, EXPANDED_STANDINGS);
+
+    const [lead, second] = capture.getLiveSessionData().drivers;
+
+    // 0 is "not pitting", not a missing pit state.
+    expect(lead.pitState).toBe(0);
+    expect(lead.inGarageStall).toBe(false);
+    expect(second.pitState).toBe(3);
+    // Before the start, progress into the lap is genuinely negative.
+    expect(second.timeIntoLap).toBe(-19.6);
+    // The leader's gap to the car ahead is a real zero, as timeBehindLeader is.
+    expect(second.timeBehindNext).toBe(0);
+  });
+
+  it('should drop a qualifying position LMU has marked invalid', () => {
+    feed(EXPANDED_STATUS, EXPANDED_STANDINGS);
+
+    const [lead, second] = capture.getLiveSessionData().drivers;
+
+    expect(lead.qualification).toBeUndefined();
+    expect(second.qualification).toBe(4);
+  });
+
+  it('should leave the row untouched when the sidecar predates the fields', () => {
+    feed(STATUS, STANDINGS);
+
+    const [lead] = capture.getLiveSessionData().drivers;
+
+    // Everything the row always carried still arrives...
+    expect(lead.driverName).toBe('Antares Au');
+    expect(lead.lastLapTime).toBe(109.622);
+    expect(lead.place).toBe(32);
+    // ...and nothing is invented to stand in for what it does not.
+    expect(lead.lastSector1).toBeUndefined();
+    expect(lead.pitState).toBeUndefined();
+    expect(lead.inGarageStall).toBeUndefined();
+    expect(lead.posX).toBeUndefined();
+  });
+});
+
+/*
   Watching a replay populates shared memory exactly as driving does — same
   track, same field, a running session clock — so the supervisor recorded three
   captured sessions for replays that were merely being watched, two of them with

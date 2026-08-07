@@ -177,6 +177,56 @@ const resolveSidecarPath = (): string | null => {
   return null;
 };
 
+/*
+  Three readers for the fields the sidecar added in the field expansion.
+
+  They exist because "absent" has two causes here and neither may surface as a
+  zero. A sidecar built before a field existed emits nothing for it, and LMU
+  writes its own sentinel — -1 for a time it does not have, -1 for an invalid
+  yellow-flag state — for a value it has not got yet. A timing screen showing
+  0.000 for a driver who has not completed a lap is a fabricated fact, so both
+  cases have to come out as undefined.
+
+  `typeof value === 'number'` rather than `Number(value)`: JSON null coerces to
+  0 and an empty string coerces to 0, and either would be read as a real value.
+*/
+const optionalNumber = (value: unknown): number | undefined =>
+  typeof value === 'number' && Number.isFinite(value) ? value : undefined;
+
+/**
+ * For lap and sector times, and for 1-based positions.
+ *
+ * `> 0` rather than `!== -1` because LMU is not consistent about which sentinel
+ * it writes: observed live, a driver with no completed lap has `bestLapTime`
+ * -1 but `lastSector1` 0, in the same row. Both mean the same thing and both
+ * have to go.
+ */
+const optionalPositive = (value: unknown): number | undefined => {
+  const parsed = optionalNumber(value);
+  return parsed !== undefined && parsed > 0 ? parsed : undefined;
+};
+
+/** For the 0-1 weather and wetness fractions. */
+const optionalFraction = (value: unknown): number | undefined => {
+  const parsed = optionalNumber(value);
+  return parsed !== undefined && parsed >= 0 && parsed <= 1
+    ? parsed
+    : undefined;
+};
+
+/**
+ * Last full-course flag state logged, so transitions are logged and a steady
+ * state is not.
+ *
+ * `mYellowFlagState` is carried but unverified: LMU does not meaningfully
+ * implement full-course yellows, which is why `gamePhase` 6 is already treated
+ * as green everywhere else in the app. Logging the transitions is how that gets
+ * settled one way or the other from a real session, and it is worth keeping
+ * afterwards — a caution coming out is exactly the kind of thing a steward
+ * reading back through a log wants to see.
+ */
+let lastLoggedYellowFlagState: number | undefined;
+
 const applyStatus = (parsed: Record<string, unknown>) => {
   const state = parsed.state === 'live' ? 'live' : 'detached';
   const driverCount = Number(parsed.driverCount);
@@ -276,6 +326,29 @@ const applyStatus = (parsed: Record<string, unknown>) => {
   const timeRemaining = Number(parsed.timeRemainingSeconds);
   const gamePhase = Number(parsed.gamePhase);
 
+  // -1 is LMU's "invalid", not a flag state.
+  const rawYellow = optionalNumber(parsed.yellowFlagState);
+  const yellowFlagState =
+    rawYellow !== undefined && rawYellow >= 0 ? rawYellow : undefined;
+
+  if (yellowFlagState !== lastLoggedYellowFlagState) {
+    log.info(
+      `live-capture: yellowFlagState ${lastLoggedYellowFlagState ?? 'none'} -> ${yellowFlagState ?? 'none'}`,
+    );
+    lastLoggedYellowFlagState = yellowFlagState;
+  }
+
+  /*
+    LMU writes the literal string "-none-" offline, observed in shared memory
+    and in the REST sessionInfo payload alike. That is a placeholder, not a
+    server, and a header reading "Server: -none-" would be the same fabrication
+    as a 0.000 lap time.
+  */
+  const rawServerName =
+    typeof parsed.serverName === 'string' ? parsed.serverName.trim() : '';
+  const serverName =
+    rawServerName && rawServerName !== '-none-' ? rawServerName : undefined;
+
   latest = {
     state,
     trackName,
@@ -292,6 +365,19 @@ const applyStatus = (parsed: Record<string, unknown>) => {
       ? timeRemaining
       : undefined,
     gamePhase: Number.isFinite(gamePhase) ? gamePhase : undefined,
+    timeOfDay: optionalNumber(parsed.timeOfDay),
+    startTimeOfDay: optionalNumber(parsed.startTimeOfDay),
+    ambientTempC: optionalNumber(parsed.ambientTempC),
+    trackTempC: optionalNumber(parsed.trackTempC),
+    raining: optionalFraction(parsed.raining),
+    darkCloud: optionalFraction(parsed.darkCloud),
+    cloudCoverage: optionalNumber(parsed.cloudCoverage),
+    trackGripLevel: optionalNumber(parsed.trackGripLevel),
+    minPathWetness: optionalFraction(parsed.minPathWetness),
+    maxPathWetness: optionalFraction(parsed.maxPathWetness),
+    avgPathWetness: optionalFraction(parsed.avgPathWetness),
+    yellowFlagState,
+    serverName,
   };
   latestAt = Date.now();
 
@@ -313,14 +399,53 @@ const applyStatus = (parsed: Record<string, unknown>) => {
  */
 const REPLAY_CONTROL = 3;
 
+/**
+ * Takes the sentinels out of one standings row.
+ *
+ * The row is otherwise carried through as the sidecar sent it. Only the fields
+ * that can arrive as a sentinel — or not arrive at all, from a sidecar built
+ * before them — are rewritten, so an un-rebuilt sidecar produces exactly the
+ * row it always did with the new keys simply undefined.
+ */
+const normaliseDriver = (row: LiveCaptureDriver): LiveCaptureDriver => ({
+  ...row,
+  lastSector1: optionalPositive(row.lastSector1),
+  lastSector2: optionalPositive(row.lastSector2),
+  curSector1: optionalPositive(row.curSector1),
+  curSector2: optionalPositive(row.curSector2),
+  bestSector1: optionalPositive(row.bestSector1),
+  bestSector2: optionalPositive(row.bestSector2),
+  bestLapTime: optionalPositive(row.bestLapTime),
+  bestLapSector1: optionalPositive(row.bestLapSector1),
+  bestLapSector2: optionalPositive(row.bestLapSector2),
+  // Negative before the start rather than absent, so only finiteness is checked.
+  timeIntoLap: optionalNumber(row.timeIntoLap),
+  estimatedLapTime: optionalPositive(row.estimatedLapTime),
+  // 0 is "not pitting", a real state; only a missing value is absent.
+  pitState: optionalNumber(row.pitState),
+  inGarageStall:
+    typeof row.inGarageStall === 'boolean' ? row.inGarageStall : undefined,
+  /*
+    Carried at face value including 0, which is what the leader legitimately
+    has, matching how `timeBehindLeader` is already carried. Deciding that a
+    zero gap means "no car ahead" is the renderer's business — `formatGap`
+    already does it — not something to bake in here.
+  */
+  timeBehindNext: optionalNumber(row.timeBehindNext),
+  lapsBehindNext: optionalNumber(row.lapsBehindNext),
+  qualification: optionalPositive(row.qualification),
+  posX: optionalNumber(row.posX),
+  posZ: optionalNumber(row.posZ),
+});
+
 const applyStandings = (parsed: Record<string, unknown>) => {
   if (!Array.isArray(parsed.drivers)) {
     return;
   }
 
-  drivers = (parsed.drivers as LiveCaptureDriver[]).filter(
-    (driver) => driver && typeof driver.slotId === 'number',
-  );
+  drivers = (parsed.drivers as LiveCaptureDriver[])
+    .filter((driver) => driver && typeof driver.slotId === 'number')
+    .map(normaliseDriver);
 
   if (drivers.length > 0) {
     hasStandingsForSession = true;
