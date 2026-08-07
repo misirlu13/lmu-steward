@@ -83,6 +83,43 @@ describe('LiveIncidentDossier', () => {
     expect(screen.getAllByTestId('trace-uncertainty-band')).toHaveLength(2);
   });
 
+  /*
+    Steering is the channel the "was that aimed at him?" question is asked of,
+    so it has to be drawn for every car whether or not the driver used it — a
+    band that only appeared on cars that turned would read as "no data" on
+    exactly the car a steward had just cleared.
+  */
+  it('should draw a steering trace for every car', () => {
+    renderDossier(withEvidence);
+
+    expect(screen.getAllByTestId('trace-steering')).toHaveLength(2);
+  });
+
+  /*
+    The captured fixture is a straight-line braking-zone shunt, so both cars
+    barely steer. On the fixed full-scale axis that is a nearly flat line by
+    design, and the printed peak is what stops it being read as a broken
+    channel.
+  */
+  it('should state each peak steering input as a number', () => {
+    renderDossier(withEvidence);
+
+    expect(screen.getByText('peak steering 0.10')).toBeInTheDocument();
+    expect(screen.getByText('peak steering 0.23')).toBeInTheDocument();
+  });
+
+  it('should say the steering axis is full-scale rather than fitted', () => {
+    renderDossier(withEvidence);
+
+    expect(
+      screen.getByText(/full-scale from −1 to \+1 lock/i),
+    ).toBeInTheDocument();
+    // And makes no claim about handedness, which nothing in the capture records.
+    expect(
+      screen.getByText(/which side is which is not recorded/i),
+    ).toBeInTheDocument();
+  });
+
   it('should draw no band when the contact instant was located exactly', () => {
     renderDossier({ ...withEvidence, anchorErrorSeconds: 0 });
 

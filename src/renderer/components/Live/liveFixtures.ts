@@ -802,7 +802,20 @@ const buildFrames = (seed: number, frameCount: number): LiveIncidentFrame[] => {
       yaw: jitter * 20,
       throttle: t < -1 ? 1 : 0,
       brake: t < -1 ? 0 : Math.min(1, Math.abs(jitter)),
-      steering: jitter * 0.2,
+      /*
+        Small correction while the car is straight, winding on hard once it is
+        into the braking zone. The ±0.2 wobble this used to carry was well below
+        anything the captured sessions show — of the car traces that were
+        actually moving, only 1% peak under 0.1 and the median uses 0.82 of the
+        available 2.0 — so it drew a dev-mode steering band that looked broken
+        against a full-scale axis. See docs/live-capture-investigation.md.
+      */
+      steering: Number(
+        Math.max(
+          -1,
+          Math.min(1, jitter * (t < -1 ? 0.18 : 0.9) - Math.max(0, t) * 0.12),
+        ).toFixed(3),
+      ),
       lapDist: 3700 + i * 4.2,
       pathLateral: jitter * 3,
       trackEdge: 5 + jitter,

@@ -3,23 +3,66 @@ import { LiveIncidentFrame } from '@types';
 import { LiveIncidentTrace } from './liveFixtures';
 
 /**
- * Throttle, brake and speed for each car through the captured window.
+ * Throttle, brake, speed and steering for each car through the captured window.
  *
- * The three are drawn together, and every trace shares one speed scale, because
- * separate scales would make two cars look alike when they were 40 kph apart.
- * The position summary under each trace is not decoration: a brake spike is
- * innocent if there is a corner there, so the trace is only evidence when read
- * with where the car actually was.
+ * Throttle, brake and speed are drawn together, and every trace shares one
+ * speed scale, because separate scales would make two cars look alike when they
+ * were 40 kph apart. The position summary under each trace is not decoration: a
+ * brake spike is innocent if there is a corner there, so the trace is only
+ * evidence when read with where the car actually was.
  *
  * The shaded band around the contact line is the same honesty applied to the
  * time axis. LMU reports the contact against a coarser clock than the frames
  * are sampled at, so the instant is a range; drawing it stops the dashed line
  * being read as a precision it does not have.
+ *
+ * Steering gets its own band below the inputs rather than a fourth overlay,
+ * because it is signed where throttle and brake are 0..1 — its zero is the
+ * middle of its band, not the baseline, and an area drawn up from the bottom
+ * would put a straight-ahead car at half throttle.
+ *
+ * Two deliberate choices, both settled against the captured sessions on disk
+ * rather than against the fixtures — see docs/live-capture-investigation.md:
+ *
+ *  - **The steering axis is fixed full-scale, −1..+1, never autoscaled.** Real
+ *    incidents use the whole range: of the car traces that were actually moving,
+ *    only 1% peak below 0.1 and the median uses 0.82 of the 2.0 available.
+ *    Autoscaling would buy nothing on that data and would cost the one thing
+ *    this trace exists for — a gentle correction and a deliberate swerve would
+ *    draw identically, and the steward comparing two cars would be comparing two
+ *    different axes.
+ *  - **One SVG per car, not one per channel.** 86% of captured incidents carry a
+ *    single car's window, so a per-channel layout overlaying "both cars" would
+ *    be stacking four bands to draw one car, and would break the per-car tie
+ *    between a trace and the position summary it has to be read with.
+ *
+ * Which sign is left and which is right is *not* established — nothing in the
+ * sidecar or the SDK header we vendor documents it, so the axis is labelled by
+ * magnitude only. Steering tracks yaw rate closely in the captured data
+ * (r = +0.71), so the channel is coherent; that is a different claim from
+ * knowing its handedness, and a stewarding tool must not guess at the
+ * difference between turning into a car and turning away from one.
  */
 
 const VIEW_WIDTH = 600;
-const VIEW_HEIGHT = 84;
+/** The throttle/brake/speed band, unchanged: 0..1 and speed run bottom-up. */
+const INPUT_HEIGHT = 84;
+const BAND_GAP = 8;
+const STEER_HEIGHT = 48;
+const STEER_TOP = INPUT_HEIGHT + BAND_GAP;
+const STEER_ZERO_Y = STEER_TOP + STEER_HEIGHT / 2;
+const VIEW_HEIGHT = STEER_TOP + STEER_HEIGHT;
 const MPS_TO_KPH = 3.6;
+
+/**
+ * Full lock either way, clamped.
+ *
+ * The clamp is what keeps the fixed axis honest: a value outside −1..1 would
+ * draw outside its band and over the inputs above it, and a non-finite one
+ * would silently void the whole path element rather than dropping a point.
+ */
+const clampSteering = (value: number): number =>
+  Number.isFinite(value) ? Math.max(-1, Math.min(1, value)) : 0;
 
 interface LiveIncidentTraceChartProps {
   traces: LiveIncidentTrace[];
@@ -46,11 +89,31 @@ const buildArea = (
   const line = frames
     .map(
       (frame, index) =>
-        `${index === 0 ? 'M' : 'L'}${toX(frame.t)} ${VIEW_HEIGHT - value(frame) * VIEW_HEIGHT}`,
+        `${index === 0 ? 'M' : 'L'}${toX(frame.t)} ${INPUT_HEIGHT - value(frame) * INPUT_HEIGHT}`,
     )
     .join(' ');
 
-  return `${line} L${toX(frames[frames.length - 1].t)} ${VIEW_HEIGHT} L${toX(frames[0].t)} ${VIEW_HEIGHT} Z`;
+  return `${line} L${toX(frames[frames.length - 1].t)} ${INPUT_HEIGHT} L${toX(frames[0].t)} ${INPUT_HEIGHT} Z`;
+};
+
+/** Zero at the middle of the steering band, +1 at its top, −1 at its bottom. */
+const toSteerY = (frame: LiveIncidentFrame): number =>
+  STEER_ZERO_Y - (clampSteering(frame.steering) * STEER_HEIGHT) / 2;
+
+/**
+ * The largest input the driver actually made, stated as a number.
+ *
+ * A fixed axis is the right call for comparing two cars, but it means a small
+ * input draws small — so the magnitude is also written out, where a steward
+ * reading "peak 0.23" cannot mistake a shallow trace for a missing one.
+ */
+const steeringSummary = (frames: LiveIncidentFrame[]): string => {
+  const peak = frames.reduce(
+    (most, frame) => Math.max(most, Math.abs(clampSteering(frame.steering))),
+    0,
+  );
+
+  return `peak steering ${peak.toFixed(2)}`;
 };
 
 const positionSummary = (frames: LiveIncidentFrame[]): string => {
@@ -86,7 +149,7 @@ export const LiveIncidentTraceChart: React.FC<LiveIncidentTraceChartProps> = ({
   const toX = (t: number) =>
     tMax === tMin ? 0 : ((t - tMin) / (tMax - tMin)) * VIEW_WIDTH;
   const toSpeedY = (frame: LiveIncidentFrame) =>
-    VIEW_HEIGHT - (frame.speed / speedMax) * VIEW_HEIGHT;
+    INPUT_HEIGHT - (frame.speed / speedMax) * INPUT_HEIGHT;
 
   const contactX = toX(0);
 
@@ -145,6 +208,9 @@ export const LiveIncidentTraceChart: React.FC<LiveIncidentTraceChartProps> = ({
         <Typography variant="caption" color="text.primary">
           speed
         </Typography>
+        <Typography variant="caption" sx={{ color: theme.palette.info.main }}>
+          steering
+        </Typography>
         <Box sx={{ flex: 1 }} />
         <Typography variant="caption" color="text.secondary">
           {tMin.toFixed(1)}s to +{tMax.toFixed(1)}s · peak{' '}
@@ -161,6 +227,9 @@ export const LiveIncidentTraceChart: React.FC<LiveIncidentTraceChartProps> = ({
             <Typography variant="caption" color="text.secondary">
               {positionSummary(trace.frames)}
             </Typography>
+            <Typography variant="caption" color="text.secondary">
+              {steeringSummary(trace.frames)}
+            </Typography>
           </Stack>
 
           <Box
@@ -169,7 +238,7 @@ export const LiveIncidentTraceChart: React.FC<LiveIncidentTraceChartProps> = ({
             preserveAspectRatio="none"
             sx={{
               width: '100%',
-              height: 84,
+              height: VIEW_HEIGHT,
               display: 'block',
               backgroundColor: 'background.default',
               border: '1px solid',
@@ -210,6 +279,46 @@ export const LiveIncidentTraceChart: React.FC<LiveIncidentTraceChartProps> = ({
               strokeWidth={1.5}
               vectorEffect="non-scaling-stroke"
             />
+
+            {/*
+              The steering band. Its full height is full lock either way, drawn
+              whether or not the driver used it — a band that resized itself to
+              the input would make every trace look like the same swerve.
+            */}
+            <rect
+              x={0}
+              y={STEER_TOP}
+              width={VIEW_WIDTH}
+              height={STEER_HEIGHT}
+              fill="none"
+              stroke={theme.palette.divider}
+              strokeWidth={1}
+              vectorEffect="non-scaling-stroke"
+            />
+            {/*
+              Straight ahead. Faint and dotted so a car that never turned reads
+              as a solid trace resting on a reference, not as a missing channel.
+            */}
+            <line
+              x1={0}
+              x2={VIEW_WIDTH}
+              y1={STEER_ZERO_Y}
+              y2={STEER_ZERO_Y}
+              stroke={theme.palette.divider}
+              strokeWidth={1}
+              strokeDasharray="2 4"
+              vectorEffect="non-scaling-stroke"
+            />
+            <path
+              data-testid="trace-steering"
+              d={buildPath(trace.frames, toX, toSteerY)}
+              fill="none"
+              stroke={theme.palette.info.main}
+              strokeWidth={1.5}
+              vectorEffect="non-scaling-stroke"
+            />
+
+            {/* Last, so the contact instant reads across both bands. */}
             <line
               x1={contactX}
               x2={contactX}
@@ -224,8 +333,18 @@ export const LiveIncidentTraceChart: React.FC<LiveIncidentTraceChartProps> = ({
         </Box>
       ))}
 
-      <Typography variant="caption" color="text.secondary">
+      <Typography variant="caption" color="text.secondary" display="block">
         {caption}
+      </Typography>
+      {/*
+        Stated rather than implied. The steering band is the one axis here a
+        reader could reasonably assume was fitted to the data, and if they
+        assumed that they would read every trace as a bigger input than it was.
+      */}
+      <Typography variant="caption" color="text.secondary" display="block">
+        The lower band is steering, drawn full-scale from −1 to +1 lock with
+        straight ahead through the middle, so inputs stay comparable between
+        cars and between incidents. Which side is which is not recorded.
       </Typography>
     </Box>
   );

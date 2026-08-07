@@ -33,6 +33,7 @@
   - [Dev loop consequence](#dev-loop-consequence)
   - [Packaging — the sidecar is not shipped](#packaging--the-sidecar-is-not-shipped)
 - [Suggested Phasing](#suggested-phasing)
+- [Observed Steering Distribution](#observed-steering-distribution)
 - [Risks and Open Questions](#risks-and-open-questions)
 - [Verification Provenance](#verification-provenance)
 - [References](#references)
@@ -569,6 +570,73 @@ run against.
 
 **Phase 4 — Derived detection**
 Detections the game does not report itself, built on captured context.
+
+---
+
+## Observed Steering Distribution
+
+Measured **2026-08-07**, before choosing an axis for the steering channel in
+`LiveIncidentTraceChart.tsx` (plan Step 6). Source: `live_incident_contexts` in
+the local data store — **314,111 frames** across **1,534 incidents** and
+**1,742 car traces**, from four captured sessions (three at Laguna Seca, one at
+Daytona Road Course). All AI fields; AI cars report live, changing steering, so
+this is valid data for range purposes.
+
+**The committed fixtures are not representative of this, and neither was the
+assumption built on them.** `liveTraceFixture.ts` spans only −0.226…+0.176 and
+`buildFrames` in `liveFixtures.ts` generated `jitter * 0.2`. Both suggested
+steering occupies a narrow band around centre and that a full-scale −1…+1 axis
+would draw every trace as a flat line. **On real data that is false.**
+
+| Measure | Value |
+| --- | --- |
+| Per-frame range | −1.000 … +1.000 (the full scale, both rails reached) |
+| Frames at exactly −1.000 | 17.0% |
+| Frames at exactly +1.000 | 4.1% |
+| Per-car steering range (moving cars), median | 0.819 of the available 2.0 |
+| Per-car range (moving cars), p75 / p90 | 1.239 / 1.869 |
+
+**Read the near-zero mass carefully — it is stationary cars, not small inputs.**
+51% of frames fall in `[0.0, 0.1)` and 729 of 1,742 car traces are a *constant*
+`+0.000`, but 98.5% of near-zero frames are below 1 m/s. Filtering to cars that
+were actually moving (mean speed > 5 m/s, n = 656) changes the picture entirely:
+
+| max abs(steering) | Share of moving cars |
+| --- | --- |
+| ≤ 0.1 | 1.1% |
+| ≤ 0.2 | 8.1% |
+| ≤ 0.3 | 27.7% |
+| ≤ 0.5 | 46.5% |
+
+Restricting further to cars that never dropped below 20 m/s — still racing, no
+spin or recovery (n = 443) — gives p25 = 0.216, median = 0.374, p75 = 0.633,
+p90 = 0.968. Saturation at ±1.0 correlates strongly with low speed (mean 2.6 m/s
+at full lock, 66% of those frames below 1 m/s), which is the expected signature
+of a spin, a recovery, or a stationary car with the wheel wound on.
+
+**Consequences, both now implemented:**
+
+1. **The steering axis is fixed full-scale, −1…+1, and is not autoscaled.**
+   Autoscaling was on the table only because the fixture implied real inputs
+   were tiny. They are not, so autoscaling would buy nothing and would cost the
+   two properties this trace exists for: comparability between the two cars in
+   one incident, and between one incident and the next.
+2. **`buildFrames` was corrected** to wind on toward full lock in the braking
+   zone rather than wobbling at ±0.2, so dev mode shows a representative band.
+
+**Cars per incident — 1,326 of 1,534 (86%) carry a single car's window**, only
+208 carry two. This is why the trace chart keeps one SVG per car rather than
+moving to one SVG per channel with both cars overlaid: in the large majority of
+real incidents there is no second car to overlay.
+
+> ⚠️ **Handedness is still unknown.** Nothing in `main.cpp`, `types.ts` or the
+> vendored SDK header records which sign is left and which is right.
+> `mUnfilteredSteering` correlates with the yaw rate derived from
+> `mLocalRot.y` at r = +0.71, agreeing in sign on 93.8% of meaningful inputs, so
+> the channel is coherent — but that establishes consistency, not direction. The
+> chart therefore labels steering by magnitude only and makes no left/right
+> claim. **To resolve:** log `mUnfilteredSteering` against a known corner in a
+> live session and record the answer here.
 
 ---
 
