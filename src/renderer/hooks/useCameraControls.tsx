@@ -41,7 +41,15 @@ export const cameraModeConfig: Record<
   },
 };
 
-export const useReplayCameraControls = (cameraCommandDebounceMs: number) => {
+/**
+ * Camera group selection and angle cycling, for any surface that drives LMU's
+ * camera.
+ *
+ * Lived under `components/Replay/hooks` until the live view needed it too.
+ * Nothing in it is replay-specific — it posts a camera group and a direction —
+ * and the live session's control bar drives exactly the same endpoint.
+ */
+export const useCameraControls = (cameraCommandDebounceMs: number) => {
   const [cameraMode, setCameraMode] = useState<CameraMode>('driving');
   const cameraCommandDebounceTimeoutRef = useRef<ReturnType<
     typeof setTimeout

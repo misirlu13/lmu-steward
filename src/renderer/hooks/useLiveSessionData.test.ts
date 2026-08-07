@@ -14,6 +14,9 @@ import {
   buildStandings,
   createLiveIncidentCache,
   driverIdentity,
+  formatTimeOfDay,
+  splitSectors,
+  summariseWeather,
   tallyByDriver,
   toSessionPhase,
 } from './useLiveSessionData';
@@ -317,5 +320,238 @@ describe('buildSessionState', () => {
 
     expect(state.trackName).toBe(liveSessionFixture.trackName);
     expect(state.connected).toBe(false);
+  });
+
+  /*
+    The sidecar that reads these is a local build artifact and is not committed,
+    so a machine that has not rebuilt it emits none of them. That is the default
+    state for any second machine, not an edge case — every one has to arrive as
+    `undefined` rather than as a zero the header would render as a measurement.
+  */
+  it('should carry the session conditions through, and their absence with them', () => {
+    const withConditions = buildSessionState(
+      {
+        ...live,
+        status: {
+          ...live.status,
+          timeOfDay: 46044.4,
+          ambientTempC: 24.5,
+          trackTempC: 31.2,
+          raining: 0,
+          avgPathWetness: 0,
+        },
+      },
+      liveSessionFixture,
+    );
+
+    expect(withConditions.timeOfDay).toBe(46044.4);
+    expect(withConditions.ambientTempC).toBe(24.5);
+    expect(withConditions.trackTempC).toBe(31.2);
+
+    const withoutConditions = buildSessionState(live, liveSessionFixture);
+
+    expect(withoutConditions.timeOfDay).toBeUndefined();
+    expect(withoutConditions.ambientTempC).toBeUndefined();
+    expect(withoutConditions.trackTempC).toBeUndefined();
+    expect(withoutConditions.raining).toBeUndefined();
+  });
+});
+
+describe('formatTimeOfDay', () => {
+  // Verified live: mTimeOfDay = mStartET + mCurrentET, both seconds since
+  // midnight — a session started at noon, 47 minutes in.
+  it('should read seconds since midnight as a clock', () => {
+    expect(formatTimeOfDay(46044.4)).toBe('12:47:24');
+    expect(formatTimeOfDay(0)).toBe('00:00:00');
+  });
+
+  it('should have nothing to say when the sidecar sent nothing', () => {
+    expect(formatTimeOfDay(undefined)).toBeUndefined();
+  });
+});
+
+describe('summariseWeather', () => {
+  it('should call a dry track dry, and a drying one damp', () => {
+    expect(summariseWeather({ raining: 0, avgPathWetness: 0 })).toBe('Dry');
+    expect(summariseWeather({ raining: 0, avgPathWetness: 0.3 })).toBe('Damp');
+    expect(summariseWeather({ raining: 0.4, avgPathWetness: 0.6 })).toBe(
+      'Rain',
+    );
+  });
+
+  // Neither field present is a sidecar that cannot report weather, which is not
+  // the same claim as "it is dry".
+  it('should say nothing when neither field was reported', () => {
+    expect(summariseWeather({})).toBeUndefined();
+  });
+});
+
+/*
+  The classic timing-screen bug is treating LMU's cumulative sector 2 as a
+  sector time. Verified against a real race lap at Laguna Seca on 2026-08-07:
+  S1 29.008, mLastSector2 60.249, mLastLapTime 77.233.
+*/
+describe('splitSectors', () => {
+  it('should reconstruct the lap to the millisecond', () => {
+    const [s1, s2, s3] = splitSectors(29.008, 60.249, 77.233);
+
+    expect(s1).toBe(29.008);
+    expect(s2).toBe(31.241);
+    expect(s3).toBe(16.984);
+    expect((s1 ?? 0) + (s2 ?? 0) + (s3 ?? 0)).toBeCloseTo(77.233, 3);
+  });
+
+  /*
+    The "no time" sentinel is not consistent within a row: a driver with no
+    completed lap carries mBestLapTime -1 and mLastSector1 0. A `!== -1` check
+    lets the zeros through onto the screen as 0.000.
+  */
+  it('should treat both no-time sentinels as no time', () => {
+    expect(splitSectors(0, 0, -1)).toEqual([undefined, undefined, undefined]);
+    expect(splitSectors(29.008, 0, 0)).toEqual([29.008, undefined, undefined]);
+  });
+
+  // An invalidated sector leaves the pair inconsistent. A negative sector time
+  // is not a measurement, so it is dropped rather than rendered.
+  it('should drop a sector that would come out negative', () => {
+    expect(splitSectors(40, 30, 90)).toEqual([40, undefined, 60]);
+    expect(splitSectors(29.008, 60.249, 55)).toEqual([
+      29.008,
+      31.241,
+      undefined,
+    ]);
+  });
+});
+
+describe('buildStandings timing', () => {
+  const leader = driver({
+    slotId: 1,
+    place: 1,
+    lastLapTime: 77.233,
+    lastSector1: 29.008,
+    lastSector2: 60.249,
+    bestLapTime: 76.9,
+    bestLapSector1: 28.9,
+    bestLapSector2: 60.1,
+    timeBehindLeader: 0,
+    timeBehindNext: 0,
+  });
+  const second = driver({
+    slotId: 2,
+    place: 2,
+    lastLapTime: 78.1,
+    lastSector1: 29.4,
+    lastSector2: 60.9,
+    bestLapTime: 77.5,
+    bestLapSector1: 29.2,
+    bestLapSector2: 60.5,
+    timeBehindLeader: 0.653,
+    timeBehindNext: 0.653,
+  });
+
+  it('should split the last lap into three sectors that add up', () => {
+    const [standing] = buildStandings([leader], [], 'RACE');
+
+    expect(standing.lastSectors).toEqual([29.008, 31.241, 16.984]);
+    expect(standing.lastLap).toBe('1:17.233');
+    expect(standing.bestLap).toBe('1:16.900');
+  });
+
+  it('should take gap and interval from LMU in a race', () => {
+    const standings = buildStandings([leader, second], [], 'RACE');
+
+    expect(standings[0].gapToLeader).toBe('—');
+    expect(standings[0].interval).toBe('—');
+    expect(standings[1].gapToLeader).toBe('+0.653');
+    expect(standings[1].interval).toBe('+0.653');
+  });
+
+  /*
+    mTimeBehindNext and mTimeBehindLeader are meaningless outside a race:
+    practice and qualifying rank by best lap, so the car one place higher is not
+    the car ahead on track. Observed reading 0.0 for almost a whole practice
+    field, with stray values including a negative -0.829. Neither may reach the
+    screen, as a zero or as anything else.
+  */
+  it('should never read LMU’s gap fields outside a race', () => {
+    const [, behind] = buildStandings(
+      [
+        { ...leader, timeBehindLeader: 40.993, timeBehindNext: 40.993 },
+        { ...second, timeBehindLeader: -0.829, timeBehindNext: -0.829 },
+      ],
+      [],
+      'PRACTICE',
+    );
+
+    // 77.5 - 76.9, the best-lap delta the field is actually ordered by.
+    expect(behind.gapToLeader).toBe('+0.600');
+    expect(behind.interval).toBe('+0.600');
+  });
+
+  it('should have no best-lap gap to offer when nobody has set a lap', () => {
+    const [, behind] = buildStandings(
+      [
+        { ...leader, bestLapTime: -1 },
+        { ...second, bestLapTime: -1 },
+      ],
+      [],
+      'QUALIFY',
+    );
+
+    expect(behind.gapToLeader).toBe('—');
+    expect(behind.interval).toBe('—');
+  });
+
+  it('should show no times at all for a driver who has not completed a lap', () => {
+    const [standing] = buildStandings(
+      [
+        driver({
+          slotId: 9,
+          place: 1,
+          lastLapTime: 0,
+          lastSector1: 0,
+          lastSector2: 0,
+          bestLapTime: -1,
+          bestLapSector1: -1,
+          bestLapSector2: -1,
+        }),
+      ],
+      [],
+      'PRACTICE',
+    );
+
+    expect(standing.lastLap).toBe('—');
+    expect(standing.bestLap).toBe('—');
+    expect(standing.lastSectors).toEqual([undefined, undefined, undefined]);
+    expect(standing.bestLapSectors).toEqual([undefined, undefined, undefined]);
+    expect(standing.lastLapSeconds).toBeUndefined();
+  });
+
+  /*
+    mPitState carries an undocumented 5 — the resting value on 34 of 37 cars at
+    a qualifying green — so the status a steward reads comes from the two
+    booleans, which mean what they say. The raw number rides along untouched.
+  */
+  it('should derive the pit status from the booleans and carry the raw state', () => {
+    const [inPits] = buildStandings(
+      [driver({ slotId: 1, inPits: true, pitState: 5 })],
+      [],
+      'RACE',
+    );
+    const [inGarage] = buildStandings(
+      [driver({ slotId: 1, inPits: true, inGarageStall: true, pitState: 5 })],
+      [],
+      'RACE',
+    );
+    const [onTrack] = buildStandings(
+      [driver({ slotId: 1, pitState: 0 })],
+      [],
+      'RACE',
+    );
+
+    expect(inPits.pitStatus).toBe('PIT');
+    expect(inPits.pitState).toBe(5);
+    expect(inGarage.pitStatus).toBe('GAR');
+    expect(onTrack.pitStatus).toBe('TRK');
   });
 });

@@ -304,6 +304,29 @@ export const buildLiveIncidentFilterOptions = (
   };
 };
 
+/**
+ * S1, S2 and S3 as separate times, already de-cumulated.
+ *
+ * LMU reports sector 2 cumulatively (S1+S2), so nothing outside `splitSectors`
+ * should ever see the raw pair. An entry is `undefined` when LMU has no time
+ * for that sector — a lap not yet completed, or one whose sector was
+ * invalidated — never zero.
+ */
+export type LiveSectorTimes = [
+  number | undefined,
+  number | undefined,
+  number | undefined,
+];
+
+/**
+ * What the STAT column shows. Derived from `inPits` and `inGarageStall`, which
+ * are plain booleans, rather than from `mPitState` — that field turned out to
+ * have an undocumented value 5 carried by 34 of 37 cars at a qualifying green,
+ * so a lookup over the documented 0–4 would mislabel most of the field. The raw
+ * number rides along on `pitState` for the tooltip.
+ */
+export type LivePitStatus = 'TRK' | 'PIT' | 'GAR';
+
 export interface LiveStanding {
   steamId: string;
   slotId?: number;
@@ -313,7 +336,26 @@ export interface LiveStanding {
   carNumber: string;
   carClass: string;
   gapToLeader: string;
+  /**
+   * Gap to the car one place ahead. In a race this is LMU's own
+   * `mTimeBehindNext`; outside one the classification is ranked by best lap and
+   * that field is meaningless, so it is a best-lap delta instead. `—` when
+   * there is nothing to compare.
+   */
+  interval: string;
   lastLap: string;
+  /** The same time as a number, for the session-best/personal-best comparison. */
+  lastLapSeconds?: number;
+  lastSectors: LiveSectorTimes;
+  bestLap: string;
+  bestLapSeconds?: number;
+  /**
+   * The three sectors *of* that driver's best lap — deliberately not their best
+   * sectors, which LMU only reports for S1 and as a cumulative S1+S2. Using one
+   * consistent reference is what keeps the colour convention honest; conflating
+   * the two is wrong by hundredths (28.708 vs 28.748 on one observed driver).
+   */
+  bestLapSectors: LiveSectorTimes;
   outstandingPenalties: number;
   /** Track-limit elements that actually added warning points. */
   trackLimitStrikes: number;
@@ -321,6 +363,9 @@ export interface LiveStanding {
   trackLimitPoints?: number;
   incidentCount: number;
   inPits: boolean;
+  pitStatus: LivePitStatus;
+  /** Raw `mPitState`, shown only as detail. Undocumented values fall through. */
+  pitState?: number;
   isAiDriver?: boolean;
 }
 
@@ -341,6 +386,29 @@ export interface LiveSessionState {
   lapsCompleted: number;
   trackLimitStepsPerPenalty: number;
   connected: boolean;
+
+  /*
+    Session conditions for the header. Every one is optional and absent means
+    absent: the sidecar that reads them is a local build artifact, so a machine
+    that has not rebuilt it emits none of these and the header must show `—`
+    rather than a plausible zero.
+
+    Four captured fields are deliberately *not* carried up here, because there
+    is nothing honest to draw with them yet — `cloudCoverage` and
+    `trackGripLevel` are small integers on an unknown scale, `darkCloud` read a
+    flat 0.000 through three sessions, and `yellowFlagState` has never been seen
+    at anything but 0. They stay on `LiveSessionStatus` until a session says
+    what they mean.
+  */
+
+  /** Current time of day, seconds since midnight. */
+  timeOfDay?: number;
+  ambientTempC?: number;
+  trackTempC?: number;
+  /** Rain severity, 0–1. */
+  raining?: number;
+  /** Average wetness on the racing line, 0–1. */
+  avgPathWetness?: number;
 }
 
 const drivers: Record<string, LiveDriverRef> = {
@@ -398,6 +466,12 @@ export const liveSessionFixture: LiveSessionState = {
   lapsCompleted: 41,
   trackLimitStepsPerPenalty: 4,
   connected: true,
+  // 14:42:05, matching the header ordering the mockups settle on.
+  timeOfDay: 52925,
+  ambientTempC: 24.5,
+  trackTempC: 31.2,
+  raining: 0,
+  avgPathWetness: 0,
 };
 
 export const liveIncidentsFixture: LiveIncident[] = [
@@ -593,6 +667,16 @@ export const liveIncidentsFixture: LiveIncident[] = [
   },
 ];
 
+/**
+ * The layout fixture for the timing screen.
+ *
+ * The sector times are arithmetically consistent with the laps they belong to —
+ * every `lastSectors` triple sums to `lastLapSeconds` and every
+ * `bestLapSectors` triple to `bestLapSeconds` — because a timing screen whose
+ * fixture does not add up cannot be checked by looking at it. Between them the
+ * seven rows exercise every state of the colour convention: a session-best
+ * sector, personal-best sectors, and rows with neither.
+ */
 export const liveStandingsFixture: LiveStanding[] = [
   {
     steamId: drivers.moreau.steamId,
@@ -602,11 +686,18 @@ export const liveStandingsFixture: LiveStanding[] = [
     carNumber: drivers.moreau.carNumber,
     carClass: drivers.moreau.carClass,
     gapToLeader: '—',
+    interval: '—',
     lastLap: '1:45.812',
+    lastLapSeconds: 105.812,
+    lastSectors: [33.204, 40.118, 32.49],
+    bestLap: '1:45.198',
+    bestLapSeconds: 105.198,
+    bestLapSectors: [33.01, 39.902, 32.286],
     outstandingPenalties: 0,
     trackLimitStrikes: 1,
     incidentCount: 2,
     inPits: false,
+    pitStatus: 'TRK',
   },
   {
     steamId: drivers.drake.steamId,
@@ -616,11 +707,19 @@ export const liveStandingsFixture: LiveStanding[] = [
     carNumber: drivers.drake.carNumber,
     carClass: drivers.drake.carClass,
     gapToLeader: '+4.118',
-    lastLap: '1:45.994',
+    interval: '+4.118',
+    lastLap: '1:45.206',
+    lastLapSeconds: 105.206,
+    // S1 matches the fastest first sector in the field: the magenta case.
+    lastSectors: [32.884, 40.01, 32.312],
+    bestLap: '1:44.876',
+    bestLapSeconds: 104.876,
+    bestLapSectors: [32.884, 39.744, 32.248],
     outstandingPenalties: 0,
     trackLimitStrikes: 2,
     incidentCount: 3,
     inPits: false,
+    pitStatus: 'TRK',
   },
   {
     steamId: drivers.vasquez.steamId,
@@ -630,11 +729,18 @@ export const liveStandingsFixture: LiveStanding[] = [
     carNumber: drivers.vasquez.carNumber,
     carClass: drivers.vasquez.carClass,
     gapToLeader: '+1:12.443',
-    lastLap: '1:51.207',
+    interval: '+68.325',
+    lastLap: '1:51.390',
+    lastLapSeconds: 111.39,
+    lastSectors: [35.402, 42.244, 33.744],
+    bestLap: '1:51.264',
+    bestLapSeconds: 111.264,
+    bestLapSectors: [35.402, 42.118, 33.744],
     outstandingPenalties: 0,
     trackLimitStrikes: 0,
     incidentCount: 1,
     inPits: false,
+    pitStatus: 'TRK',
   },
   {
     steamId: drivers.okonkwo.steamId,
@@ -644,11 +750,18 @@ export const liveStandingsFixture: LiveStanding[] = [
     carNumber: drivers.okonkwo.carNumber,
     carClass: drivers.okonkwo.carClass,
     gapToLeader: '+1:19.008',
-    lastLap: '1:51.884',
+    interval: '+6.565',
+    lastLap: '1:52.102',
+    lastLapSeconds: 112.102,
+    lastSectors: [35.7, 42.302, 34.1],
+    bestLap: '1:51.892',
+    bestLapSeconds: 111.892,
+    bestLapSectors: [35.61, 42.302, 33.98],
     outstandingPenalties: 1,
     trackLimitStrikes: 3,
     incidentCount: 4,
     inPits: false,
+    pitStatus: 'TRK',
   },
   {
     steamId: drivers.bot.steamId,
@@ -658,11 +771,19 @@ export const liveStandingsFixture: LiveStanding[] = [
     carNumber: drivers.bot.carNumber,
     carClass: drivers.bot.carClass,
     gapToLeader: '+1:44.660',
-    lastLap: '1:52.331',
+    interval: '+25.652',
+    lastLap: '1:54.024',
+    lastLapSeconds: 114.024,
+    lastSectors: [36.402, 43.118, 34.504],
+    bestLap: '1:52.546',
+    bestLapSeconds: 112.546,
+    bestLapSectors: [35.884, 42.56, 34.102],
     outstandingPenalties: 0,
     trackLimitStrikes: 0,
     incidentCount: 1,
     inPits: true,
+    pitStatus: 'PIT',
+    pitState: 3,
     isAiDriver: true,
   },
   {
@@ -673,11 +794,18 @@ export const liveStandingsFixture: LiveStanding[] = [
     carNumber: drivers.lindqvist.carNumber,
     carClass: drivers.lindqvist.carClass,
     gapToLeader: '+2:31.902',
-    lastLap: '1:58.044',
+    interval: '+47.242',
+    lastLap: '1:59.916',
+    lastLapSeconds: 119.916,
+    lastSectors: [38.204, 45.31, 36.402],
+    bestLap: '1:59.616',
+    bestLapSeconds: 119.616,
+    bestLapSectors: [38.204, 45.01, 36.402],
     outstandingPenalties: 0,
     trackLimitStrikes: 3,
     incidentCount: 2,
     inPits: false,
+    pitStatus: 'TRK',
   },
   {
     steamId: drivers.ferrara.steamId,
@@ -687,11 +815,18 @@ export const liveStandingsFixture: LiveStanding[] = [
     carNumber: drivers.ferrara.carNumber,
     carClass: drivers.ferrara.carClass,
     gapToLeader: '+2:48.115',
-    lastLap: '1:58.630',
+    interval: '+16.213',
+    lastLap: '2:00.656',
+    lastLapSeconds: 120.656,
+    lastSectors: [38.61, 45.244, 36.802],
+    bestLap: '2:00.214',
+    bestLapSeconds: 120.214,
+    bestLapSectors: [38.41, 45.244, 36.56],
     outstandingPenalties: 1,
     trackLimitStrikes: 1,
     incidentCount: 3,
     inPits: false,
+    pitStatus: 'TRK',
   },
 ];
 
@@ -847,6 +982,24 @@ export const liveCaptureDriversFixture = (count = 24): LiveCaptureDriver[] =>
     flag: 0,
     pitStops: 1,
     finishStatus: 0,
+    /*
+      The Step 3 fields, kept arithmetically true against the lap times above:
+      sector 2 is cumulative, so S3 is whatever is left of the lap. A fixture
+      whose sectors do not reconstruct the lap would let the classic
+      timing-screen bug through the tests that exist to catch it.
+    */
+    lastSector1: 30.5,
+    lastSector2: 73,
+    bestLapTime: 95 + (index % 7) - 0.4,
+    bestLapSector1: 30.4,
+    bestLapSector2: 72.8,
+    // 5 is the resting value LMU carries for a car sitting in the pit box, and
+    // it is not in the SDK's documented 0-4 range.
+    pitState: index % 11 === 0 ? 5 : 0,
+    inGarageStall: false,
+    timeBehindNext: index === 0 ? 0 : 4.1,
+    lapsBehindNext: 0,
+    qualification: index + 1,
   }));
 
 interface LiveCaptureFixtureOptions {

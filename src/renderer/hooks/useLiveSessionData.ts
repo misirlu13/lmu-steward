@@ -4,12 +4,15 @@ import {
   LiveCaptureDriver,
   LiveCaptureIncident,
   LiveSessionData,
+  SessionType,
 } from '@types';
 import { sendMessage } from '../utils/postMessage';
 import { useApi } from '../providers/ApiContext';
 import {
   LiveIncident,
   LiveIncidentClassification,
+  LivePitStatus,
+  LiveSectorTimes,
   LiveSessionPhase,
   LiveSessionState,
   LiveStanding,
@@ -49,7 +52,7 @@ export const toCarNumber = (driver: LiveCaptureDriver): string => {
   return match ? match[1] : String(driver.slotId);
 };
 
-const formatLapTime = (seconds: number): string => {
+export const formatLapTime = (seconds: number): string => {
   if (!Number.isFinite(seconds) || seconds <= 0) {
     return '—';
   }
@@ -58,7 +61,62 @@ const formatLapTime = (seconds: number): string => {
   return `${minutes}:${remainder.toFixed(3).padStart(6, '0')}`;
 };
 
-const formatGap = (driver: LiveCaptureDriver): string => {
+/**
+ * A time LMU actually holds, or nothing.
+ *
+ * The "no time" sentinel is not consistent within a single row — a driver with
+ * no completed lap carries `mBestLapTime` `-1` but `mLastSector1` `0` — so the
+ * test is `> 0` rather than `!== -1`. A `!== -1` check lets the zeros through
+ * onto a timing screen as 0.000.
+ */
+const heldTime = (value?: number): number | undefined =>
+  value !== undefined && Number.isFinite(value) && value > 0
+    ? value
+    : undefined;
+
+/**
+ * Split a lap into its three sectors.
+ *
+ * **Sector 2 as LMU reports it is cumulative** — it is S1+S2 — so S2 alone is
+ * `cumulativeSector2 - sector1` and S3 is `lapTime - cumulativeSector2`.
+ * Verified to the millisecond against a real race lap: 29.008 / 60.249 / 77.233
+ * splits to 29.008, 31.241, 16.984. Getting this wrong is the classic
+ * timing-screen bug.
+ *
+ * A sector that does not come out positive is dropped rather than shown: a lap
+ * with an invalidated sector leaves the pair inconsistent, and a negative
+ * sector time is not a measurement.
+ */
+export const splitSectors = (
+  sector1?: number,
+  cumulativeSector2?: number,
+  lapTime?: number,
+): LiveSectorTimes => {
+  const first = heldTime(sector1);
+  const cumulative = heldTime(cumulativeSector2);
+  const lap = heldTime(lapTime);
+
+  return [
+    first,
+    first !== undefined && cumulative !== undefined && cumulative > first
+      ? Number((cumulative - first).toFixed(3))
+      : undefined,
+    cumulative !== undefined && lap !== undefined && lap > cumulative
+      ? Number((lap - cumulative).toFixed(3))
+      : undefined,
+  ];
+};
+
+/** Seconds as a signed gap, e.g. `+4.118`. */
+const formatSecondsGap = (seconds: number): string => `+${seconds.toFixed(3)}`;
+
+/**
+ * Gap in a race, straight from LMU's own classification arithmetic.
+ * `mTimeBehindLeader` and `mTimeBehindNext` compose exactly here — verified
+ * live, P2 `0.653` + P3 `0.543` + P4 `0.395` against leader gaps `0.653`,
+ * `1.196`, `1.591`.
+ */
+const formatRaceGap = (driver: LiveCaptureDriver): string => {
   if (driver.place === 1) {
     return '—';
   }
@@ -71,7 +129,55 @@ const formatGap = (driver: LiveCaptureDriver): string => {
   ) {
     return '—';
   }
-  return `+${driver.timeBehindLeader.toFixed(3)}`;
+  return formatSecondsGap(driver.timeBehindLeader);
+};
+
+const formatRaceInterval = (driver: LiveCaptureDriver): string => {
+  if (driver.place === 1) {
+    return '—';
+  }
+  if ((driver.lapsBehindNext ?? 0) > 0) {
+    return `+${driver.lapsBehindNext}L`;
+  }
+  const interval = driver.timeBehindNext;
+  if (interval === undefined || !Number.isFinite(interval) || interval <= 0) {
+    return '—';
+  }
+  return formatSecondsGap(interval);
+};
+
+/**
+ * Gap outside a race, as the delta between two best laps.
+ *
+ * **LMU's own gap fields cannot be used here.** Practice and qualifying rank by
+ * best lap, so the car one place higher is not the car ahead on track:
+ * `mTimeBehindNext` read 0.0 for almost a whole practice field, with stray
+ * values including a negative one. This is the same reason `live-pressure.ts`
+ * derives its gaps from `lapDist`. So the interval is recomputed from the
+ * quantity the field is actually ordered by, which is what a timing screen
+ * shows in practice anyway.
+ */
+const formatBestLapDelta = (bestLap?: number, reference?: number): string => {
+  if (bestLap === undefined || reference === undefined) {
+    return '—';
+  }
+  const delta = bestLap - reference;
+  return delta >= 0 ? formatSecondsGap(delta) : '—';
+};
+
+/**
+ * Track / pits / garage.
+ *
+ * Read from the two booleans rather than from `mPitState`, whose documented
+ * 0–4 range is wrong: an undocumented 5 was the resting value on 34 of 37 cars
+ * at a qualifying green. The raw number is carried alongside for detail, but
+ * nothing branches on it.
+ */
+const toPitStatus = (driver: LiveCaptureDriver): LivePitStatus => {
+  if (driver.inGarageStall) {
+    return 'GAR';
+  }
+  return driver.inPits ? 'PIT' : 'TRK';
 };
 
 const classifyIncident = (
@@ -166,39 +272,84 @@ export const driverIdentity = (driver: LiveCaptureDriver): string =>
     ? `slot-${driver.slotId}`
     : driver.steamId;
 
+/**
+ * The field, ordered by classification, with everything a timing screen needs.
+ *
+ * `sessionType` is not decoration: it decides which gap arithmetic is honest.
+ * In a race LMU's own `mTimeBehindLeader` / `mTimeBehindNext` are exact; in
+ * practice and qualifying they are meaningless and the same two columns are
+ * best-lap deltas instead. Absent — an old sidecar, or no session — is treated
+ * as "not a race", because that path never touches the untrustworthy fields.
+ */
 export const buildStandings = (
   drivers: LiveCaptureDriver[],
   incidents: LiveCaptureIncident[] = [],
+  sessionType: SessionType | undefined = undefined,
 ): LiveStanding[] => {
   const byClass = new Map<string, number>();
   const tallies = tallyByDriver(incidents);
+  const isRace = sessionType === 'RACE';
+  const ordered = [...drivers].sort((a, b) => a.place - b.place);
+  const leaderBestLap = heldTime(ordered[0]?.bestLapTime);
 
-  return [...drivers]
-    .sort((a, b) => a.place - b.place)
-    .map((driver) => {
-      const carClass = toCarClassCode(driver.vehicleClass);
-      const classPosition = (byClass.get(carClass) ?? 0) + 1;
-      byClass.set(carClass, classPosition);
-      const tally = tallies.get(driver.slotId);
+  return ordered.map((driver, index) => {
+    const carClass = toCarClassCode(driver.vehicleClass);
+    const classPosition = (byClass.get(carClass) ?? 0) + 1;
+    byClass.set(carClass, classPosition);
+    const tally = tallies.get(driver.slotId);
+    const bestLapSeconds = heldTime(driver.bestLapTime);
 
-      return {
-        steamId: driverIdentity(driver),
-        slotId: driver.slotId,
-        position: driver.place,
-        classPosition,
-        displayName: driver.driverName,
-        carNumber: toCarNumber(driver),
-        carClass,
-        gapToLeader: formatGap(driver),
-        lastLap: formatLapTime(driver.lastLapTime),
-        outstandingPenalties: driver.penalties,
-        trackLimitStrikes: tally?.trackLimits ?? 0,
-        trackLimitPoints: tally?.points,
-        incidentCount: tally?.incidents ?? 0,
-        inPits: driver.inPits,
-        isAiDriver: driver.control === 1,
-      };
-    });
+    return {
+      steamId: driverIdentity(driver),
+      slotId: driver.slotId,
+      position: driver.place,
+      classPosition,
+      displayName: driver.driverName,
+      carNumber: toCarNumber(driver),
+      carClass,
+      gapToLeader: isRace
+        ? formatRaceGap(driver)
+        : formatBestLapDelta(
+            index === 0 ? undefined : bestLapSeconds,
+            leaderBestLap,
+          ),
+      interval: isRace
+        ? formatRaceInterval(driver)
+        : formatBestLapDelta(
+            index === 0 ? undefined : bestLapSeconds,
+            heldTime(ordered[index - 1]?.bestLapTime),
+          ),
+      lastLap: formatLapTime(driver.lastLapTime),
+      lastLapSeconds: heldTime(driver.lastLapTime),
+      lastSectors: splitSectors(
+        driver.lastSector1,
+        driver.lastSector2,
+        driver.lastLapTime,
+      ),
+      bestLap: formatLapTime(driver.bestLapTime ?? 0),
+      bestLapSeconds,
+      /*
+        The sectors *from* the best lap, not the best sectors. LMU reports a
+        true best S1 and a cumulative best S1+S2 and no best S3 at all, so
+        there is no consistent per-sector best to compare against — and the two
+        are genuinely different numbers (28.708 vs 28.748 on one observed
+        driver). One reference lap for all three sectors is the honest choice.
+      */
+      bestLapSectors: splitSectors(
+        driver.bestLapSector1,
+        driver.bestLapSector2,
+        driver.bestLapTime,
+      ),
+      outstandingPenalties: driver.penalties,
+      trackLimitStrikes: tally?.trackLimits ?? 0,
+      trackLimitPoints: tally?.points,
+      incidentCount: tally?.incidents ?? 0,
+      inPits: driver.inPits,
+      pitStatus: toPitStatus(driver),
+      pitState: driver.pitState,
+      isAiDriver: driver.control === 1,
+    };
+  });
 };
 
 const identityForSlot = (
@@ -443,7 +594,64 @@ export const buildSessionState = (
     lapsCompleted: Math.max(0, ...data.drivers.map((d) => d.lapsCompleted), 0),
     trackLimitStepsPerPenalty: data.trackLimitStepsPerPenalty ?? 0,
     connected: true,
+    /*
+      Passed through undefined-and-all: a sidecar built before Step 3 sends
+      none of these, and the header renders `—` for each rather than a zero
+      that reads as a measurement.
+    */
+    timeOfDay: data.status.timeOfDay,
+    ambientTempC: data.status.ambientTempC,
+    trackTempC: data.status.trackTempC,
+    raining: data.status.raining,
+    avgPathWetness: data.status.avgPathWetness,
   };
+};
+
+/** `HH:MM:SS` from seconds since midnight. */
+export const formatTimeOfDay = (seconds?: number): string | undefined => {
+  if (seconds === undefined || !Number.isFinite(seconds)) {
+    return undefined;
+  }
+  const total = Math.floor(((seconds % 86400) + 86400) % 86400);
+  const hours = Math.floor(total / 3600);
+  const minutes = Math.floor((total % 3600) / 60);
+  return `${String(hours).padStart(2, '0')}:${String(minutes).padStart(
+    2,
+    '0',
+  )}:${String(total % 60).padStart(2, '0')}`;
+};
+
+/** `H:MM:SS` for a countdown, which is a duration rather than a clock. */
+export const formatSessionClock = (totalSeconds: number): string => {
+  const total = Math.max(0, Math.floor(totalSeconds));
+  const hours = Math.floor(total / 3600);
+  const minutes = Math.floor((total % 3600) / 60);
+  return `${hours}:${String(minutes).padStart(2, '0')}:${String(
+    total % 60,
+  ).padStart(2, '0')}`;
+};
+
+/**
+ * The weather, in one word, from the two fields that mean something.
+ *
+ * Three states and no severity bands. Every session observed so far has been
+ * dry, so a "Light rain / Heavy rain" scale would be a guess at where the
+ * boundaries sit — and `cloudCoverage` and `trackGripLevel`, the other two
+ * candidates, are small integers on an unknown scale. Rain that has not yet
+ * wet the line and a line still wet after the rain stopped are genuinely
+ * different conditions, which is why "Damp" is its own answer.
+ */
+export const summariseWeather = (
+  session: Pick<LiveSessionState, 'raining' | 'avgPathWetness'>,
+): string | undefined => {
+  const { raining, avgPathWetness } = session;
+  if (raining === undefined && avgPathWetness === undefined) {
+    return undefined;
+  }
+  if ((raining ?? 0) > 0) {
+    return 'Rain';
+  }
+  return (avgPathWetness ?? 0) > 0 ? 'Damp' : 'Dry';
 };
 
 export const useLiveSessionData = () => {
@@ -472,8 +680,8 @@ export const useLiveSessionData = () => {
   }, [subscribeToApiChannel]);
 
   const standings = useMemo(
-    () => buildStandings(data.drivers, data.incidents),
-    [data.drivers, data.incidents],
+    () => buildStandings(data.drivers, data.incidents, data.status.sessionType),
+    [data.drivers, data.incidents, data.status.sessionType],
   );
   /*
     A ref, not state: the cache is an implementation detail of building the

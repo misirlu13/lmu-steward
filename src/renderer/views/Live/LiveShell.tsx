@@ -3,6 +3,11 @@ import { Box, Chip, Paper, Stack, Tooltip, Typography } from '@mui/material';
 import ScienceOutlinedIcon from '@mui/icons-material/ScienceOutlined';
 import { ViewHeader } from '../../components/Common/ViewHeader';
 import { LiveNavRail } from '../../components/Live/LiveNavRail';
+import { LiveSessionHeader } from '../../components/Live/LiveSessionHeader';
+import {
+  LIVE_CAMERA_BAR_HEIGHT,
+  LiveCameraControls,
+} from '../../components/Live/LiveCameraControls';
 import {
   LiveSessionProvider,
   useLiveSession,
@@ -25,16 +30,29 @@ const LiveShellBody: React.FC = () => {
   const navigate = useNavigate();
   const {
     session,
+    standings,
+    fieldByClass,
+    classFilter,
+    focusedSlotId,
     liveIndicator,
     useFixtures,
     unreviewedCount,
     flaggedCount,
     deferredCount,
+    onCycleFocus,
   } = useLiveSession();
   const { phase } = session;
 
+  /*
+    No bar when there is nothing to drive. A camera control that cannot move a
+    camera is worse than no camera control: the steward presses it, nothing
+    happens, and they learn to distrust the row. The shell already explains the
+    absent session directly above.
+  */
+  const canDriveCamera = useFixtures || liveIndicator.state === 'live';
+
   return (
-    <Box>
+    <Box sx={{ pb: canDriveCamera ? `${LIVE_CAMERA_BAR_HEIGHT}px` : 0 }}>
       <ViewHeader
         breadcrumb={
           <Stack direction="row" alignItems="center" spacing={1}>
@@ -112,6 +130,17 @@ const LiveShellBody: React.FC = () => {
         </Paper>
       ) : null}
 
+      {/*
+        Above the rail, not inside a route: this is the session's general
+        information, and it answers the same questions whether the steward is
+        adjudicating an incident or reading the timing screen.
+      */}
+      <LiveSessionHeader
+        session={session}
+        fieldByClass={fieldByClass}
+        driverCount={standings.length}
+      />
+
       <Box
         sx={{
           display: 'grid',
@@ -138,13 +167,28 @@ const LiveShellBody: React.FC = () => {
           sx={{
             minWidth: 0,
             boxSizing: 'border-box',
-            height: { xs: 'auto', lg: 'calc(100vh - 300px)' },
-            minHeight: { lg: 520 },
+            // The subtraction accounts for the app bar, the view header and
+            // the session strip above; the camera bar is fixed to the bottom
+            // of the window, so it comes off the same total.
+            height: {
+              xs: 'auto',
+              lg: `calc(100vh - ${372 + (canDriveCamera ? LIVE_CAMERA_BAR_HEIGHT : 0)}px)`,
+            },
+            minHeight: { lg: 460 },
           }}
         >
           <Outlet />
         </Box>
       </Box>
+
+      {canDriveCamera ? (
+        <LiveCameraControls
+          standings={standings}
+          classFilter={classFilter}
+          focusedSlotId={focusedSlotId}
+          onCycleFocus={onCycleFocus}
+        />
+      ) : null}
     </Box>
   );
 };

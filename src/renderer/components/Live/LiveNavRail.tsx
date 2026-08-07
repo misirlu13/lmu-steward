@@ -10,6 +10,7 @@ import {
 } from '@mui/material';
 import ReportProblemOutlinedIcon from '@mui/icons-material/ReportProblemOutlined';
 import SpaceDashboardOutlinedIcon from '@mui/icons-material/SpaceDashboardOutlined';
+import TimerOutlinedIcon from '@mui/icons-material/TimerOutlined';
 
 export interface LiveNavItem {
   /** Absolute path, so it matches `pathname` without any base juggling. */
@@ -40,6 +41,12 @@ export const LIVE_NAV_ITEMS: LiveNavItem[] = [
     label: 'Incidents',
     icon: <ReportProblemOutlinedIcon fontSize="small" />,
     hint: 'Triage queue and incident dossier',
+  },
+  {
+    to: '/live/timing',
+    label: 'Timing',
+    icon: <TimerOutlinedIcon fontSize="small" />,
+    hint: 'Live timing, sectors and the class filter',
   },
 ];
 

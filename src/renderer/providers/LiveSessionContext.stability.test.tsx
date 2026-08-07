@@ -122,6 +122,7 @@ describe('LiveSessionProvider referential stability', () => {
     expect(last.onResetIncidentFilters).toBe(first.onResetIncidentFilters);
     expect(last.onChangeReasoning).toBe(first.onChangeReasoning);
     expect(last.onFocusCar).toBe(first.onFocusCar);
+    expect(last.onCycleFocus).toBe(first.onCycleFocus);
     expect(last.onFlag).toBe(first.onFlag);
     expect(last.onDefer).toBe(first.onDefer);
     expect(last.onDecide).toBe(first.onDecide);

@@ -158,6 +158,23 @@ export interface LiveSessionContextValue {
   incidentFilterOptions: LiveIncidentFilterOptions;
 
   /**
+   * The car class the timing side of the shell is narrowed to, or `ALL`.
+   *
+   * Held here because it outlives the timing view: the track map and the
+   * pressure monitor both apply it, and all three are meant to agree about
+   * which cars the steward is watching.
+   *
+   * Deliberately *not* the same value as `incidentFilters.carClass`. They read
+   * alike and mean different things — one narrows a session's history, the
+   * other narrows the field on track — and a steward filtering the timing
+   * screen to GT3 would be surprised to find their incident queue had quietly
+   * hidden every Hypercar contact.
+   */
+  classFilter: string;
+  /** Every class present in the field, with its car count, in field order. */
+  fieldByClass: { carClass: string; count: number }[];
+
+  /**
    * Every call already made in this session, indexed by the driver it concerns.
    * Keyed on the same identity the standings and incident parties use, so a
    * lookup works from either side.
@@ -178,6 +195,16 @@ export interface LiveSessionContextValue {
    */
   reasoningDraft: string;
 
+  /**
+   * The slot the app last pointed the camera at.
+   *
+   * What *this app* asked for, not necessarily what the game is showing: LMU's
+   * camera can be moved from inside the game and nothing tells us when it was.
+   * Good enough for a control that drives the camera, and deliberately labelled
+   * as a selection rather than as a readout.
+   */
+  focusedSlotId?: number;
+
   /*
     Every callback below is referentially stable for the life of the provider.
     That is load-bearing, not incidental: `LiveTriageRow` is memoised, and a
@@ -188,11 +215,14 @@ export interface LiveSessionContextValue {
   onSelectIncident: (incidentId: string) => void;
   onSelectTarget: (steamId: string) => void;
   onChangeStateFilter: (next: LiveIncidentState | 'ALL') => void;
+  onChangeClassFilter: (next: string) => void;
   /** Patches one filter without the caller having to hold the rest. */
   onChangeIncidentFilters: (patch: Partial<LiveIncidentFilters>) => void;
   onResetIncidentFilters: () => void;
   onChangeReasoning: (next: string) => void;
   onFocusCar: (slotId: number | undefined) => void;
+  /** Step the camera through the field, honouring the class filter. */
+  onCycleFocus: (direction: 'previous' | 'next') => void;
   onFlag: (incidentId: string) => void;
   onDefer: (incidentId: string) => void;
   onDecide: (incidentId: string, outcome: LiveDecisionOutcome) => void;
@@ -248,6 +278,8 @@ export const LiveSessionProvider: React.FC<{ children: React.ReactNode }> = ({
   const [stateFilter, setStateFilter] = useState<LiveIncidentState | 'ALL'>(
     'ALL',
   );
+  const [classFilter, setClassFilter] = useState<string>('ALL');
+  const [focusedSlotId, setFocusedSlotId] = useState<number | undefined>();
   const [incidentFilters, setIncidentFilters] = useState<LiveIncidentFilters>(
     DEFAULT_LIVE_INCIDENT_FILTERS,
   );
@@ -280,10 +312,36 @@ export const LiveSessionProvider: React.FC<{ children: React.ReactNode }> = ({
     [liveData.battles, useFixtures],
   );
 
+  /*
+    Dev mode takes the whole session from the fixture rather than from the mock
+    status line. Devmode reports a live session, so `buildSessionState` would
+    otherwise take its live branch and hand the header a session with no clock,
+    no conditions and no laps — the one place where a fixture is the honest
+    answer, since the shell already labels the view as fixture data.
+  */
   const session = useMemo(
-    () => buildSessionState(liveData, liveSessionFixture),
-    [liveData],
+    () =>
+      useFixtures
+        ? liveSessionFixture
+        : buildSessionState(liveData, liveSessionFixture),
+    [liveData, useFixtures],
   );
+
+  /*
+    The field breakdown behind the header's class counts and the timing view's
+    filter chips. In field order, so the fastest class leads — which is the
+    order a steward reads the timing screen in anyway.
+  */
+  const fieldByClass = useMemo(() => {
+    const counts = new Map<string, number>();
+    standings.forEach((standing) => {
+      counts.set(standing.carClass, (counts.get(standing.carClass) ?? 0) + 1);
+    });
+    return [...counts.entries()].map(([carClass, count]) => ({
+      carClass,
+      count,
+    }));
+  }, [standings]);
 
   /*
     The session's real key, as capture persisted it. This used to be derived
@@ -501,6 +559,9 @@ export const LiveSessionProvider: React.FC<{ children: React.ReactNode }> = ({
     selectedIncidentId,
     effectiveTargetSteamId,
     reasoningDraft,
+    standings,
+    classFilter,
+    focusedSlotId,
   });
   latest.current = {
     incidents,
@@ -509,6 +570,9 @@ export const LiveSessionProvider: React.FC<{ children: React.ReactNode }> = ({
     selectedIncidentId,
     effectiveTargetSteamId,
     reasoningDraft,
+    standings,
+    classFilter,
+    focusedSlotId,
   };
 
   const onFlag = useCallback(
@@ -644,7 +708,53 @@ export const LiveSessionProvider: React.FC<{ children: React.ReactNode }> = ({
       return;
     }
     sendMessage(CONSTANTS.API.PUT_REPLAY_COMMAND_FOCUS_CAR, String(slotId));
+    // Held so the camera bar can name the car it just moved to, and so
+    // stepping through the field continues from wherever the steward jumped.
+    setFocusedSlotId(slotId);
   }, []);
+
+  /*
+    Stepping the camera through the field, one car at a time.
+
+    Ordered by the classification and narrowed by the class filter, so a
+    steward watching GT3 steps through GT3 and nothing else — the same filter
+    the timing screen is showing. Cars with no slot are skipped rather than
+    silently doing nothing: the slot is what LMU's focus endpoint addresses,
+    and the layout fixtures do not carry one.
+
+    Starting fresh from either end rather than from the middle, because "next"
+    before anything has been focused should mean the leader, not car two.
+  */
+  const onCycleFocus = useCallback(
+    (direction: 'previous' | 'next') => {
+      const {
+        standings: held,
+        classFilter: heldClass,
+        focusedSlotId: current,
+      } = latest.current;
+
+      const cars = held.filter(
+        (standing) =>
+          standing.slotId !== undefined &&
+          (heldClass === 'ALL' || standing.carClass === heldClass),
+      );
+      if (cars.length === 0) {
+        return;
+      }
+
+      const at = cars.findIndex((standing) => standing.slotId === current);
+      if (at === -1) {
+        onFocusCar(
+          direction === 'next' ? cars[0].slotId : cars[cars.length - 1].slotId,
+        );
+        return;
+      }
+
+      const step = direction === 'next' ? 1 : -1;
+      onFocusCar(cars[(at + step + cars.length) % cars.length].slotId);
+    },
+    [onFocusCar],
+  );
 
   const shortcutsEnabled = SHORTCUT_ROUTES.has(
     pathname.length > 1 ? pathname.replace(/\/+$/, '') : pathname,
@@ -728,24 +838,33 @@ export const LiveSessionProvider: React.FC<{ children: React.ReactNode }> = ({
       stateFilter,
       incidentFilters,
       incidentFilterOptions,
+      classFilter,
+      fieldByClass,
       priorCallsByDriver,
       stewardPenaltiesByDriver,
       reasoningDraft,
+      focusedSlotId,
       onSelectIncident: setSelectedIncidentId,
       onSelectTarget: setTargetSteamId,
       onChangeStateFilter: setStateFilter,
+      onChangeClassFilter: setClassFilter,
       onChangeIncidentFilters,
       onResetIncidentFilters,
       onChangeReasoning: setReasoningDraft,
       onFocusCar,
+      onCycleFocus,
       onFlag,
       onDefer,
       onDecide,
     }),
     [
       battles,
+      classFilter,
       counts,
       effectiveTargetSteamId,
+      fieldByClass,
+      focusedSlotId,
+      onCycleFocus,
       incidentFilterOptions,
       incidentFilters,
       incidents,

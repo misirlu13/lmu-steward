@@ -2,18 +2,12 @@ import WarningAmberIcon from '@mui/icons-material/WarningAmber';
 import { Box, Chip, Paper, Stack, Tooltip, Typography } from '@mui/material';
 import { CarClassBadge } from '../CarClassBadge/CarClassBadge';
 import { AiBadge } from '../Common/AiBadge';
+import { formatSessionClock } from '../../hooks/useLiveSessionData';
 import {
   LivePressureBattle,
   LiveSessionState,
   LiveStanding,
 } from './liveFixtures';
-
-const formatCountdown = (totalSeconds: number): string => {
-  const hours = Math.floor(totalSeconds / 3600);
-  const minutes = Math.floor((totalSeconds % 3600) / 60);
-  const seconds = Math.floor(totalSeconds % 60);
-  return `${hours}:${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
-};
 
 interface SectionProps {
   title: string;
@@ -176,7 +170,7 @@ export const LiveFieldState: React.FC<LiveFieldStateProps> = ({
           }
         >
           <Typography variant="h5" sx={{ fontVariantNumeric: 'tabular-nums' }}>
-            {formatCountdown(session.timeRemainingSeconds)}
+            {formatSessionClock(session.timeRemainingSeconds)}
           </Typography>
           <Typography variant="caption" color="text.secondary">
             {session.lapsCompleted} laps · {session.serverName}

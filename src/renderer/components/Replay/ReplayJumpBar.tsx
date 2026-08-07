@@ -20,8 +20,8 @@ import { ReplayIncidentEvent } from './ReplayMasterIncidentTimeline';
 import {
   CameraMode,
   cameraModeConfig,
-  useReplayCameraControls,
-} from './hooks/useReplayCameraControls';
+  useCameraControls,
+} from '../../hooks/useCameraControls';
 import { useReplayPlaybackControls } from './hooks/useReplayPlaybackControls';
 
 interface ReplayJumpBarProps {
@@ -46,8 +46,9 @@ export const ReplayJumpBar = ({
     onReverseBySpeed,
     onSpeedChange,
   } = useReplayPlaybackControls();
-  const { cameraMode, onCameraModeChange, onCycleCamera } =
-    useReplayCameraControls(CAMERA_COMMAND_DEBOUNCE_MS);
+  const { cameraMode, onCameraModeChange, onCycleCamera } = useCameraControls(
+    CAMERA_COMMAND_DEBOUNCE_MS,
+  );
   const [incidentSliderIndex, setIncidentSliderIndex] = useState(0);
   const [isIncidentTooltipVisible, setIsIncidentTooltipVisible] =
     useState(false);
