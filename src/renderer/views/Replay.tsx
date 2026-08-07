@@ -53,6 +53,7 @@ import { useLiveDataForReplay } from '../hooks/useLiveDataForReplay';
 import { ReplayIncidentDossier } from '../components/Replay/ReplayIncidentDossier';
 import { ExportTelemetryDialog } from '../components/Replay/ExportTelemetryDialog';
 import { useReplayViewOrchestration } from '../hooks/useReplayViewOrchestration';
+import { useViewReplayDisabledReason } from '../hooks/useReplayGating';
 
 const PARTIAL_REPLAY_DATA_NOTICE =
   'Partial replay data detected. This replay appears to have started after the live session was already in progress, so incident timing may be approximate.';
@@ -81,6 +82,7 @@ export const ReplayView: React.FC = () => {
     clearExportResult,
     subscribeToApiChannel,
   } = useApi();
+  const viewReplayDisabledReason = useViewReplayDisabledReason();
   const [isChatOpen, setIsChatOpen] = useState(false);
   const [isExportTelemetryDialogOpen, setIsExportTelemetryDialogOpen] =
     useState(false);
@@ -405,10 +407,24 @@ export const ReplayView: React.FC = () => {
         onBack={onBackToReplays}
         actions={
           <Stack direction="row" spacing={1} alignItems="center">
+            {/*
+              The span is what makes the explanation reachable. MUI fires no
+              mouse events on a disabled control, so a bare Tooltip on it would
+              never open — and a dead button with no reason given is worse than
+              no button.
+            */}
             {isQuickViewModeActiveForReplay ? (
-              <Button variant="contained" onClick={onViewReplayFromQuickView}>
-                View Replay
-              </Button>
+              <Tooltip title={viewReplayDisabledReason ?? ''}>
+                <span>
+                  <Button
+                    variant="contained"
+                    disabled={Boolean(viewReplayDisabledReason)}
+                    onClick={onViewReplayFromQuickView}
+                  >
+                    View Replay
+                  </Button>
+                </span>
+              </Tooltip>
             ) : null}
             <ReplayActions
               onViewChat={onToggleViewChat}
@@ -449,9 +465,15 @@ export const ReplayView: React.FC = () => {
 
       {isQuickViewModeActiveForReplay ? (
         <Box sx={{ mt: -1, mb: 2, px: 0.5 }}>
+          {/*
+            The instruction is only followable when View Replay is available,
+            so when it is not, the reason is appended — otherwise the copy
+            tells a steward to click something the page has just greyed out.
+          */}
           <Typography variant="body2" color="text.secondary">
             Quick View is enabled. Replay playback-dependent data is limited
             until you load the replay in LMU using View Replay.
+            {viewReplayDisabledReason ? ` ${viewReplayDisabledReason}` : ''}
           </Typography>
         </Box>
       ) : null}
@@ -601,6 +623,7 @@ export const ReplayView: React.FC = () => {
           <Typography variant="body2" color="text.secondary">
             Incident jump controls are unavailable in Quick View mode. Click
             View Replay to load playback and enable replay controls.
+            {viewReplayDisabledReason ? ` ${viewReplayDisabledReason}` : ''}
           </Typography>
         </Paper>
       )}

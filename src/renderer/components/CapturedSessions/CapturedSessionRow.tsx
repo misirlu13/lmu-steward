@@ -21,6 +21,11 @@ import { LiveSessionSummary } from '@types';
 interface Props {
   session: LiveSessionSummary;
   isDeleting: boolean;
+  /**
+   * Why opening the replay is unavailable, or null. Loading one takes over the
+   * game, so it has to be off the table while a session is being captured.
+   */
+  viewReplayDisabledReason?: string | null;
   onViewReplay: (replayHash: string) => void;
   onLinkReplay: (session: LiveSessionSummary) => void;
   onDelete: (session: LiveSessionSummary) => void;
@@ -37,6 +42,7 @@ interface Props {
 export const CapturedSessionRow: React.FC<Props> = ({
   session,
   isDeleting,
+  viewReplayDisabledReason = null,
   onViewReplay,
   onLinkReplay,
   onDelete,
@@ -136,17 +142,39 @@ export const CapturedSessionRow: React.FC<Props> = ({
           list — the link knows exactly which file this capture belongs to.
         */}
         {linkedReplayHash ? (
-          <MenuItem
-            onClick={() => {
-              closeMenu();
-              onViewReplay(linkedReplayHash);
-            }}
-          >
-            <ListItemIcon>
-              <PlayCircleFilledIcon fontSize="small" />
-            </ListItemIcon>
-            <ListItemText>View Replay</ListItemText>
-          </MenuItem>
+          <Tooltip title={viewReplayDisabledReason ?? ''}>
+            {/*
+              The span is what makes the explanation reachable. MUI fires no
+              mouse events on a disabled control, so a bare Tooltip on it would
+              never open — and a dead button with no reason given is worse than
+              no button.
+            */}
+            <span>
+              <MenuItem
+                disabled={Boolean(viewReplayDisabledReason)}
+                onClick={() => {
+                  /*
+                    A menu item is an <li>, which has no native disabled state —
+                    MUI expresses it with pointer-events alone. That is enough on
+                    screen and not enough here: what this action does is take
+                    over a running session, so it refuses in its own right rather
+                    than trusting a stylesheet.
+                  */
+                  if (viewReplayDisabledReason) {
+                    return;
+                  }
+
+                  closeMenu();
+                  onViewReplay(linkedReplayHash);
+                }}
+              >
+                <ListItemIcon>
+                  <PlayCircleFilledIcon fontSize="small" />
+                </ListItemIcon>
+                <ListItemText>View Replay</ListItemText>
+              </MenuItem>
+            </span>
+          </Tooltip>
         ) : null}
 
         <MenuItem

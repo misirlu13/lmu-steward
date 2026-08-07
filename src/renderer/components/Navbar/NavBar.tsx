@@ -19,6 +19,7 @@ import { getProfileInitials } from '../../utils/profileInitials';
 import navLogoIcon from '../../../../assets/icons/48x48.png';
 import { useApi } from '../../providers/ApiContext';
 import { deriveLiveIndicator } from '../../hooks/useLiveIndicator';
+import { usePendingCaptureProposalCount } from '../../hooks/useCaptureProposals';
 
 export const NavBar = () => {
   const navigate = useNavigate();
@@ -36,6 +37,7 @@ export const NavBar = () => {
     hasApiStatusResponse,
     liveSessionStatus,
   });
+  const pendingProposalCount = usePendingCaptureProposalCount(pathname);
 
   useEffect(() => {
     const unsubscribeProfileInfo = window.electron?.ipcRenderer.on(
@@ -137,20 +139,49 @@ export const NavBar = () => {
             {/*
               Only when capture is on. With it off nothing new is ever recorded,
               so the link would lead to a page that can only ever be empty.
+
+              The badge counts proposals only. An unlinked session is a normal
+              resting state — a practice replay is often simply not kept — so
+              badging those would put a permanent number on the bar for
+              something the user cannot resolve. A proposal is the one state
+              that is actually asking a question.
             */}
             {liveCaptureEnabled ? (
-              <Button
-                color="inherit"
-                size="small"
-                onClick={() => navigate('/captured-sessions')}
-                sx={{
-                  fontWeight: pathname.startsWith('/captured-sessions')
-                    ? 700
-                    : 400,
-                }}
+              <Tooltip
+                title={
+                  pendingProposalCount > 0
+                    ? `${pendingProposalCount} captured ${
+                        pendingProposalCount === 1
+                          ? 'session has'
+                          : 'sessions have'
+                      } a replay waiting to be confirmed`
+                    : ''
+                }
               >
-                Captured
-              </Button>
+                <Badge
+                  color="warning"
+                  badgeContent={pendingProposalCount}
+                  sx={{ '& .MuiBadge-badge': { top: 4, right: 2 } }}
+                >
+                  <Button
+                    color="inherit"
+                    size="small"
+                    onClick={() => navigate('/captured-sessions')}
+                    aria-label={
+                      pendingProposalCount > 0
+                        ? `Captured (${pendingProposalCount} awaiting confirmation)`
+                        : undefined
+                    }
+                    sx={{
+                      fontWeight: pathname.startsWith('/captured-sessions')
+                        ? 700
+                        : 400,
+                    }}
+                  >
+                    Captured
+                  </Button>
+                </Badge>
+              </Tooltip>
             ) : null}
           </Box>
           <Box sx={{ flexGrow: 1 }} />

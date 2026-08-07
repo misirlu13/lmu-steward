@@ -9,6 +9,7 @@ import { DeleteCapturedSessionDialog } from '../components/CapturedSessions/Dele
 import { LinkReplayDialog } from '../components/CapturedSessions/LinkReplayDialog';
 import { sendMessage } from '../utils/postMessage';
 import { useApi } from '../providers/ApiContext';
+import { useViewReplayDisabledReason } from '../hooks/useReplayGating';
 
 /**
  * Sessions recorded by live capture.
@@ -24,6 +25,7 @@ import { useApi } from '../providers/ApiContext';
 export const CapturedSessionsView = () => {
   const navigate = useNavigate();
   const { subscribeToApiChannel, liveCaptureEnabled } = useApi();
+  const viewReplayDisabledReason = useViewReplayDisabledReason();
   const [sessions, setSessions] = useState<LiveSessionSummary[]>([]);
   const [pendingDelete, setPendingDelete] = useState<LiveSessionSummary | null>(
     null,
@@ -225,6 +227,7 @@ export const CapturedSessionsView = () => {
             key={session.sessionKey}
             session={session}
             isDeleting={deletingKey === session.sessionKey}
+            viewReplayDisabledReason={viewReplayDisabledReason}
             onViewReplay={(replayHash) => navigate(`/replay/${replayHash}`)}
             onLinkReplay={openLinkDialog}
             onDelete={setPendingDelete}

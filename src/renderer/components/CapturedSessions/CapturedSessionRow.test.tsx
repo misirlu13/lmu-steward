@@ -36,6 +36,7 @@ const renderRow = (
     onLinkReplay: jest.Mock;
     onDelete: jest.Mock;
   }> = {},
+  viewReplayDisabledReason: string | null = null,
 ) => {
   const onViewReplay = handlers.onViewReplay ?? jest.fn();
   const onLinkReplay = handlers.onLinkReplay ?? jest.fn();
@@ -45,6 +46,7 @@ const renderRow = (
     <CapturedSessionRow
       session={session(overrides)}
       isDeleting={false}
+      viewReplayDisabledReason={viewReplayDisabledReason}
       onViewReplay={onViewReplay}
       onLinkReplay={onLinkReplay}
       onDelete={onDelete}
@@ -141,6 +143,26 @@ describe('CapturedSessionRow', () => {
     fireEvent.click(screen.getByText('Delete Session'));
 
     expect(onDelete).toHaveBeenCalled();
+  });
+
+  /*
+    Loading a replay calls /rest/watch/play, which makes LMU load it. Doing that
+    mid-race ends the session being captured, so the action is dead while one is
+    running — and says why, rather than silently doing nothing.
+  */
+  it('will not open the replay while a session is being captured', () => {
+    const { onViewReplay } = renderRow(
+      { linkState: 'linked', link: linked },
+      {},
+      'A live session is running.',
+    );
+
+    openMenu();
+    const item = screen.getByText('View Replay').closest('li');
+    expect(item).toHaveAttribute('aria-disabled', 'true');
+
+    fireEvent.click(screen.getByText('View Replay'));
+    expect(onViewReplay).not.toHaveBeenCalled();
   });
 
   it('shows what was captured', () => {

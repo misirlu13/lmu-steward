@@ -18,6 +18,7 @@ import { ImportReplayDialog } from '../components/Dashboard/ImportReplayDialog';
 import { ExportProgressDialog } from '../components/Dashboard/ExportProgressDialog';
 import { ImportPreviewDialog } from '../components/Dashboard/ImportPreviewDialog';
 import { ImportProgressDialog } from '../components/Dashboard/ImportProgressDialog';
+import { useViewReplayDisabledReason } from '../hooks/useReplayGating';
 
 interface PendingDelete {
   hashes: string[];
@@ -103,6 +104,7 @@ export const DashboardView: React.FC = () => {
     clearImportPreview,
     importSelectedReplays,
   } = useApi();
+  const viewReplayDisabledReason = useViewReplayDisabledReason();
   const [isImportDialogOpen, setIsImportDialogOpen] = useState(false);
   const [lastImportedName, setLastImportedName] = useState('');
   const wasImportingRef = useRef(false);
@@ -283,6 +285,7 @@ export const DashboardView: React.FC = () => {
                 setPendingDelete({ hashes, targetLabel })
               }
               canExport={experimentalFeaturesEnabled}
+              viewReplayDisabledReason={viewReplayDisabledReason}
               onExportSession={(sessionReplay) =>
                 exportReplay(toExportPayload(sessionReplay))
               }
