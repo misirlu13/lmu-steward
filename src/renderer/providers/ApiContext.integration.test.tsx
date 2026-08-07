@@ -150,6 +150,77 @@ describe('ApiContext integration', () => {
     });
   });
 
+  /*
+    The same failure as the test above, generalised — because it has now
+    happened twice, and the second time cost a live session to find.
+
+    `subscribeToApiChannel` attaches no IPC listener of its own. It adds a
+    callback to a set that `runAdditionalCallbacks` drains, and that only runs
+    from inside a `messageBusHandlers` entry. So a channel with a main-process
+    handler, a `sendMessage` caller and a subscriber can still be completely
+    dead: the request goes out, main answers, `initializeMessageBus` receives
+    the reply, finds no entry, and drops it. Nothing logs, nothing throws, and
+    the feature simply never updates.
+
+    Keep this list in step with what consumers actually subscribe to:
+      grep -rn "subscribeToApiChannel(" src/renderer --include=*.tsx --include=*.ts
+  */
+  it.each([
+    CONSTANTS.API.GET_SESSION_INFO,
+    CONSTANTS.API.GET_LIVE_SESSION_DATA,
+    CONSTANTS.API.GET_LIVE_SESSIONS,
+    CONSTANTS.API.GET_LIVE_SESSION_MATCHES,
+    CONSTANTS.API.GET_LIVE_DATA_FOR_REPLAY,
+    CONSTANTS.API.GET_LIVE_INCIDENT_CONTEXT,
+    CONSTANTS.API.GET_LIVE_TRACK_MAP,
+    CONSTANTS.API.POST_CAMERA_ANGLE,
+    CONSTANTS.API.POST_LINK_LIVE_SESSION,
+    CONSTANTS.API.POST_DISMISS_LIVE_SESSION_MATCH,
+    CONSTANTS.API.POST_DELETE_LIVE_SESSION,
+  ])('routes %s to its subscribers', (channel) => {
+    render(
+      <ApiProvider>
+        <TestConsumer />
+      </ApiProvider>,
+    );
+
+    expect(typeof handlers[channel]).toBe('function');
+  });
+
+  // The live track map holds its own geometry rather than writing the shared
+  // `currentTrackMap`, so its handler carries no `onData` at all — which is
+  // exactly the shape that looks droppable and is not.
+  it('delivers the live track map to a subscriber that owns its own state', () => {
+    const received: unknown[] = [];
+
+    const Subscriber = () => {
+      const { subscribeToApiChannel } = useApi();
+      useEffect(
+        () =>
+          subscribeToApiChannel(CONSTANTS.API.GET_LIVE_TRACK_MAP, (data) =>
+            received.push(data),
+          ),
+        [subscribeToApiChannel],
+      );
+      return null;
+    };
+
+    render(
+      <ApiProvider>
+        <Subscriber />
+      </ApiProvider>,
+    );
+
+    act(() => {
+      handlers[CONSTANTS.API.GET_LIVE_TRACK_MAP]?.({
+        status: 'success',
+        data: [{ type: 0, x: 1, y: 0, z: 2 }],
+      });
+    });
+
+    expect(received).toHaveLength(1);
+  });
+
   it('handles API status and user settings updates through IPC handlers', async () => {
     render(
       <ApiProvider>

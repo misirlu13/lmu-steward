@@ -1,17 +1,20 @@
 import { useMemo } from 'react';
 import { Box, Chip, Paper, Stack, Typography } from '@mui/material';
 import { LiveTimingTable } from '../../components/Live/LiveTimingTable';
+import { LiveTrackMap } from '../../components/Live/LiveTrackMap';
 import { useLiveSession } from '../../providers/LiveSessionContext';
 
 const ALL = 'ALL';
 
 /**
- * `/live/timing` — the timing screen and its class filter.
+ * `/live/timing` — the timing screen, the live track map, and the class filter
+ * both of them read.
  *
- * The filter sits above the table, in the same place and the same idiom as the
+ * The filter sits above the pair, in the same place and the same idiom as the
  * incidents view's filter bar, and its state lives in `LiveSessionContext`
- * rather than here: the track map and the pressure monitor land on this route
- * next and all three have to agree about which cars the steward is watching.
+ * rather than here: the map, the camera bar and the pressure monitor all narrow
+ * to the same class, and they have to agree about which cars the steward is
+ * watching.
  */
 export const LiveTiming: React.FC = () => {
   const {
@@ -19,6 +22,8 @@ export const LiveTiming: React.FC = () => {
     standings,
     classFilter,
     fieldByClass,
+    trackMap,
+    focusedSlotId,
     onChangeClassFilter,
     onFocusCar,
   } = useLiveSession();
@@ -113,12 +118,42 @@ export const LiveTiming: React.FC = () => {
         </Stack>
       </Paper>
 
-      <LiveTimingTable
-        standings={standings}
-        visibleStandings={visibleStandings}
-        session={session}
-        onFocusCar={onFocusCar}
-      />
+      {/*
+        Table and map side by side on a wide screen, stacked on a narrow one.
+        The map column is capped rather than proportional: the geometry is drawn
+        into a square viewBox, so past a certain width the extra space is
+        letterbox and the timing table wants it more.
+      */}
+      <Box
+        sx={{
+          display: 'grid',
+          gap: 2,
+          gridTemplateColumns: {
+            xs: '1fr',
+            lg: 'minmax(0, 1fr) minmax(300px, 26%)',
+          },
+          minHeight: 0,
+          gridAutoRows: { xs: 'minmax(360px, auto)', lg: 'minmax(0, 1fr)' },
+        }}
+      >
+        <LiveTimingTable
+          standings={standings}
+          visibleStandings={visibleStandings}
+          session={session}
+          onFocusCar={onFocusCar}
+        />
+
+        <LiveTrackMap
+          points={trackMap.points}
+          pitPoints={trackMap.pitPoints}
+          state={trackMap.state}
+          error={trackMap.error}
+          visibleStandings={visibleStandings}
+          classFilter={classFilter}
+          focusedSlotId={focusedSlotId}
+          onFocusCar={onFocusCar}
+        />
+      </Box>
     </Box>
   );
 };

@@ -367,6 +367,17 @@ export interface LiveStanding {
   /** Raw `mPitState`, shown only as detail. Undocumented values fall through. */
   pitState?: number;
   isAiDriver?: boolean;
+
+  /**
+   * Where the car is, in the same world metres as the track map geometry.
+   *
+   * Optional and absent means absent. The sidecar that reads `mPos` is a local
+   * build artifact, so a machine that has not rebuilt it sends neither — and a
+   * missing position is not the origin. A car without one is left off the map
+   * rather than parked at the corner of the world.
+   */
+  posX?: number;
+  posZ?: number;
 }
 
 export type { LivePressureBattle };
@@ -676,6 +687,14 @@ export const liveIncidentsFixture: LiveIncident[] = [
  * fixture does not add up cannot be checked by looking at it. Between them the
  * seven rows exercise every state of the colour convention: a session-best
  * sector, personal-best sectors, and rows with neither.
+ *
+ * The world positions are lifted off the racing line in `.erb/mocks/
+ * trackMapMock.json`, which is the geometry dev mode serves on
+ * `GET_LIVE_TRACK_MAP` — so the cars land *on* the drawn track rather than
+ * scattered across its bounding box, and are spaced around a lap with the
+ * leader furthest along. They are not Bahrain coordinates; the fixture session
+ * says Bahrain and the mock map is whatever track was captured into it. That
+ * mismatch is invisible on screen and irrelevant to what the fixture is for.
  */
 export const liveStandingsFixture: LiveStanding[] = [
   {
@@ -698,6 +717,8 @@ export const liveStandingsFixture: LiveStanding[] = [
     incidentCount: 2,
     inPits: false,
     pitStatus: 'TRK',
+    posX: -148.8,
+    posZ: -213.5,
   },
   {
     steamId: drivers.drake.steamId,
@@ -720,6 +741,8 @@ export const liveStandingsFixture: LiveStanding[] = [
     incidentCount: 3,
     inPits: false,
     pitStatus: 'TRK',
+    posX: 603.8,
+    posZ: -95.7,
   },
   {
     steamId: drivers.vasquez.steamId,
@@ -741,6 +764,8 @@ export const liveStandingsFixture: LiveStanding[] = [
     incidentCount: 1,
     inPits: false,
     pitStatus: 'TRK',
+    posX: 475.2,
+    posZ: 667.5,
   },
   {
     steamId: drivers.okonkwo.steamId,
@@ -762,6 +787,8 @@ export const liveStandingsFixture: LiveStanding[] = [
     incidentCount: 4,
     inPits: false,
     pitStatus: 'TRK',
+    posX: -189.6,
+    posZ: 597.5,
   },
   {
     steamId: drivers.bot.steamId,
@@ -785,6 +812,8 @@ export const liveStandingsFixture: LiveStanding[] = [
     pitStatus: 'PIT',
     pitState: 3,
     isAiDriver: true,
+    posX: -237.0,
+    posZ: 269.5,
   },
   {
     steamId: drivers.lindqvist.steamId,
@@ -806,6 +835,8 @@ export const liveStandingsFixture: LiveStanding[] = [
     incidentCount: 2,
     inPits: false,
     pitStatus: 'TRK',
+    posX: 375.7,
+    posZ: 365.0,
   },
   {
     steamId: drivers.ferrara.steamId,
@@ -827,6 +858,8 @@ export const liveStandingsFixture: LiveStanding[] = [
     incidentCount: 3,
     inPits: false,
     pitStatus: 'TRK',
+    posX: -110.2,
+    posZ: 5.2,
   },
 ];
 
@@ -1000,6 +1033,23 @@ export const liveCaptureDriversFixture = (count = 24): LiveCaptureDriver[] =>
     timeBehindNext: index === 0 ? 0 : 4.1,
     lapsBehindNext: 0,
     qualification: index + 1,
+    /*
+      Spread around a circle in world metres, so a full field is spread across
+      the map's bounds rather than piled on one point. Every fifth car carries
+      no position at all: an un-rebuilt sidecar sends none for anyone, but a
+      partially-populated field is the harder case and the one that has to leave
+      those cars off the map rather than drawing them at the origin.
+    */
+    ...(index % 5 === 4
+      ? {}
+      : {
+          posX: Number(
+            (400 * Math.cos((index / count) * Math.PI * 2)).toFixed(1),
+          ),
+          posZ: Number(
+            (400 * Math.sin((index / count) * Math.PI * 2)).toFixed(1),
+          ),
+        }),
   }));
 
 interface LiveCaptureFixtureOptions {

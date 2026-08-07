@@ -41,9 +41,42 @@ const CLASS_CODES: Record<string, string> = {
   gte: 'GTE',
 };
 
+/**
+ * The same classes, matched by their leading stem.
+ *
+ * **The class name carries the series, not just the class.** An exact lookup
+ * covered the names LMU reports for the WEC content and nothing else: an ELMS
+ * grid reports `LMP2_ELMS`, which fell through to the `slice(0, 3)` fallback and
+ * was shown to a steward as `LMP` — no palette entry, so a grey badge, and
+ * sitting one row above the LMP3s correctly labelled `P3`. Confirmed live at
+ * Laguna Seca on 2026-08-07.
+ *
+ * That fallback is the real hazard and it is kept only for classes nothing here
+ * anticipates: `LMP2` and `LMP3` both truncate to `LMP`, so two classes a
+ * steward must tell apart can arrive under one code. Matching the stem is what
+ * keeps a new content pack from re-creating that.
+ *
+ * Ordered, and `startsWith` rather than `includes`, so `lmgt3wec` cannot be read
+ * as a GTE or an LMP.
+ */
+const CLASS_CODE_STEMS: [string, string][] = [
+  ['hyper', 'HY'],
+  ['lmp2', 'P2'],
+  ['lmp3', 'P3'],
+  ['lmgt3', 'GT3'],
+  ['gt3', 'GT3'],
+  ['gte', 'GTE'],
+];
+
 export const toCarClassCode = (vehicleClass: string): string => {
   const key = vehicleClass.toLowerCase().replace(/[^a-z0-9]/g, '');
-  return CLASS_CODES[key] ?? vehicleClass.slice(0, 3).toUpperCase();
+  const exact = CLASS_CODES[key];
+  if (exact) {
+    return exact;
+  }
+
+  const stem = CLASS_CODE_STEMS.find(([prefix]) => key.startsWith(prefix));
+  return stem ? stem[1] : vehicleClass.slice(0, 3).toUpperCase();
 };
 
 /** LMU vehicle names commonly lead with the car number, e.g. "#7 Toyota GR010". */
@@ -348,6 +381,13 @@ export const buildStandings = (
       pitStatus: toPitStatus(driver),
       pitState: driver.pitState,
       isAiDriver: driver.control === 1,
+      /*
+        Passed through as-is, undefined included. The track map needs both to
+        place a car and drops any car missing either — which is what an
+        un-rebuilt sidecar sends for the whole field.
+      */
+      posX: driver.posX,
+      posZ: driver.posZ,
     };
   });
 };

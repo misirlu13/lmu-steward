@@ -1,5 +1,6 @@
 import { CONSTANTS } from '@constants';
 import {
+  getLiveTrackMap,
   getSessionInfo,
   getStandings,
   getStandingsHistory,
@@ -50,6 +51,20 @@ describe('main/session API contracts', () => {
       name: 'getTrackMap',
       handler: (event) => getTrackMap(event),
       eventChannel: CONSTANTS.API.GET_TRACK_MAP,
+      url: `${CONSTANTS.LMU_API_BASE_URL}/rest/watch/trackMap`,
+      expectsWrappedSuccess: true,
+    },
+    /*
+      Same endpoint as getTrackMap, different reply channel — on purpose. The
+      live map and the replay view hold their own copies, because
+      `GET_TRACK_MAP`'s reply is written to `ApiContext.currentTrackMap`, which
+      the replay view reads in preference to its own cache. One channel would
+      let each view swap the other's geometry out from under it.
+    */
+    {
+      name: 'getLiveTrackMap',
+      handler: (event) => getLiveTrackMap(event),
+      eventChannel: CONSTANTS.API.GET_LIVE_TRACK_MAP,
       url: `${CONSTANTS.LMU_API_BASE_URL}/rest/watch/trackMap`,
       expectsWrappedSuccess: true,
     },

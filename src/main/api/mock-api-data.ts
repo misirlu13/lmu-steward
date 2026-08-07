@@ -353,6 +353,9 @@ export const mockApiData: Partial<Record<ApiChannel, MockApiResolver>> = {
     };
   },
   [CONSTANTS.API.GET_TRACK_MAP]: trackMapResponse,
+  // Same geometry, separate channel — the live map and the replay view hold
+  // their own copies so neither can overwrite the other's.
+  [CONSTANTS.API.GET_LIVE_TRACK_MAP]: trackMapResponse,
   [CONSTANTS.API.GET_TRACK_THUMBNAIL]: {
     image: null,
   },

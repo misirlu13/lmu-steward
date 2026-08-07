@@ -18,6 +18,7 @@ import {
   buildSessionState,
   useLiveSessionData,
 } from '../hooks/useLiveSessionData';
+import { LiveTrackMapResult, useLiveTrackMap } from '../hooks/useLiveTrackMap';
 import {
   DEFAULT_LIVE_INCIDENT_FILTERS,
   LiveDecisionOutcome,
@@ -175,6 +176,16 @@ export interface LiveSessionContextValue {
   fieldByClass: { carClass: string; count: number }[];
 
   /**
+   * The running session's track geometry, for the live map.
+   *
+   * Here rather than in the timing view for the same reason the poll is: it is
+   * one fetch per session, and a view that owned it would re-request 107 KB
+   * every time the steward navigated back to it — and start again from "not
+   * ready yet" each time.
+   */
+  trackMap: LiveTrackMapResult;
+
+  /**
    * Every call already made in this session, indexed by the driver it concerns.
    * Keyed on the same identity the standings and incident parties use, so a
    * lookup works from either side.
@@ -325,6 +336,17 @@ export const LiveSessionProvider: React.FC<{ children: React.ReactNode }> = ({
         ? liveSessionFixture
         : buildSessionState(liveData, liveSessionFixture),
     [liveData, useFixtures],
+  );
+
+  /*
+    Keyed on the track rather than on the session: the geometry is a property of
+    the circuit, so running practice then qualifying at the same venue must not
+    throw away a map that is still correct. Asked for only once there is a
+    session to draw — or in dev mode, where main serves the mock geometry.
+  */
+  const trackMap = useLiveTrackMap(
+    session.trackName,
+    useFixtures || liveIndicator.state === 'live',
   );
 
   /*
@@ -840,6 +862,7 @@ export const LiveSessionProvider: React.FC<{ children: React.ReactNode }> = ({
       incidentFilterOptions,
       classFilter,
       fieldByClass,
+      trackMap,
       priorCallsByDriver,
       stewardPenaltiesByDriver,
       reasoningDraft,
@@ -884,6 +907,7 @@ export const LiveSessionProvider: React.FC<{ children: React.ReactNode }> = ({
       standings,
       stateFilter,
       stewardPenaltiesByDriver,
+      trackMap,
       useFixtures,
     ],
   );

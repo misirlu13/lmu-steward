@@ -863,6 +863,26 @@ export const ApiProvider: React.FC<{ children: React.ReactNode }> = ({
           console.error('Failed to fetch track map:', payload?.message || data);
         },
       ),
+      /*
+        No `onData`, deliberately: the live track map holds its own copy in
+        `useLiveTrackMap` rather than in `currentTrackMap`, which the replay view
+        owns. The entry still has to exist — `subscribeToApiChannel` attaches no
+        IPC listener of its own, it only adds a callback that
+        `runAdditionalCallbacks` invokes, and that runs from inside these
+        handlers. A channel with no entry here swallows every reply in silence.
+      */
+      [CONSTANTS.API.GET_LIVE_TRACK_MAP]: createHandler(
+        CONSTANTS.API.GET_LIVE_TRACK_MAP,
+      ),
+      /*
+        Likewise, and this one has never worked: the live camera bar subscribes
+        to this to show "Camera command refused" when the game rejects an angle
+        change, and with no entry the reply never reached it. The warning could
+        not have fired whatever the game did.
+      */
+      [CONSTANTS.API.POST_CAMERA_ANGLE]: createHandler(
+        CONSTANTS.API.POST_CAMERA_ANGLE,
+      ),
       [CONSTANTS.API.POST_SELECT_IMPORT_FILE]: createHandler(
         CONSTANTS.API.POST_SELECT_IMPORT_FILE,
         (data: unknown) => {

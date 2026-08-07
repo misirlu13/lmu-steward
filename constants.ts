@@ -39,6 +39,19 @@ export const CONSTANTS = {
     'C:\\Program Files (x86)\\Steam\\steamapps\\common\\Le Mans Ultimate\\UserData\\Replays',
   API: {
     GET_TRACK_MAP: 'get.track-map',
+    /**
+     * The same `/rest/watch/trackMap` geometry, on a channel of its own.
+     *
+     * Deliberately not `GET_TRACK_MAP`. That channel's reply is handled in
+     * `ApiContext` and written to `currentTrackMap`, which the replay view reads
+     * in preference to the map cached against the replay it has open — so a live
+     * fetch on the shared channel would silently substitute the running
+     * session's geometry into a replay's heatmap, and a later replay fetch would
+     * do the same to the live map. The two also want different fetch
+     * lifecycles: the replay asks once when a replay loads, the live map retries
+     * until the game has geometry to give.
+     */
+    GET_LIVE_TRACK_MAP: 'get.live-track-map',
     GET_API_STATUS: 'get.api-status',
     GET_LIVE_SESSION_STATUS: 'get.live-session-status',
     GET_LIVE_SESSION_DATA: 'get.live-session-data',

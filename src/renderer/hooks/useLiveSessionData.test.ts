@@ -18,6 +18,7 @@ import {
   splitSectors,
   summariseWeather,
   tallyByDriver,
+  toCarClassCode,
   toSessionPhase,
 } from './useLiveSessionData';
 
@@ -89,6 +90,39 @@ describe('driverIdentity', () => {
     ]);
 
     expect(new Set(standings.map((s) => s.steamId)).size).toBe(3);
+  });
+});
+
+describe('toCarClassCode', () => {
+  it('should read the class LMU reports for the WEC content', () => {
+    expect(toCarClassCode('Hyper')).toBe('HY');
+    expect(toCarClassCode('LMP2')).toBe('P2');
+    expect(toCarClassCode('LMGT3')).toBe('GT3');
+  });
+
+  /*
+    The class name carries the series too. An ELMS grid reports `LMP2_ELMS`,
+    which the exact lookup missed — a steward saw `LMP` in a grey badge, one row
+    above the LMP3s correctly labelled `P3`. Confirmed live at Laguna Seca.
+  */
+  it('should read a class whose name carries its series', () => {
+    expect(toCarClassCode('LMP2_ELMS')).toBe('P2');
+    expect(toCarClassCode('LMP3_ELMS')).toBe('P3');
+    expect(toCarClassCode('LMGT3_WEC')).toBe('GT3');
+    expect(toCarClassCode('HYPERCAR_WEC')).toBe('HY');
+  });
+
+  /*
+    The reason the truncating fallback cannot be trusted for anything it has not
+    been told about: LMP2 and LMP3 both truncate to `LMP`, so two classes a
+    steward has to tell apart would arrive under one code.
+  */
+  it('should never let two known classes collapse to one code', () => {
+    expect(toCarClassCode('LMP2_ELMS')).not.toBe(toCarClassCode('LMP3_ELMS'));
+  });
+
+  it('should still show something for a class it has never seen', () => {
+    expect(toCarClassCode('Formula E')).toBe('FOR');
   });
 });
 
@@ -553,5 +587,25 @@ describe('buildStandings timing', () => {
     expect(inPits.pitState).toBe(5);
     expect(inGarage.pitStatus).toBe('GAR');
     expect(onTrack.pitStatus).toBe('TRK');
+  });
+
+  /*
+    The track map places a car from these two and drops it when either is
+    missing, so they have to survive the trip up untouched — and an absent one
+    has to stay absent rather than becoming a zero, which is a real position at
+    the corner of the world.
+  */
+  it('should carry world position through, and its absence with it', () => {
+    const [positioned] = buildStandings(
+      [driver({ slotId: 1, posX: 412.6, posZ: -1180.3 })],
+      [],
+      'RACE',
+    );
+    const [unpositioned] = buildStandings([driver({ slotId: 1 })], [], 'RACE');
+
+    expect(positioned.posX).toBe(412.6);
+    expect(positioned.posZ).toBe(-1180.3);
+    expect(unpositioned.posX).toBeUndefined();
+    expect(unpositioned.posZ).toBeUndefined();
   });
 });
