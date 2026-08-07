@@ -181,6 +181,31 @@ export const LiveOverview: React.FC = () => {
             <StatDisplay label="Field" minWidth={120}>
               <Typography variant="h5">{standings.length}</Typography>
             </StatDisplay>
+            {/*
+              What is left of the pressure list here, now the monitor itself is
+              a full panel on the timing view. A count rather than the pairings:
+              Overview's job is to say whether a section wants looking at, and
+              three rows of gaps in a summary strip would be the squeezed
+              sidebar the shell exists to undo.
+
+              Only when there is something to say, on the same reasoning as
+              Deferred above — a permanent "Battles 0" trains a steward to stop
+              reading the row.
+            */}
+            {battles.length > 0 ? (
+              <StatDisplay label="Battles" minWidth={120}>
+                <Typography
+                  variant="h5"
+                  color="warning.main"
+                  sx={{ cursor: 'pointer' }}
+                  role="button"
+                  aria-label={`${battles.length} cars within two seconds — open the pressure monitor`}
+                  onClick={() => navigate('/live/timing')}
+                >
+                  {battles.length}
+                </Typography>
+              </StatDisplay>
+            ) : null}
             <StatDisplay label="Session" minWidth={140}>
               <Typography variant="h5">{session.sessionType}</Typography>
             </StatDisplay>
@@ -248,7 +273,6 @@ export const LiveOverview: React.FC = () => {
       <LiveFieldState
         session={session}
         standings={standings}
-        battles={battles}
         captureLabel={liveIndicator.label}
         isCaptureLive={liveIndicator.state === 'live'}
         stewardPenaltiesByDriver={stewardPenaltiesByDriver}

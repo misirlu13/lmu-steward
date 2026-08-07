@@ -76,6 +76,16 @@ const smoothClosingSpeed = (
  */
 const MIN_RACING_SPEED_KPH = 30;
 
+/**
+ * Below this closing rate there is no time-to-catch worth reporting.
+ *
+ * The arithmetic does not fail, it just stops meaning anything: at 0.5 kph a
+ * fifty-metre gap comes out at six minutes, which is a number about float noise
+ * rather than about two racing drivers. A car that is not closing gets `—`, and
+ * a car dropping back gets `—` for the same reason with the opposite sign.
+ */
+export const MIN_CLOSING_SPEED_KPH = 1;
+
 const isRacing = (driver: LiveCaptureDriver): boolean =>
   !driver.inPits &&
   Number.isFinite(driver.lapDist) &&
@@ -98,6 +108,24 @@ const isRacing = (driver: LiveCaptureDriver): boolean =>
  *
  * Not a pure function — it carries smoothing state per pair, so callers must
  * call it on a steady cadence and reset it between sessions.
+ *
+ * **This stays on the 1 Hz capture feed, and that is a decision rather than an
+ * oversight.** The track map moved to a 5 Hz REST feed because a marker's
+ * position is read against a drawn line, where a 1 Hz step is 82 SVG units
+ * against a 16-unit marker. None of that applies here:
+ *
+ * - Nothing on this panel is legible faster than about 1 Hz. A steward reads a
+ *   gap and a trend; five updates a second is five chances a second for the
+ *   list to re-sort under the eye it is being read with, which is exactly the
+ *   layout thrash the ordering comment below already guards against.
+ * - Closing speed is a *differentiated* quantity. Its smoothing is time-based
+ *   rather than per-call, so five times the samples would not change the value
+ *   on screen much — but the raw input it is smoothing gets five times noisier,
+ *   and nothing is gained for it.
+ * - The REST rows carry `lapDistance` and `carVelocity`, so moving is possible.
+ *   It would mean a second reader of pit state and class names, on a different
+ *   vocabulary (`carClass` rather than `mVehicleClass`), for a panel that would
+ *   look the same.
  */
 export const deriveLivePressureBattles = (
   drivers: LiveCaptureDriver[],
@@ -160,6 +188,21 @@ export const deriveLivePressureBattles = (
       return;
     }
 
+    /*
+      From the gap in *metres* and the closing rate, not from the gap in
+      seconds. `gapSeconds` is how long the car behind takes to reach where the
+      car ahead is now, which is a different quantity — dividing it by a speed
+      would be dividing a time by a speed.
+
+      Off the smoothed closing speed rather than the raw one, so the ETA and the
+      trend on screen are answers to the same question. The raw figure swings
+      tens of kph through every braking zone and would take the ETA with it.
+    */
+    const timeToCatchSeconds =
+      closingSpeedKph >= MIN_CLOSING_SPEED_KPH
+        ? Math.round((gapMetres / (closingSpeedKph / 3.6)) * 10) / 10
+        : undefined;
+
     battles.push({
       id: pairId,
       aheadSteamId: ahead.steamId,
@@ -169,6 +212,9 @@ export const deriveLivePressureBattles = (
       gapSeconds: Math.round(gapSeconds * 100) / 100,
       closingSpeedKph: Math.round(closingSpeedKph * 10) / 10,
       isTraffic: ahead.vehicleClass !== behind.vehicleClass,
+      aheadSpeedKph: Math.round(ahead.speedKph ?? 0),
+      behindSpeedKph: Math.round(behind.speedKph ?? 0),
+      timeToCatchSeconds,
     });
   });
 

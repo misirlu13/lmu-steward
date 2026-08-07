@@ -874,6 +874,11 @@ export const ApiProvider: React.FC<{ children: React.ReactNode }> = ({
       [CONSTANTS.API.GET_LIVE_TRACK_MAP]: createHandler(
         CONSTANTS.API.GET_LIVE_TRACK_MAP,
       ),
+      // Same arrangement again for the 5 Hz position feed: owned entirely by
+      // `useLiveCarPositions`, and dead without this line.
+      [CONSTANTS.API.GET_LIVE_CAR_POSITIONS]: createHandler(
+        CONSTANTS.API.GET_LIVE_CAR_POSITIONS,
+      ),
       /*
         Likewise, and this one has never worked: the live camera bar subscribes
         to this to show "Camera command refused" when the game rejects an angle

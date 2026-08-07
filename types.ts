@@ -924,6 +924,40 @@ export interface LivePressureBattle {
    */
   aheadSlotId?: number;
   behindSlotId?: number;
+  /**
+   * Both cars' speed on the tick the gap was measured, in kph.
+   *
+   * Unsmoothed, unlike `closingSpeedKph`. These are readings rather than a
+   * trend: a steward glancing at 180 / 120 learns something the smoothed
+   * difference cannot tell them, which is that one of the two is not racing.
+   */
+  aheadSpeedKph?: number;
+  behindSpeedKph?: number;
+  /**
+   * Seconds for the car behind to close the gap at the current closing rate.
+   *
+   * Absent whenever the arithmetic is not meaningful: the car behind dropping
+   * back gives a negative, and a closing rate near zero gives a number in the
+   * thousands. Both are `—` rather than a figure — see `MIN_CLOSING_SPEED_KPH`.
+   */
+  timeToCatchSeconds?: number;
+}
+
+/**
+ * One car's world position, from `/rest/watch/standings` at the game's own
+ * ~5 Hz scoring rate.
+ *
+ * Reduced in main from a 71 KB response, so only this crosses IPC. `driverName`
+ * rides along not to be displayed but to be *checked*: the REST rows and the
+ * sidecar are two independent readers of the same scoring data, and a join that
+ * silently put the wrong car on the map would be worse than a slow map. See
+ * `mergeLiveCarPositions`.
+ */
+export interface LiveCarPosition {
+  slotId: number;
+  driverName: string;
+  x: number;
+  z: number;
 }
 
 export interface LiveSessionData {

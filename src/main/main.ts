@@ -91,6 +91,7 @@ import {
   getLiveTrackMap,
   getSessionInfo,
 } from './api/session';
+import { getLiveCarPositions } from './api/live-positions';
 import {
   CameraAngleRequestBody,
   postSetCameraAngle,
@@ -197,6 +198,7 @@ const CHANNEL_CALLBACK_HANDLERS: Partial<
   [CONSTANTS.API.GET_LIVE_SESSION_DATA]: withEventOnly(
     getLiveSessionDataHandler,
   ),
+  [CONSTANTS.API.GET_LIVE_CAR_POSITIONS]: withEventOnly(getLiveCarPositions),
   [CONSTANTS.API.GET_TRACK_MAP]: withEventOnly(getTrackMap),
   [CONSTANTS.API.GET_LIVE_TRACK_MAP]: withEventOnly(getLiveTrackMap),
   [CONSTANTS.API.GET_REPLAYS]: withEventAndData<GetReplaysRequest | undefined>(

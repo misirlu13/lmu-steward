@@ -1,4 +1,4 @@
-import { useMemo } from 'react';
+import React, { useMemo } from 'react';
 import {
   Box,
   Chip,
@@ -190,7 +190,7 @@ interface LiveTimingTableProps {
  * consistent and checkable; mixing a true best S1 with derived S2 and S3 would
  * be wrong by hundredths and impossible to explain.
  */
-export const LiveTimingTable: React.FC<LiveTimingTableProps> = ({
+const LiveTimingTableComponent: React.FC<LiveTimingTableProps> = ({
   standings,
   visibleStandings,
   session,
@@ -414,3 +414,14 @@ export const LiveTimingTable: React.FC<LiveTimingTableProps> = ({
     </Paper>
   );
 };
+
+/**
+ * Memoised because its parent re-renders at 5 Hz to move the track map's
+ * markers, and none of the thirty-odd numbers in a row of this table changes
+ * faster than 1 Hz.
+ *
+ * The parent is what makes this work: it hands the table the *unmerged*
+ * standings and gives the merged ones to the map alone, so a position tick
+ * leaves every prop here with the identity it had.
+ */
+export const LiveTimingTable = React.memo(LiveTimingTableComponent);

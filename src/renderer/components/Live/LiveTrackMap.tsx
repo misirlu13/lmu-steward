@@ -1,5 +1,5 @@
 import { useMemo } from 'react';
-import { Box, Paper, Stack, Typography } from '@mui/material';
+import { Box, Paper, Stack, Tooltip, Typography } from '@mui/material';
 import { alpha, Theme, useTheme } from '@mui/material/styles';
 import MapOutlinedIcon from '@mui/icons-material/MapOutlined';
 import { TrackMap } from '../TrackMap';
@@ -86,6 +86,17 @@ interface LiveTrackMapProps {
   visibleStandings: LiveStanding[];
   classFilter: string;
   focusedSlotId?: number;
+  /**
+   * How many of these rows carry a position from the 5 Hz feed rather than the
+   * 1 Hz one.
+   *
+   * Surfaced rather than kept internal because the REST→slot join it depends on
+   * cannot be proven from a fixture — it only diverges once a slot is vacated
+   * mid-session. If the join is wrong the names disagree, every car falls back
+   * to 1 Hz, and this reads zero. That is the difference between a feed that is
+   * working and one that is silently doing nothing.
+   */
+  positionsFromFastFeed?: number;
   onFocusCar: (slotId: number | undefined) => void;
 }
 
@@ -94,11 +105,17 @@ interface LiveTrackMapProps {
  *
  * Two things it deliberately does not do.
  *
- * **It does not interpolate between poll ticks.** Positions arrive at 1 Hz and
- * the markers step, visibly. Smoothing them would mean drawing the app's guess
- * at where a car was rather than where the game said it was — and this is a
- * screen a steward looks at to decide whether a car was where a driver claims.
- * Stepping is honest; a smooth lie is not.
+ * **It does not interpolate between poll ticks.** Every marker is drawn where
+ * the game last said the car was. Smoothing would mean drawing the app's guess
+ * instead — and this is a screen a steward looks at to decide whether a car was
+ * where a driver claims. Measured against Laguna's real racing line, a chord
+ * between 1 Hz samples at top speed misses the path by 18 m, against a track
+ * ~12 m wide: a smoothed marker would cut the Corkscrew and drive across the
+ * grass. The answer was a faster feed rather than a smoother lie, and the
+ * markers now step at the game's own ~5 Hz where the join can be verified — at
+ * which point the same chord is off by 1.2 m, below the width of the marker,
+ * and a short transition would become defensible polish rather than invention.
+ * It is still not built, because stepping at 5 Hz already reads as motion.
  *
  * **It does not place a car it has no position for.** `posX`/`posZ` come from
  * the sidecar, which is a local build artifact that is not committed, so a
@@ -114,6 +131,7 @@ export const LiveTrackMap: React.FC<LiveTrackMapProps> = ({
   visibleStandings,
   classFilter,
   focusedSlotId,
+  positionsFromFastFeed = 0,
   onFocusCar,
 }) => {
   const theme = useTheme();
@@ -274,6 +292,21 @@ export const LiveTrackMap: React.FC<LiveTrackMapProps> = ({
         <Typography variant="caption" color="text.secondary">
           {placed.length} placed
         </Typography>
+        {/*
+          Named as a rate rather than a count, because that is the question it
+          answers: are these markers moving at the game's rate or at the
+          sidecar's? The 1 Hz case says nothing at all — that is the status quo
+          and a label for it would be noise.
+        */}
+        {positionsFromFastFeed > 0 ? (
+          <Tooltip
+            title={`${positionsFromFastFeed} of ${placed.length} placed from the game's own ~5 Hz position feed`}
+          >
+            <Typography variant="caption" color="success.main">
+              5 Hz
+            </Typography>
+          </Tooltip>
+        ) : null}
       </Stack>
 
       <Box

@@ -1,5 +1,6 @@
 import { LiveCaptureDriver } from '@types';
 import {
+  MIN_CLOSING_SPEED_KPH,
   PRESSURE_GAP_LIMIT_SECONDS,
   PRESSURE_GAP_RELEASE_SECONDS,
   deriveLivePressureBattles,
@@ -312,5 +313,84 @@ describe('membership hysteresis', () => {
     expect(deriveLivePressureBattles(pair(115), TRACK_LENGTH, 1000)).toEqual(
       [],
     );
+  });
+});
+
+/*
+  What the pressure monitor renders beside the gap. Everything here is either a
+  reading or `undefined` — a time-to-catch that cannot be computed is absent
+  rather than negative, infinite, or a large number standing in for "never".
+*/
+describe('what a battle reports besides the gap', () => {
+  it('carries the speed of both cars as read, unsmoothed', () => {
+    const [battle] = deriveLivePressureBattles(
+      [
+        car({ slotId: 1, lapDist: 1000, speedKph: 212.4 }),
+        car({ slotId: 2, lapDist: 1025, speedKph: 189.6 }),
+      ],
+      TRACK_LENGTH,
+    );
+
+    expect(battle.behindSpeedKph).toBe(212);
+    expect(battle.aheadSpeedKph).toBe(190);
+  });
+
+  /*
+    From the gap in metres over the closing rate, not from the gap in seconds.
+    Those are different quantities: `gapSeconds` is how long the chaser takes to
+    reach where the leader is *now*.
+
+    50 m at 18 kph closing (5 m/s) is 10 s. The gap in seconds for the same pair
+    is 1.0, so a formula that divided that by the closing speed would answer
+    0.2 — plausible enough to ship and wrong by a factor of fifty.
+  */
+  it('derives time to catch from the distance, not from the gap in seconds', () => {
+    const [battle] = deriveLivePressureBattles(
+      [
+        car({ slotId: 1, lapDist: 1000, speedKph: 180 }),
+        car({ slotId: 2, lapDist: 1050, speedKph: 162 }),
+      ],
+      TRACK_LENGTH,
+    );
+
+    expect(battle.gapSeconds).toBeCloseTo(1.0, 2);
+    expect(battle.closingSpeedKph).toBeCloseTo(18, 1);
+    expect(battle.timeToCatchSeconds).toBeCloseTo(10, 1);
+  });
+
+  // A car dropping back is not going to catch anyone. `—`, not a negative.
+  it('reports no time to catch for a car losing ground', () => {
+    const [battle] = deriveLivePressureBattles(
+      [
+        car({ slotId: 1, lapDist: 1000, speedKph: 160 }),
+        car({ slotId: 2, lapDist: 1025, speedKph: 200 }),
+      ],
+      TRACK_LENGTH,
+    );
+
+    expect(battle.closingSpeedKph).toBeLessThan(0);
+    expect(battle.timeToCatchSeconds).toBeUndefined();
+  });
+
+  /*
+    Two cars holding station. The arithmetic does not fail here, it just stops
+    describing anything: at a fraction of a kph the answer is minutes, which is
+    a number about float noise rather than about two drivers.
+  */
+  it('reports no time to catch below the minimum closing speed', () => {
+    const [battle] = deriveLivePressureBattles(
+      [
+        car({ slotId: 1, lapDist: 1000, speedKph: 180 }),
+        car({
+          slotId: 2,
+          lapDist: 1025,
+          speedKph: 180 - MIN_CLOSING_SPEED_KPH / 2,
+        }),
+      ],
+      TRACK_LENGTH,
+    );
+
+    expect(battle.closingSpeedKph).toBeGreaterThan(0);
+    expect(battle.timeToCatchSeconds).toBeUndefined();
   });
 });

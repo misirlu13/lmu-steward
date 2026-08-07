@@ -2,6 +2,7 @@ import { CONSTANTS } from '@constants';
 import { LMUReplay } from '@types';
 import { existsSync, readFileSync } from 'fs';
 import { resolve } from 'path';
+import { extractLiveCarPositions } from './live-positions';
 
 type ApiChannel = (typeof CONSTANTS.API)[keyof typeof CONSTANTS.API];
 
@@ -187,6 +188,18 @@ const trackMapResponse = toSuccessResponse(trackMapMockData, {
   points: [],
 });
 
+/**
+ * The same reduction the live handler performs, over the standings mock.
+ *
+ * Present so the channel answers in dev mode rather than erroring, not so the
+ * map moves: the renderer runs off its own fixtures there and does not enable
+ * the fast feed. See the `enabled` argument in `LiveTiming`.
+ */
+const liveCarPositionsResponse = {
+  status: 'success',
+  data: extractLiveCarPositions(standingsMockData),
+};
+
 const MOCK_REPLAY_LOADING_DURATION_MS = 6500;
 let mockReplayLoadingStartedAtMs: number | null = null;
 
@@ -360,6 +373,7 @@ export const mockApiData: Partial<Record<ApiChannel, MockApiResolver>> = {
     image: null,
   },
   [CONSTANTS.API.GET_STANDINGS]: standingsResponse,
+  [CONSTANTS.API.GET_LIVE_CAR_POSITIONS]: liveCarPositionsResponse,
   [CONSTANTS.API.GET_STANDINGS_HISTORY]: standingsHistoryResponse,
   [CONSTANTS.API.GET_SESSION_INFO]: sessionInfoResponse,
   [CONSTANTS.API.GET_IS_REPLAY_ACTIVE]: {

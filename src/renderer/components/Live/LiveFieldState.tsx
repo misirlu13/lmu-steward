@@ -1,13 +1,8 @@
-import WarningAmberIcon from '@mui/icons-material/WarningAmber';
 import { Box, Chip, Paper, Stack, Tooltip, Typography } from '@mui/material';
 import { CarClassBadge } from '../CarClassBadge/CarClassBadge';
 import { AiBadge } from '../Common/AiBadge';
 import { formatSessionClock } from '../../hooks/useLiveSessionData';
-import {
-  LivePressureBattle,
-  LiveSessionState,
-  LiveStanding,
-} from './liveFixtures';
+import { LiveSessionState, LiveStanding } from './liveFixtures';
 
 interface SectionProps {
   title: string;
@@ -40,7 +35,6 @@ const Section: React.FC<SectionProps> = ({ title, children, action }) => (
 interface LiveFieldStateProps {
   session: LiveSessionState;
   standings: LiveStanding[];
-  battles: LivePressureBattle[];
   captureLabel: string;
   isCaptureLive: boolean;
   /**
@@ -70,14 +64,16 @@ interface LiveFieldStateProps {
  * the queue or the dossier, which is the clutter the whole shell exists to
  * undo.
  *
- * Step 9 promotes the pressure monitor out of here onto the timing view, which
- * leaves this panel as session + watchlist + field. That is a coherent column,
- * not a leftover.
+ * **The pressure monitor has moved to the timing view** (Step 9), where it is a
+ * full panel with speeds and a time-to-catch rather than a two-line row in a
+ * sidebar. That leaves this panel as session + watchlist + field, which is a
+ * coherent column rather than a leftover: all three answer *who should I be
+ * watching?* from the session's history, where the monitor answers it from the
+ * next ten seconds and belongs beside the map and the timing screen.
  */
 export const LiveFieldState: React.FC<LiveFieldStateProps> = ({
   session,
   standings,
-  battles,
   captureLabel,
   isCaptureLive,
   stewardPenaltiesByDriver,
@@ -118,30 +114,6 @@ export const LiveFieldState: React.FC<LiveFieldStateProps> = ({
         b.incidentCount - a.incidentCount ||
         b.trackLimitStrikes - a.trackLimitStrikes,
     );
-
-  /*
-    Already ordered by gap upstream, and deliberately not re-sorted here.
-    Ranking by closing speed made rows swap places every second as the figure
-    moved, which read as the panel thrashing rather than as cars racing.
-  */
-  const rankedBattles = battles;
-
-  /*
-    Resolved against the standings on screen, preferring slot over steam id.
-    Steam id is 0 for every AI entry and every offline session, so a field of
-    AI cars would otherwise collapse onto one driver. Falls back to steam id
-    for the layout fixtures, which carry no slots.
-  */
-  const findBattleCar = (
-    slotId: number | undefined,
-    steamId: string | undefined,
-  ) =>
-    (slotId !== undefined
-      ? standings.find((entry) => entry.slotId === slotId)
-      : undefined) ??
-    (steamId && steamId !== '0'
-      ? standings.find((entry) => entry.steamId === steamId)
-      : undefined);
 
   return (
     <Paper
@@ -237,60 +209,6 @@ export const LiveFieldState: React.FC<LiveFieldStateProps> = ({
                     {summary}
                   </Typography>
                 </Box>
-              );
-            })}
-          </Stack>
-        </Section>
-
-        <Section title="Pressure Monitor">
-          <Stack spacing={1}>
-            {rankedBattles.map((battle) => {
-              const ahead = findBattleCar(
-                battle.aheadSlotId,
-                battle.aheadSteamId,
-              );
-              const behind = findBattleCar(
-                battle.behindSlotId,
-                battle.behindSteamId,
-              );
-              if (!ahead || !behind) {
-                return null;
-              }
-              return (
-                <Stack
-                  key={battle.id}
-                  direction="row"
-                  alignItems="center"
-                  spacing={0.75}
-                  sx={{ cursor: 'pointer' }}
-                  onClick={() => onFocusCar(behind.slotId)}
-                >
-                  {battle.isTraffic ? (
-                    <WarningAmberIcon
-                      sx={{ fontSize: 16, color: 'warning.main' }}
-                    />
-                  ) : (
-                    <Box sx={{ width: 16 }} />
-                  )}
-                  <Typography variant="body2" color="text.secondary">
-                    #{behind.carNumber}
-                  </Typography>
-                  <CarClassBadge carClass={behind.carClass} />
-                  <Typography variant="caption" color="text.secondary">
-                    on
-                  </Typography>
-                  <Typography variant="body2" color="text.secondary">
-                    #{ahead.carNumber}
-                  </Typography>
-                  <CarClassBadge carClass={ahead.carClass} />
-                  <Box sx={{ flex: 1 }} />
-                  <Typography variant="caption" sx={{ fontWeight: 700 }}>
-                    {battle.gapSeconds.toFixed(1)}s
-                  </Typography>
-                  <Typography variant="caption" color="text.secondary">
-                    +{battle.closingSpeedKph.toFixed(0)} kph
-                  </Typography>
-                </Stack>
               );
             })}
           </Stack>

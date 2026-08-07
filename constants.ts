@@ -55,6 +55,22 @@ export const CONSTANTS = {
     GET_API_STATUS: 'get.api-status',
     GET_LIVE_SESSION_STATUS: 'get.live-session-status',
     GET_LIVE_SESSION_DATA: 'get.live-session-data',
+    /**
+     * Where every car is, and nothing else, at the rate the game publishes it.
+     *
+     * `/rest/watch/standings` updates `carPosition` at ~5 Hz — LMU's scoring
+     * rate — while the sidecar emits the whole session line at a flat 1 Hz. Four
+     * of every five position samples were being discarded, and at Laguna's top
+     * speed a car covers five marker-widths between 1 Hz ticks.
+     *
+     * Deliberately not `GET_LIVE_SESSION_DATA` at 5 Hz. That channel serialises
+     * the whole retained incident array every tick (`MAX_RETAINED_INCIDENTS` is
+     * 500), which is the cost Step 2 exists to contain — and it would still
+     * deliver 1 Hz positions, because the sidecar only emits that often. This
+     * one reduces a 71 KB response to a few hundred bytes in main, before
+     * anything crosses IPC.
+     */
+    GET_LIVE_CAR_POSITIONS: 'get.live-car-positions',
     GET_REPLAYS: 'get.replays',
     GET_TRACK_THUMBNAIL: 'get.track-thumbnail',
     GET_USER_SETTINGS: 'get.user-settings',

@@ -863,6 +863,16 @@ export const liveStandingsFixture: LiveStanding[] = [
   },
 ];
 
+/**
+ * Four pairings, chosen to put every state the monitor can be in on screen at
+ * once without a running game.
+ *
+ * The ETAs are the real arithmetic, not decoration: gap in metres over the
+ * closing rate, so `battle-2` at 1.1 s and 6.8 kph closing genuinely takes most
+ * of a minute. `battle-4` is the case the panel exists to render honestly — a
+ * car dropping back has no time to catch and must read `—` rather than a
+ * negative number.
+ */
 export const livePressureFixture: LivePressureBattle[] = [
   {
     id: 'battle-1',
@@ -871,6 +881,9 @@ export const livePressureFixture: LivePressureBattle[] = [
     gapSeconds: 0.4,
     closingSpeedKph: 41.2,
     isTraffic: true,
+    aheadSpeedKph: 168,
+    behindSpeedKph: 209,
+    timeToCatchSeconds: 2.0,
   },
   {
     id: 'battle-2',
@@ -879,6 +892,9 @@ export const livePressureFixture: LivePressureBattle[] = [
     gapSeconds: 1.1,
     closingSpeedKph: 6.8,
     isTraffic: false,
+    aheadSpeedKph: 214,
+    behindSpeedKph: 221,
+    timeToCatchSeconds: 35.8,
   },
   {
     id: 'battle-3',
@@ -887,6 +903,20 @@ export const livePressureFixture: LivePressureBattle[] = [
     gapSeconds: 0.9,
     closingSpeedKph: 27.5,
     isTraffic: true,
+    aheadSpeedKph: 151,
+    behindSpeedKph: 179,
+    timeToCatchSeconds: 5.9,
+  },
+  {
+    // Dropping back. No ETA, and the trend points the other way.
+    id: 'battle-4',
+    aheadSteamId: drivers.drake.steamId,
+    behindSteamId: drivers.ferrara.steamId,
+    gapSeconds: 1.8,
+    closingSpeedKph: -12.4,
+    isTraffic: false,
+    aheadSpeedKph: 226,
+    behindSpeedKph: 214,
   },
 ];
 
