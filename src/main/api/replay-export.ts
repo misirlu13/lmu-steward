@@ -19,6 +19,17 @@ export interface ExportReplayRequest {
   session: string;
   timestamp: number;
   logDataFileName: string;
+  /**
+   * Whether captured trace windows travel with the archive.
+   *
+   * Off unless the user says otherwise. A session export already carries driver
+   * names and Steam IDs; traces go further — they are per-driver throttle,
+   * brake and steering inputs, which is telemetry a driver may not expect a
+   * third party to redistribute. Derived evidence (closing speeds, off-track,
+   * blue-flag duration) always travels: it is a summary, and it is most of what
+   * makes an incident adjudicable on the receiving side.
+   */
+  includeLiveTelemetry?: boolean;
 }
 
 export interface ExportWeekendRequest {
@@ -28,6 +39,9 @@ export interface ExportWeekendRequest {
   timestamp: number;
   sessions: ExportReplayRequest[];
 }
+
+/** The captured session travelling with an archive, if there is one. */
+export const EXPORT_LIVE_DATA_NAME = 'lmu-steward-live.json';
 
 export interface ExportManifest {
   createdBy: 'lmu-steward';
@@ -39,12 +53,23 @@ export interface ExportManifest {
   timestamp: number;
   vcrFileName: string;
   logFileName: string;
+  /** A captured session is included alongside the replay. */
+  liveDataFileName?: string;
+  /**
+   * Whether the included capture carries trace windows.
+   *
+   * Recorded because it was a choice someone made about other people's
+   * telemetry, and the archive should say which way it went rather than
+   * leaving the receiving steward to infer it from what is missing.
+   */
+  includesLiveTelemetry?: boolean;
 }
 
 export const buildExportManifest = (
   request: ExportReplayRequest,
   vcrPath: string,
   logPath: string,
+  liveData?: { includesTelemetry: boolean } | null,
 ): ExportManifest => ({
   createdBy: 'lmu-steward',
   version: 1,
@@ -54,6 +79,12 @@ export const buildExportManifest = (
   timestamp: request.timestamp,
   vcrFileName: basename(vcrPath),
   logFileName: basename(logPath),
+  ...(liveData
+    ? {
+        liveDataFileName: EXPORT_LIVE_DATA_NAME,
+        includesLiveTelemetry: liveData.includesTelemetry,
+      }
+    : {}),
 });
 
 /*

@@ -96,6 +96,12 @@ export const CONSTANTS = {
     POST_DISMISS_LIVE_SESSION_MATCH: 'post.dismiss-live-session-match',
     /** A replay's linked captured session, for merging onto its incidents. */
     GET_LIVE_DATA_FOR_REPLAY: 'get.live-data-for-replay',
+    /** One incident's trace window. Fetched only when a dossier opens. */
+    GET_LIVE_INCIDENT_CONTEXT: 'get.live-incident-context',
+    /** What a retention window would delete, before anything is deleted. */
+    GET_LIVE_RETENTION_PREVIEW: 'get.live-retention-preview',
+    /** Counts for the clear-storage warning: what exists nowhere else. */
+    GET_LOCAL_DATA_SUMMARY: 'get.local-data-summary',
     POST_SET_IMPORTED_NOTE: 'post.set-imported-note',
     POST_EXPORT_REPLAY: 'post.export-replay',
     POST_EXPORT_WEEKEND: 'post.export-weekend',

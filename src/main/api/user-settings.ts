@@ -1,9 +1,11 @@
 import { CONSTANTS } from '@constants';
 import path from 'path';
+import log from 'electron-log';
 import {
   clearPersistentStorage,
   getMainPersistentStore,
 } from '../storage/local-data-store';
+import { sweepExpiredLiveSessions } from './live-retention';
 
 export type UserSettings = Record<string, unknown>;
 
@@ -33,7 +35,21 @@ export const DEFAULT_USER_SETTINGS: UserSettings = {
    * silently start touching shared memory.
    */
   liveCaptureEnabled: false,
+  /**
+   * How long captured live sessions are kept, in days. Null never expires them.
+   *
+   * Age is the only axis, deliberately. Link state looks like a useful signal
+   * and is not: an unlinked session may link later when a replay is imported
+   * from another machine, and the user who does not keep replays is exactly the
+   * one for whom the capture is the only record of a race.
+   *
+   * Steward decisions are never swept, at any setting.
+   */
+  liveCaptureRetentionDays: 30,
 };
+
+/** The windows offered, longest-lived last. `null` is "never delete". */
+export const LIVE_RETENTION_OPTIONS: Array<number | null> = [7, 30, 90, null];
 
 // Removed threshold constants
 
@@ -175,6 +191,33 @@ export const postUserSettings = async (
     }
 
     const nextSettings = await writeUserSettings(updates);
+
+    /*
+      A shortened window is the one case where the user has explicitly asked for
+      data to go now, so it is swept immediately rather than waiting for the next
+      app start. The renderer has already confirmed against a summary of exactly
+      what will be removed; this is the write that carries it out.
+
+      Isolated from the reply: expiry failing must not make a settings change
+      look like it failed.
+    */
+    try {
+      if (
+        Object.prototype.hasOwnProperty.call(
+          updates ?? {},
+          'liveCaptureRetentionDays',
+        )
+      ) {
+        sweepExpiredLiveSessions(
+          nextSettings.liveCaptureRetentionDays as number | null,
+        );
+      }
+    } catch (sweepError) {
+      log.warn(
+        'live-retention: sweep after settings change failed',
+        sweepError,
+      );
+    }
 
     event.reply(CONSTANTS.API.POST_USER_SETTINGS, {
       status: 'success',

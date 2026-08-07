@@ -58,6 +58,11 @@ export interface ExportReplayPayload {
   session: string;
   timestamp: number;
   logDataFileName: string;
+  /**
+   * Whether captured trace windows travel with the archive. Off unless the
+   * user opted in — traces are per-driver inputs, not a summary.
+   */
+  includeLiveTelemetry?: boolean;
 }
 
 export interface ExportSessionDataPayload {
@@ -804,6 +809,15 @@ export const ApiProvider: React.FC<{ children: React.ReactNode }> = ({
       ),
       [CONSTANTS.API.GET_LIVE_DATA_FOR_REPLAY]: createHandler(
         CONSTANTS.API.GET_LIVE_DATA_FOR_REPLAY,
+      ),
+      [CONSTANTS.API.GET_LIVE_INCIDENT_CONTEXT]: createHandler(
+        CONSTANTS.API.GET_LIVE_INCIDENT_CONTEXT,
+      ),
+      [CONSTANTS.API.GET_LIVE_RETENTION_PREVIEW]: createHandler(
+        CONSTANTS.API.GET_LIVE_RETENTION_PREVIEW,
+      ),
+      [CONSTANTS.API.GET_LOCAL_DATA_SUMMARY]: createHandler(
+        CONSTANTS.API.GET_LOCAL_DATA_SUMMARY,
       ),
       [CONSTANTS.API.GET_API_STATUS]: createHandler(
         CONSTANTS.API.GET_API_STATUS,

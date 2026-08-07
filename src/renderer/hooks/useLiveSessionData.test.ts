@@ -5,6 +5,7 @@ import {
 } from '@types';
 import { liveSessionFixture } from '../components/Live/liveFixtures';
 import {
+  buildIncidents,
   buildSessionState,
   buildStandings,
   driverIdentity,
@@ -80,6 +81,34 @@ describe('driverIdentity', () => {
     ]);
 
     expect(new Set(standings.map((s) => s.steamId)).size).toBe(3);
+  });
+});
+
+describe('buildIncidents identity', () => {
+  /*
+    Steward decisions key on this id. `incident.id` carries the sidecar
+    generation, so a mid-session sidecar restart renumbers every incident —
+    which would move the steward's selection and detach every call already made
+    from the incident it was made on. The persisted id is content-derived and
+    survives both a restart and the app closing.
+  */
+  it('identifies an incident by its persisted id, not the volatile one', () => {
+    const [built] = buildIncidents(
+      [{ ...contact([1, 2]), id: 'live-3-17', persistedId: 'session#abc123' }],
+      [driver({ slotId: 1 }), driver({ slotId: 2 })],
+    );
+
+    expect(built.id).toBe('session#abc123');
+  });
+
+  // Dev-mode fixtures and any incident seen before persistence still render.
+  it('falls back to the volatile id when nothing was persisted', () => {
+    const [built] = buildIncidents(
+      [{ ...contact([1, 2]), id: 'live-3-17' }],
+      [driver({ slotId: 1 }), driver({ slotId: 2 })],
+    );
+
+    expect(built.id).toBe('live-3-17');
   });
 });
 

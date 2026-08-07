@@ -50,6 +50,8 @@ import {
 } from '../utils/sessionExportFormats';
 import { useReplayDerivedData } from '../hooks/useReplayDerivedData';
 import { useLiveDataForReplay } from '../hooks/useLiveDataForReplay';
+import { ReplayIncidentDossier } from '../components/Replay/ReplayIncidentDossier';
+import { ExportTelemetryDialog } from '../components/Replay/ExportTelemetryDialog';
 import { useReplayViewOrchestration } from '../hooks/useReplayViewOrchestration';
 
 const PARTIAL_REPLAY_DATA_NOTICE =
@@ -80,6 +82,11 @@ export const ReplayView: React.FC = () => {
     subscribeToApiChannel,
   } = useApi();
   const [isChatOpen, setIsChatOpen] = useState(false);
+  const [isExportTelemetryDialogOpen, setIsExportTelemetryDialogOpen] =
+    useState(false);
+  // Off unless asked for: sharing another driver's inputs is the deliberate
+  // choice, not the default one.
+  const [includeLiveTelemetry, setIncludeLiveTelemetry] = useState(false);
   const [copyNotice, setCopyNotice] = useState<string | null>(null);
   const navigate = useNavigate();
   const {
@@ -177,6 +184,30 @@ export const ReplayView: React.FC = () => {
       return undefined;
     });
   }, [timelineEvents, setSelectedIncidentId]);
+
+  const selectedTimelineEvent = timelineEvents.find(
+    (event) => event.id === selectedIncidentId,
+  );
+
+  const liveTraceCount = (liveDataForReplay?.incidents ?? []).filter(
+    (record) => record.hasContext,
+  ).length;
+
+  const runExport = (withTelemetry: boolean) => {
+    if (!currentReplay?.logDataFileName) {
+      return;
+    }
+
+    exportReplay({
+      hash: currentReplay.hash,
+      replayName: currentReplay.replayName,
+      sceneDesc: currentReplay.metadata.sceneDesc,
+      session: currentReplay.metadata.session,
+      timestamp: currentReplay.timestamp,
+      logDataFileName: currentReplay.logDataFileName,
+      includeLiveTelemetry: withTelemetry,
+    });
+  };
 
   const onJumpToIncident = (event: ReplayIncidentEvent) => {
     setSelectedIncidentId(event.id);
@@ -399,14 +430,17 @@ export const ReplayView: React.FC = () => {
                   return;
                 }
 
-                exportReplay({
-                  hash: currentReplay.hash,
-                  replayName: currentReplay.replayName,
-                  sceneDesc: currentReplay.metadata.sceneDesc,
-                  session: currentReplay.metadata.session,
-                  timestamp: currentReplay.timestamp,
-                  logDataFileName: currentReplay.logDataFileName,
-                });
+                /*
+                  A capture with traces makes the export a decision about other
+                  people's telemetry, so it is asked rather than assumed. With
+                  nothing to ask about, the export runs straight through.
+                */
+                if (liveTraceCount > 0) {
+                  setIsExportTelemetryDialogOpen(true);
+                  return;
+                }
+
+                runExport(false);
               }}
             />
           </Stack>
@@ -445,6 +479,32 @@ export const ReplayView: React.FC = () => {
           dataCoverageNote={driverCoverageNote}
         />
       </Box>
+
+      {/*
+        Directly under the timeline, so the evidence sits next to the incident
+        it belongs to and the footage the Jump button just sought to. Renders
+        nothing at all unless this replay has a linked capture that recorded
+        this particular incident.
+      */}
+      <Box sx={{ mt: 2 }}>
+        <ReplayIncidentDossier
+          event={selectedTimelineEvent}
+          liveData={liveDataForReplay}
+          replayHash={replayHash}
+        />
+      </Box>
+
+      <ExportTelemetryDialog
+        open={isExportTelemetryDialogOpen}
+        traceCount={liveTraceCount}
+        includeTelemetry={includeLiveTelemetry}
+        onIncludeTelemetryChange={setIncludeLiveTelemetry}
+        onCancel={() => setIsExportTelemetryDialogOpen(false)}
+        onConfirm={() => {
+          setIsExportTelemetryDialogOpen(false);
+          runExport(includeLiveTelemetry);
+        }}
+      />
 
       <Box
         sx={{

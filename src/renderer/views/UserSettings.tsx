@@ -15,8 +15,10 @@ import {
 } from '@mui/material';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { CONSTANTS } from '@constants';
+import { LiveRetentionPreview, LocalDataSummary } from '@types';
 import { useNavigate } from 'react-router-dom';
 import { ViewHeader } from '../components/Common/ViewHeader';
+import { RetentionShorteningDialog } from '../components/UserSettings/RetentionShorteningDialog';
 import { sendMessage } from '../utils/postMessage';
 import { useApi } from '../providers/ApiContext';
 import { getProfileInitials } from '../utils/profileInitials';
@@ -122,6 +124,23 @@ export const UserSettingsView: React.FC = () => {
   const [experimentalFeaturesEnabled, setExperimentalFeaturesEnabled] =
     useState(false);
   const [liveCaptureEnabled, setLiveCaptureEnabled] = useState(false);
+  const [liveCaptureRetentionDays, setLiveCaptureRetentionDays] = useState<
+    number | null
+  >(30);
+  /*
+    Shortening the window deletes data, so the change is held here until the
+    user has seen what it would remove and confirmed it. Lengthening never
+    lands here — it takes nothing away.
+  */
+  const [pendingRetentionDays, setPendingRetentionDays] = useState<
+    number | null | undefined
+  >(undefined);
+  const [retentionPreview, setRetentionPreview] =
+    useState<LiveRetentionPreview | null>(null);
+  const [isRetentionPreviewLoading, setIsRetentionPreviewLoading] =
+    useState(false);
+  const [localDataSummary, setLocalDataSummary] =
+    useState<LocalDataSummary | null>(null);
   /*
    * Defaults to keeping the files. Clearing a cache should not destroy
    * multi-GB replays as a side effect — the destructive option is the one the
@@ -345,6 +364,15 @@ export const UserSettingsView: React.FC = () => {
       setPersistDashboardFiltersEnabled(resolvedPersistDashboardFiltersEnabled);
       setExperimentalFeaturesEnabled(resolvedExperimentalFeaturesEnabled);
       setLiveCaptureEnabled(resolvedLiveCaptureEnabled);
+      /*
+        Null is a real value here — "never delete" — so it cannot be collapsed
+        into the default with `??`. Only a missing key falls back to 30.
+      */
+      setLiveCaptureRetentionDays(
+        response?.data?.liveCaptureRetentionDays === undefined
+          ? 30
+          : (response.data.liveCaptureRetentionDays as number | null),
+      );
       setAnonymizeDriverData(resolvedAnonymizeDriverData);
       setTelemetryCacheEnabled(resolvedTelemetryCacheEnabled);
       setClearCacheOnExit(resolvedClearCacheOnExit);
@@ -700,6 +728,31 @@ export const UserSettingsView: React.FC = () => {
       },
     );
 
+    const unsubscribeRetentionPreview = window.electron?.ipcRenderer.on(
+      CONSTANTS.API.GET_LIVE_RETENTION_PREVIEW,
+      (...args: unknown[]) => {
+        const response = (args[0] ?? {}) as ApiResponse;
+        setIsRetentionPreviewLoading(false);
+        setRetentionPreview(
+          response?.status === 'success'
+            ? ((response.data as unknown as LiveRetentionPreview) ?? null)
+            : null,
+        );
+      },
+    );
+
+    const unsubscribeLocalDataSummary = window.electron?.ipcRenderer.on(
+      CONSTANTS.API.GET_LOCAL_DATA_SUMMARY,
+      (...args: unknown[]) => {
+        const response = (args[0] ?? {}) as ApiResponse;
+        setLocalDataSummary(
+          response?.status === 'success'
+            ? ((response.data as unknown as LocalDataSummary) ?? null)
+            : null,
+        );
+      },
+    );
+
     sendMessage(CONSTANTS.API.GET_USER_SETTINGS);
     sendMessage(CONSTANTS.API.GET_PROFILE_INFO);
 
@@ -712,6 +765,8 @@ export const UserSettingsView: React.FC = () => {
       unsubscribeSelectReplayDirectory?.();
       unsubscribeLaunch?.();
       unsubscribeProfileInfo?.();
+      unsubscribeRetentionPreview?.();
+      unsubscribeLocalDataSummary?.();
 
       if (launchCooldownTimeoutRef.current) {
         clearTimeout(launchCooldownTimeoutRef.current);
@@ -800,7 +855,60 @@ export const UserSettingsView: React.FC = () => {
   };
 
   const onOpenClearLocalStorageDialog = () => {
+    // Counted fresh each time the dialog opens: the warning has to name how
+    // many decisions are about to be destroyed, and a stale number here is a
+    // number the user makes an irreversible decision against.
+    setLocalDataSummary(null);
+    sendMessage(CONSTANTS.API.GET_LOCAL_DATA_SUMMARY);
     setIsClearLocalStorageDialogOpen(true);
+  };
+
+  /**
+   * Retention is saved on its own, not through autosave.
+   *
+   * A longer window — or "never" — takes nothing away and is written straight
+   * through. A shorter one deletes on the next write, so it is held until the
+   * user has seen a summary of exactly what it would remove.
+   */
+  const isShorterRetention = (
+    next: number | null,
+    current: number | null,
+  ): boolean => next !== null && (current === null || next < current);
+
+  const saveRetentionDays = (nextValue: number | null) => {
+    setLiveCaptureRetentionDays(nextValue);
+    sendMessage(CONSTANTS.API.POST_USER_SETTINGS, {
+      liveCaptureRetentionDays: nextValue,
+    });
+  };
+
+  const onRetentionChangeRequest = (nextValue: number | null) => {
+    if (nextValue === liveCaptureRetentionDays) {
+      return;
+    }
+
+    if (!isShorterRetention(nextValue, liveCaptureRetentionDays)) {
+      saveRetentionDays(nextValue);
+      return;
+    }
+
+    setPendingRetentionDays(nextValue);
+    setRetentionPreview(null);
+    setIsRetentionPreviewLoading(true);
+    sendMessage(CONSTANTS.API.GET_LIVE_RETENTION_PREVIEW, nextValue);
+  };
+
+  const onConfirmRetentionChange = () => {
+    if (pendingRetentionDays !== undefined) {
+      saveRetentionDays(pendingRetentionDays);
+    }
+    setPendingRetentionDays(undefined);
+    setRetentionPreview(null);
+  };
+
+  const onCancelRetentionChange = () => {
+    setPendingRetentionDays(undefined);
+    setRetentionPreview(null);
   };
 
   const _onReplayLogThresholdMinutesChangeRequest = (nextValue: number) => {
@@ -1605,6 +1713,56 @@ export const UserSettingsView: React.FC = () => {
                     }
                   />
                 </Stack>
+
+                {/*
+                  Retention sits with capture because it is the cost of having
+                  it on: a contact window is ~100 KB and a long race records
+                  hundreds, so an install left alone grows without bound.
+
+                  Saved on its own rather than through autosave — shortening the
+                  window destroys data and has to be confirmed first.
+                */}
+                <Stack
+                  direction="row"
+                  justifyContent="space-between"
+                  alignItems="center"
+                  sx={{ mt: 2 }}
+                >
+                  <Box sx={{ pr: 2 }}>
+                    <Typography variant="subtitle2" fontWeight={600}>
+                      Keep Captured Sessions
+                    </Typography>
+                    <Typography variant="caption" color="text.secondary">
+                      Captured sessions and their telemetry are removed once
+                      they pass this age, whether or not they are linked to a
+                      replay. Steward decisions are never deleted.
+                    </Typography>
+                  </Box>
+                  <TextField
+                    select
+                    size="small"
+                    sx={{ minWidth: 140 }}
+                    value={
+                      liveCaptureRetentionDays === null
+                        ? 'never'
+                        : String(liveCaptureRetentionDays)
+                    }
+                    onChange={(changeEvent) => {
+                      const { value } = changeEvent.target;
+                      onRetentionChangeRequest(
+                        value === 'never' ? null : Number(value),
+                      );
+                    }}
+                    disabled={
+                      !experimentalFeaturesEnabled || isLoading || isSaving
+                    }
+                  >
+                    <MenuItem value="7">7 days</MenuItem>
+                    <MenuItem value="30">30 days</MenuItem>
+                    <MenuItem value="90">90 days</MenuItem>
+                    <MenuItem value="never">Never delete</MenuItem>
+                  </TextField>
+                </Stack>
               </Box>
 
               {/*
@@ -1699,6 +1857,16 @@ export const UserSettingsView: React.FC = () => {
             onDeleteImportedFilesChange={setDeleteImportedFilesOnClear}
             onClose={onCloseClearLocalStorageDialog}
             onConfirm={onConfirmClearLocalStorage}
+            localDataSummary={localDataSummary}
+          />
+
+          <RetentionShorteningDialog
+            open={pendingRetentionDays !== undefined}
+            retentionDays={pendingRetentionDays ?? null}
+            preview={retentionPreview}
+            isLoading={isRetentionPreviewLoading}
+            onCancel={onCancelRetentionChange}
+            onConfirm={onConfirmRetentionChange}
           />
 
           {/* <UserSettingsReplayThresholdDialog

@@ -1,6 +1,11 @@
 import log from 'electron-log';
 import { CONSTANTS } from '@constants';
-import { LiveDataForReplay, LiveSessionLink } from '@types';
+import {
+  LiveDataForReplay,
+  LiveRetentionPreview,
+  LiveSessionLink,
+  LocalDataSummary,
+} from '@types';
 import {
   deleteLiveSession,
   dismissLiveSessionMatch,
@@ -8,10 +13,15 @@ import {
   linkLiveSessionToReplay,
   listLiveIncidentTimesBySession,
   listLiveSessionSummaries,
+  readLiveIncidentContext,
+  readLiveIncidents,
   readLiveIncidentsForSession,
   readLiveSession,
+  readLiveSessions,
   unlinkLiveSession,
 } from './live-session-store';
+import { previewExpiredLiveSessions } from './live-retention';
+import { readStewardDecisions } from './steward-decisions';
 import { matchLiveSession, runLiveSessionMatchPass } from './live-replay-match';
 import { listReplayMatchTargets } from './replay';
 
@@ -269,6 +279,7 @@ export const getLiveDataForReplay = async (
               startedAt: session.startedAt,
               link: session.link,
               incidents,
+              drivers: session.drivers ?? [],
             } satisfies LiveDataForReplay)
           : null,
     });
@@ -279,6 +290,115 @@ export const getLiveDataForReplay = async (
         error instanceof Error
           ? error.message
           : 'Unable to read the linked captured session.',
+    });
+  }
+};
+
+/**
+ * One incident's captured trace.
+ *
+ * Its own channel rather than part of the per-replay payload: a window is
+ * ~100 KB and a race holds hundreds, so shipping them all to open a replay
+ * would cost tens of megabytes to render a list nobody has clicked into yet.
+ */
+export const getLiveIncidentContext = async (
+  event: Electron.IpcMainEvent,
+  incidentId: unknown,
+) => {
+  const id = typeof incidentId === 'string' ? incidentId.trim() : '';
+
+  try {
+    event.reply(CONSTANTS.API.GET_LIVE_INCIDENT_CONTEXT, {
+      status: 'success',
+      // Null rather than an error when there is none: most incidents never get
+      // a window, because only car-to-car contact does.
+      data: id ? readLiveIncidentContext(id) : null,
+    });
+  } catch (error: unknown) {
+    event.reply(CONSTANTS.API.GET_LIVE_INCIDENT_CONTEXT, {
+      status: 'error',
+      message:
+        error instanceof Error
+          ? error.message
+          : 'Unable to read the captured trace.',
+    });
+  }
+};
+
+/**
+ * What a retention window would remove, before anything is removed.
+ *
+ * Shortening the window can delete months of evidence on the next write, and a
+ * settings dropdown is not where a user expects to destroy data — so the
+ * confirmation names the sessions, the dates and the tracks rather than
+ * relying on a generic "cannot be undone".
+ */
+export const getLiveRetentionPreview = async (
+  event: Electron.IpcMainEvent,
+  retentionDays: unknown,
+) => {
+  try {
+    const days =
+      typeof retentionDays === 'number' && Number.isFinite(retentionDays)
+        ? retentionDays
+        : null;
+
+    const counts = new Map<string, number>();
+    listLiveIncidentTimesBySession().forEach((times, sessionKey) => {
+      counts.set(sessionKey, times.length);
+    });
+
+    const preview = previewExpiredLiveSessions(days, counts);
+
+    event.reply(CONSTANTS.API.GET_LIVE_RETENTION_PREVIEW, {
+      status: 'success',
+      data: {
+        sessionCount: preview.sessionCount,
+        incidentCount: preview.incidentCount,
+        oldestAt: preview.oldestAt,
+        newestAt: preview.newestAt,
+        trackNames: preview.trackNames,
+      } satisfies LiveRetentionPreview,
+    });
+  } catch (error: unknown) {
+    event.reply(CONSTANTS.API.GET_LIVE_RETENTION_PREVIEW, {
+      status: 'error',
+      message:
+        error instanceof Error
+          ? error.message
+          : 'Unable to work out what would be removed.',
+    });
+  }
+};
+
+/**
+ * What clearing local storage would destroy.
+ *
+ * Decisions especially. They are the one thing clearing removes that exists
+ * nowhere else, there is no bulk export to fall back on, and the warning is
+ * therefore the only safeguard a user has.
+ */
+export const getLocalDataSummary = async (event: Electron.IpcMainEvent) => {
+  try {
+    const sessions = Object.values(readLiveSessions());
+    const incidents = Object.values(readLiveIncidents());
+
+    event.reply(CONSTANTS.API.GET_LOCAL_DATA_SUMMARY, {
+      status: 'success',
+      data: {
+        stewardDecisionCount: Object.keys(readStewardDecisions()).length,
+        liveSessionCount: sessions.length,
+        liveIncidentCount: incidents.length,
+        liveTraceCount: incidents.filter((record) => record.hasContext).length,
+      } satisfies LocalDataSummary,
+    });
+  } catch (error: unknown) {
+    event.reply(CONSTANTS.API.GET_LOCAL_DATA_SUMMARY, {
+      status: 'error',
+      message:
+        error instanceof Error
+          ? error.message
+          : 'Unable to summarise stored data.',
     });
   }
 };

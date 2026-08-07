@@ -601,6 +601,15 @@ export interface LiveCaptureIncident {
    * itself, so they are matched back on this rather than on content.
    */
   seq?: number;
+  /**
+   * The content-derived id this incident is stored under.
+   *
+   * `id` above is `live-{generation}-{seq}` and is per app process — it changes
+   * under a running session when the sidecar restarts. Anything durable has to
+   * key on this instead, decisions above all: a call made live and revised
+   * after the session must resolve to one record, not two.
+   */
+  persistedId?: string;
   context?: LiveIncidentContext;
   evidence?: LiveCaptureEvidence;
 }
@@ -766,6 +775,14 @@ export interface LiveSessionData {
   incidents: LiveCaptureIncident[];
   trackLimitStepsPerPenalty?: number;
   battles: LivePressureBattle[];
+  /**
+   * The session's persisted key.
+   *
+   * Supplied rather than re-derived in the renderer. The renderer used to build
+   * its own `track|type` key for decisions, which matched no session on disk —
+   * so a live call could never be reconciled with the session it was made in.
+   */
+  sessionKey?: string;
 }
 
 /**
@@ -967,6 +984,36 @@ export interface LiveDataForReplay {
   startedAt: number;
   link: LiveSessionLink;
   incidents: LiveIncidentRecord[];
+  /**
+   * The session's final field. Incidents name drivers by slot alone, so the
+   * dossier needs this to put a car number, a class and an AI badge against
+   * one — the same lookup live mode does from the standings it is polling.
+   */
+  drivers: LiveCaptureDriver[];
+}
+
+/** What a retention window would remove, so the user can recognise it. */
+export interface LiveRetentionPreview {
+  sessionCount: number;
+  incidentCount: number;
+  oldestAt: number | null;
+  newestAt: number | null;
+  trackNames: string[];
+}
+
+/**
+ * What clearing local storage would destroy.
+ *
+ * Decisions are counted separately and named explicitly because they are the
+ * one thing clearing removes that exists nowhere else and leaves nothing
+ * behind — an imported replay's files remain on disk, a deleted decision is
+ * simply gone, along with its reasoning and revision history.
+ */
+export interface LocalDataSummary {
+  stewardDecisionCount: number;
+  liveSessionCount: number;
+  liveIncidentCount: number;
+  liveTraceCount: number;
 }
 
 /** The trace window for one incident, stored apart from the incident itself. */

@@ -391,6 +391,17 @@ export const dismissLiveSessionMatch = (
   }));
 
 /**
+ * One incident's trace window.
+ *
+ * Read one at a time and never in bulk: a window is ~100 KB and a long race
+ * holds hundreds, which is the whole reason they sit in their own table.
+ */
+export const readLiveIncidentContext = (
+  incidentId: string,
+): LiveIncidentContextRecord | null =>
+  readLiveIncidentContexts()[incidentId] ?? null;
+
+/**
  * Every persisted incident for one session, oldest first.
  *
  * Traces are not included: they live in their own table precisely so that
@@ -513,20 +524,26 @@ export const buildLiveIncidentRecord = (
   // window is stripped: it is the bulky half, it has its own table, and
   // carrying it here too would put 60-80 KB back into every incident row and
   // undo the reason the tables were split.
-  const { context, ...withoutContext } = incident;
+  //
+  // persistedId is stripped for a different reason: it is this record's own id,
+  // so storing it inside the payload as well is a second copy that can only go
+  // stale.
+  const withoutContext = { ...incident };
+  delete withoutContext.context;
+  delete withoutContext.persistedId;
 
   return {
     id: deriveLiveIncidentId(sessionKey, incident),
     sessionKey,
-    // The volatile in-memory id is kept inside the payload: steward decisions
-    // are keyed on it, so it still has to be recoverable for the current run.
+    // The volatile in-memory id is kept inside the payload for the current run,
+    // so a context arriving later can still be matched back to it.
     incident: withoutContext,
     // The incident's own clock is session-relative; anchoring it to the derived
     // session start is what makes it comparable with anything outside the session.
     occurredAt:
       startedAtFromLiveSessionKey(sessionKey) +
       Math.round((incident.etSeconds || 0) * 1000),
-    hasContext: Boolean(context),
+    hasContext: Boolean(incident.context),
   };
 };
 

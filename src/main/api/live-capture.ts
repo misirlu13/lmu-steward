@@ -76,10 +76,73 @@ let sessionTrackName = '';
 let trackLengthMetres = 0;
 let lastSessionPersistAt = 0;
 
+/** Heartbeat for rewriting the session row; see `persistSessionIfDue`. */
+const SESSION_PERSIST_MS = 30_000;
+
+/** Set once this session's own standings have arrived. */
+let hasStandingsForSession = false;
+/** True while a replay is being watched rather than a session driven. */
+let isReplayPlayback = false;
+
 let lastCurrentEt = 0;
 
-/** Heartbeat for rewriting the session row; see the note in `applyStatus`. */
-const SESSION_PERSIST_MS = 30_000;
+/**
+ * Whether anything about the current session should reach the disk.
+ *
+ * Three conditions, and all three earn their place:
+ *
+ * - a session key, or the record is unreachable from the UI and cannot be
+ *   deleted — invisible permanent clutter;
+ * - standings seen, because until they arrive there is no way to tell a
+ *   session from the game merely being open;
+ * - not a replay, because watching one populates shared memory just like
+ *   driving does and would otherwise be recorded as a session that never
+ *   happened.
+ */
+const canPersistCapture = (): boolean =>
+  latest.state === 'live' &&
+  Boolean(sessionKey) &&
+  hasStandingsForSession &&
+  !isReplayPlayback;
+
+/**
+ * Writes the session row on a slow heartbeat.
+ *
+ * The row exists mainly so incidents have a session to belong to, which has to
+ * be true before the first incident arrives — but rewriting it at 1Hz for the
+ * whole of a 24-hour race would be tens of thousands of pointless writes.
+ *
+ * Called from the standings as well as the status line, because the standings
+ * are what confirm this is a session worth recording; waiting for the next
+ * status tick would leave a real session unwritten for a second for no reason.
+ */
+const persistSessionIfDue = () => {
+  if (!canPersistCapture()) {
+    return;
+  }
+
+  const now = Date.now();
+  if (
+    lastSessionPersistAt !== 0 &&
+    now - lastSessionPersistAt < SESSION_PERSIST_MS
+  ) {
+    return;
+  }
+
+  lastSessionPersistAt = now;
+  persistLiveSession(
+    buildLiveSessionRecord({
+      sessionKey,
+      trackName: sessionTrackName,
+      session: sessionRaw,
+      sessionType: latest.sessionType,
+      driverCount: latest.driverCount,
+      trackLimitStepsPerPenalty,
+      drivers,
+      now,
+    }),
+  );
+};
 
 /**
  * How far the session clock may slip backwards before it counts as a restart.
@@ -180,6 +243,19 @@ const applyStatus = (parsed: Record<string, unknown>) => {
   if (isNewSession) {
     sessionKey = nextKey;
     incidents = [];
+    /*
+      Standings are cleared too, and must be. They used to survive a session
+      change, so the first row written for a new session carried the *previous*
+      session's field — and, worse, its control values, which is what says
+      whether this is a real session at all. Both facts have to be re-learned
+      from the new session's own standings.
+    */
+    drivers = [];
+    hasStandingsForSession = false;
+    isReplayPlayback = false;
+    // So the new session writes its row on the first tick that can, rather than
+    // inheriting the previous session's place in the heartbeat.
+    lastSessionPersistAt = 0;
     // Closing-speed trends belong to the session that produced them.
     resetLivePressureState();
   }
@@ -218,32 +294,23 @@ const applyStatus = (parsed: Record<string, unknown>) => {
   };
   latestAt = Date.now();
 
-  /*
-    Persisted on the first tick of a session and then at a slow heartbeat, not
-    on every status line. The row exists mainly so incidents have a session to
-    belong to, which has to be true before the first incident arrives — but
-    rewriting it at 1Hz for the whole of a 24-hour race would be tens of
-    thousands of pointless writes.
-  */
-  if (state === 'live') {
-    const now = Date.now();
-    if (isNewSession || now - lastSessionPersistAt >= SESSION_PERSIST_MS) {
-      lastSessionPersistAt = now;
-      persistLiveSession(
-        buildLiveSessionRecord({
-          sessionKey,
-          trackName: sessionTrackName,
-          session: sessionRaw,
-          sessionType: latest.sessionType,
-          driverCount: latest.driverCount,
-          trackLimitStepsPerPenalty,
-          drivers,
-          now,
-        }),
-      );
-    }
-  }
+  persistSessionIfDue();
 };
+
+/**
+ * Every car under replay control means this is a replay being watched, not a
+ * session being driven.
+ *
+ * `mControl` is LMU's own field: -1 nobody, 0 local player, 1 local AI, 2
+ * remote, 3 replay. Watching a replay populates shared memory exactly as a
+ * live session does — same track, same field, a running session clock — so
+ * nothing in the status line distinguishes them. This does.
+ *
+ * Requires *every* car rather than any, which is the conservative direction: a
+ * real session never contains a replay-controlled car, so unanimity cannot
+ * produce a false positive, whereas a single stray value could.
+ */
+const REPLAY_CONTROL = 3;
 
 const applyStandings = (parsed: Record<string, unknown>) => {
   if (!Array.isArray(parsed.drivers)) {
@@ -253,6 +320,25 @@ const applyStandings = (parsed: Record<string, unknown>) => {
   drivers = (parsed.drivers as LiveCaptureDriver[]).filter(
     (driver) => driver && typeof driver.slotId === 'number',
   );
+
+  if (drivers.length > 0) {
+    hasStandingsForSession = true;
+    const nextIsReplay = drivers.every(
+      (driver) => driver.control === REPLAY_CONTROL,
+    );
+
+    if (nextIsReplay !== isReplayPlayback) {
+      log.info(
+        `live-capture: ${nextIsReplay ? 'replay playback detected, not recording' : 'live session detected, recording'}`,
+      );
+    }
+
+    isReplayPlayback = nextIsReplay;
+  }
+
+  // The standings are what settle whether this is a session at all, so the row
+  // is written here rather than waiting for the next status line.
+  persistSessionIfDue();
 };
 
 const applyStewardEvent = (parsed: Record<string, unknown>) => {
@@ -287,12 +373,24 @@ const applyStewardEvent = (parsed: Record<string, unknown>) => {
     seq: Number.isFinite(seq) && seq > 0 ? seq : undefined,
   };
 
-  incidents.push(incident);
-
   // Written now, not at session end. SME_END_SESSION is not guaranteed to fire,
   // and the in-memory queue is capped — an incident dropped from the tail of a
   // long race must already be on disk.
-  persistLiveIncident(buildLiveIncidentRecord(sessionKey, incident));
+  const record = buildLiveIncidentRecord(sessionKey, incident);
+
+  /*
+    The stable id rides along on the in-memory incident. Steward decisions key
+    on it, and `id` above cannot serve: it carries the sidecar generation, so a
+    mid-session restart renumbers every incident and a call made before the
+    restart would no longer point at anything.
+  */
+  incidents.push({ ...incident, persistedId: record.id });
+
+  // Shown live either way — a replay's incidents are still worth seeing on
+  // screen — but only a real session leaves anything behind.
+  if (canPersistCapture()) {
+    persistLiveIncident(record);
+  }
 
   if (incidents.length > MAX_RETAINED_INCIDENTS) {
     incidents = incidents.slice(-MAX_RETAINED_INCIDENTS);
@@ -368,13 +466,15 @@ const applyIncidentContext = (parsed: Record<string, unknown>) => {
     Two writes, because the incident row carries the derived evidence and the
     trace goes to its own table.
   */
-  const record = buildLiveIncidentRecord(sessionKey, incidents[index]);
-  persistLiveIncident(record);
-  persistLiveIncidentContext(
-    // Keyed on the record's stable id, not the incident's per-process one, so
-    // the trace stays attached to its incident across an app restart.
-    buildLiveIncidentContextRecord(sessionKey, record.id, context),
-  );
+  if (canPersistCapture()) {
+    const record = buildLiveIncidentRecord(sessionKey, incidents[index]);
+    persistLiveIncident(record);
+    persistLiveIncidentContext(
+      // Keyed on the record's stable id, not the incident's per-process one, so
+      // the trace stays attached to its incident across an app restart.
+      buildLiveIncidentContextRecord(sessionKey, record.id, context),
+    );
+  }
 };
 
 const applyLine = (line: string) => {
@@ -491,6 +591,12 @@ function spawnSidecar(): void {
     latest = DETACHED;
     latestAt = Date.now();
     drivers = [];
+    /*
+      Cleared with the standings they were derived from. Leaving this set while
+      `drivers` is empty would let the next tick write a session row with no
+      field at all — the ghost row this whole guard exists to prevent.
+    */
+    hasStandingsForSession = false;
     scheduleRestart();
   });
 }
@@ -543,5 +649,8 @@ export const getLiveSessionData = (): LiveSessionData => {
     // Derived on read rather than cached: it is a pure function of the standings
     // the renderer is already polling for, and it goes stale within a tick.
     battles: deriveLivePressureBattles(drivers, trackLengthMetres),
+    // The real key, so a decision made live belongs to the session on disk
+    // rather than to a key the renderer invented for itself.
+    sessionKey,
   };
 };

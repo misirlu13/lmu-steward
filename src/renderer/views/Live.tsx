@@ -6,6 +6,7 @@ import { CONSTANTS } from '@constants';
 import { StewardDecision, StewardDecisionState } from '@types';
 import { ViewHeader } from '../components/Common/ViewHeader';
 import { sendMessage } from '../utils/postMessage';
+import { buildStewardDecisionId } from '../utils/stewardDecisionId';
 import { useApi } from '../providers/ApiContext';
 import { deriveLiveIndicator } from '../hooks/useLiveIndicator';
 import {
@@ -72,6 +73,7 @@ export const LiveView: React.FC = () => {
     data: liveData,
     standings: liveStandings,
     incidents: liveIncidents,
+    sessionKey: liveSessionKey,
   } = useLiveSessionData();
 
   // Devmode serves mocks from main and keeps the renderer on its own fixtures,
@@ -98,7 +100,15 @@ export const LiveView: React.FC = () => {
     [liveData],
   );
 
-  const sessionKey = `${session.trackName}|${session.sessionType}`;
+  /*
+    The session's real key, as capture persisted it. This used to be derived
+    here as `track|type`, which matched no session on disk — so a live call
+    could never be reconciled with the session it belonged to, nor revised
+    against the replay afterwards. Falls back to the old shape only when capture
+    has not supplied one, which is dev-mode fixtures.
+  */
+  const sessionKey =
+    liveSessionKey || `${session.trackName}|${session.sessionType}`;
 
   // Decisions are persisted records, not view state, so a call survives a
   // reload, a navigation away, and the incident list being replaced every poll.
@@ -175,7 +185,7 @@ export const LiveView: React.FC = () => {
       outcome?: LiveDecisionOutcome,
       target?: LiveDriverRef,
     ): StewardDecision => ({
-      id: `${sessionKey}|${incident.id}|${target?.steamId ?? 'incident'}`,
+      id: buildStewardDecisionId(sessionKey, incident.id, target?.steamId),
       basis: 'incident',
       incidentId: incident.id,
       sessionKey,

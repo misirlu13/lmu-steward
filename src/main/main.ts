@@ -28,10 +28,14 @@ import {
   getLiveSessionDataHandler,
 } from './api/live-session';
 import { startLiveCapture, stopLiveCapture } from './api/live-capture';
+import { sweepExpiredLiveSessions } from './api/live-retention';
 import {
   getLiveDataForReplay,
+  getLiveIncidentContext,
+  getLiveRetentionPreview,
   getLiveSessionMatches,
   getLiveSessions,
+  getLocalDataSummary,
   LinkLiveSessionRequest,
   postDeleteLiveSession,
   postDismissLiveSessionMatch,
@@ -287,6 +291,13 @@ const CHANNEL_CALLBACK_HANDLERS: Partial<
     replayHash?: string;
     replayIdentityKey?: string;
   }>(getLiveDataForReplay),
+  [CONSTANTS.API.GET_LIVE_INCIDENT_CONTEXT]: withEventAndData<string>(
+    getLiveIncidentContext,
+  ),
+  [CONSTANTS.API.GET_LIVE_RETENTION_PREVIEW]: withEventAndData<number | null>(
+    getLiveRetentionPreview,
+  ),
+  [CONSTANTS.API.GET_LOCAL_DATA_SUMMARY]: withEventOnly(getLocalDataSummary),
   [CONSTANTS.API.POST_SET_IMPORTED_NOTE]:
     withEventAndData<SetImportedNoteRequest>(postSetImportedNote),
   [CONSTANTS.API.POST_EXPORT_REPLAY]:
@@ -502,6 +513,37 @@ const requestExitDecisionFromRenderer = async (
   });
 };
 
+/**
+ * Removes captured sessions past the retention window, once per process.
+ *
+ * Runs strictly after the launch replay sync, for two reasons. Politeness —
+ * expiry is housekeeping with nothing waiting on it and must not compete with
+ * the work the user actually opened the app for. And contention: better-sqlite3
+ * is synchronous, so a sweep interleaved with sync would fight for the one
+ * connection during the phase where responsiveness is most visible.
+ *
+ * Isolated as well as silent. This is the least important thing happening at
+ * that moment and should fail as quietly as it runs.
+ */
+let hasSweptLiveSessions = false;
+
+const runLiveRetentionSweep = async () => {
+  if (hasSweptLiveSessions || devModeEnabled) {
+    return;
+  }
+
+  hasSweptLiveSessions = true;
+
+  try {
+    const settings = await readUserSettings();
+    sweepExpiredLiveSessions(
+      settings.liveCaptureRetentionDays as number | null,
+    );
+  } catch (error) {
+    log.warn('live-retention: sweep failed', error);
+  }
+};
+
 const runReplayAutoSync = async (source: 'launch' | 'interval') => {
   if (replayAutoSyncInProgress) {
     return;
@@ -524,6 +566,12 @@ const runReplayAutoSync = async (source: 'launch' | 'interval') => {
     log.warn(`Replay auto-sync (${source}) failed`, error);
   } finally {
     replayAutoSyncInProgress = false;
+
+    // After the sync, whether or not it succeeded — a sync that failed is no
+    // reason to let recordings accumulate forever.
+    if (source === 'launch') {
+      void runLiveRetentionSweep();
+    }
   }
 };
 
@@ -547,11 +595,23 @@ const configureReplayAutoSync = async () => {
     ? Math.max(1, Number(settings.syncOnIntervalMinutes))
     : 5;
 
+  /*
+    The sweep waits behind a launch sync when there is going to be one, and runs
+    straight away when there is not. Hanging it off the sync alone would mean an
+    install with automatic sync turned off — or one still on its first run —
+    never expired anything at all.
+  */
+  const willSyncOnLaunch = automaticSyncEnabled && syncOnAppLaunch && !firstRun;
+
+  if (!willSyncOnLaunch) {
+    void runLiveRetentionSweep();
+  }
+
   if (!automaticSyncEnabled) {
     return;
   }
 
-  if (syncOnAppLaunch && !firstRun) {
+  if (willSyncOnLaunch) {
     void runReplayAutoSync('launch');
   }
 

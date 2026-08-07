@@ -332,6 +332,44 @@ That last point is the loop closing exactly as the design intended: **live mode 
 
 Decisions made post-session should be promoted from `provisional` to `final` on confirmation, and gain the `replayHash` that was null while live.
 
+> ✅ **Implemented** as `ReplayIncidentDossier` in `src/renderer/components/Replay/`.
+> The dossier itself is live mode's, reused unchanged; only the plumbing differs
+> — the incident comes off disk rather than out of a 1Hz poll, and the decision
+> it produces is `final` with the `replayHash` populated.
+>
+> 🛑 **The decision identity had to be fixed first, and it was genuinely broken.**
+> A live call and the same call reviewed here would have produced *two*
+> decisions rather than one with a revision history, which is precisely the
+> thing that makes stewarding defensible. Both halves of the id were wrong:
+>
+> - The renderer built its own `track|type` session key, which matched **no
+>   session on disk**. The real key now comes from capture via
+>   `LiveSessionData.sessionKey`.
+> - Decisions keyed on `live-{generation}-{seq}`, which is per app process and
+>   **renumbers on every sidecar restart** — so a mid-session restart detached
+>   every call already made. Incidents now carry `persistedId`, the
+>   content-derived id they are stored under, and both views key on it.
+>
+> The single decision in the real store showed both faults at once:
+> `id: "Daytona International Speedway Road Course|PRACTICE|live-1-33|slot-0"`.
+> It was already unreconcilable, which is what made changing the scheme free.
+>
+> `buildStewardDecisionId` in `src/renderer/utils/` is now shared by both views
+> so they cannot drift apart on it.
+>
+> ℹ️ **Traces load one at a time**, over `GET_LIVE_INCIDENT_CONTEXT`, keyed on
+> the persisted incident id. They stay out of the per-replay payload because a
+> window is ~100 KB and a race holds hundreds. The dossier deliberately shows
+> **no loading state**: the derived evidence rides the incident row and is
+> already in hand, so measurements render at once and the trace chart fills in
+> underneath. A spinner over the panel would hide what a steward can already
+> act on.
+>
+> ⚠️ **The dossier shows the replay's normalised time, not the capture's.** The
+> built incident's labels are overwritten with the timeline event's, or a replay
+> of a session joined late would put a different time on the dossier than on the
+> incident it belongs to.
+
 ---
 
 ## The Live Sessions List
@@ -386,6 +424,25 @@ A user setting, phrased as one rule with one exception:
 > **Steward decisions are never deleted.**
 
 Retention applies to the whole live session record — incidents, derived evidence and context windows — and **does not depend on whether the session is linked to a replay.**
+
+> ✅ **Implemented** as `src/main/api/live-retention.ts`, with the setting
+> `liveCaptureRetentionDays` (7 / 30 / 90 / `null`, defaulting to 30) beside
+> Live Capture in User Settings — retention is the cost of having capture on, so
+> it belongs next to the switch that turns it on.
+>
+> `retentionAnchor` is the later of `startedAt` and `link.linkedAt`, and never
+> earlier than capture, so linking cannot extend a session's life indefinitely.
+>
+> ⚠️ **The retention setting is saved on its own, not through autosave.** Every
+> other setting on that screen writes as you change it; this one can delete
+> months of evidence, so a shortened window is held until the user has confirmed
+> against a summary. Lengthening — and "never" — writes straight through,
+> because it takes nothing away.
+>
+> The sweep runs once per process, behind the launch replay sync when there is
+> going to be one and immediately when there is not. Hanging it off the sync
+> alone would have meant an install with automatic sync turned off, or one still
+> on its first run, never expiring anything at all.
 
 Link state looks like a useful signal and is not. An unlinked session may link later when a replay is imported from another machine; and the user who does not keep replays is precisely the one for whom the live record is the *only* record of a race. Age is the honest axis.
 
@@ -491,6 +548,34 @@ Size is a non-issue: tens of MB of context alongside a `.Vcr` measured in gigaby
 > rather than a silent default, and the archive should record that the choice
 > was made.
 
+> ✅ **Implemented** as `src/main/api/live-export.ts`, writing
+> `lmu-steward-live.json` beside the replay it belongs to — at the archive root
+> for a single export, inside the session directory for a weekend.
+>
+> **The sensitivity line is drawn between evidence and traces.** Derived
+> evidence — closing speeds, off-track, blue-flag duration — always travels: it
+> is a summary rather than a recording, and it is most of what makes an incident
+> adjudicable on the receiving side. Trace windows are opt-in, default off,
+> behind a dialog that says plainly what they are. The manifest records
+> `includesLiveTelemetry` either way, so the archive states which way the choice
+> went rather than leaving the receiving steward to infer it from absence.
+>
+> 🛑 **The exporting machine's link is stripped from the payload.** It names a
+> replay hash that means nothing on the receiving side; carrying it would
+> produce a link pointing at nothing, which is worse than no link because it
+> looks like one. The importing install writes its own link instead, recorded as
+> `manual` with a null confidence — nothing was scored against a roster here,
+> and inventing a confidence would misrepresent where the pairing came from.
+> The archive sitting beside the replay *is* the assertion, which is the same
+> reasoning that lets a manifest skip pairing entirely.
+>
+> ⚠️ **A session already on disk is left alone on import.** Re-importing the
+> same hand-off must not resurrect evidence the user has since deleted, nor
+> overwrite a link they corrected by hand.
+>
+> The payload's bytes are counted before the free-space check. Traces are
+> nothing beside a `.Vcr`, but they are not nothing beside a nearly-full disk.
+
 ---
 
 ## Sweeping Expired Sessions
@@ -526,10 +611,10 @@ The sweep also runs when the retention window is shortened, since that is the ca
 | ~~**3**~~ | ~~Session identity + a live sessions list~~ | **Done.** Captured Sessions on the Dashboard, with delete. Link state deferred to step 4 |
 | ~~**4**~~ | ~~Matching, with proposed links confirmed by a human~~ | **Done.** `live-replay-match.ts`, over the now-generic `rankRosterCandidates` |
 | ~~**5**~~ | ~~Merge onto the replay view's incidents~~ | **Done.** `liveIncidentMerge.ts`, keyed on `et` + incident text, with a mirror key |
-| **6** | Dossier + seek + decide on the replay view | The payoff |
+| ~~**6**~~ | ~~Dossier + seek + decide on the replay view~~ | **Done.** `ReplayIncidentDossier`, over a now-shared decision identity |
 | ~~**7**~~ | ~~Retroactive matching when a replay appears later~~ | **Done with 4** — the pass runs on each list load, so a later replay is just a new candidate |
-| **8** | Retention setting, expiry sweep, and clearing local storage removing live data | Needed before recordings accumulate in the wild |
-| **9** | Live data in the replay archive export | Opt-in; makes a hand-off carry its evidence |
+| ~~**8**~~ | ~~Retention setting, expiry sweep, and clearing local storage removing live data~~ | **Done.** `live-retention.ts`, swept once per process after the launch sync |
+| ~~**9**~~ | ~~Live data in the replay archive export~~ | **Done.** `live-export.ts`; traces opt-in, and import restores and links |
 
 The experimental flag and the capture setting were **step 0** — they gate everything above and had to land before any of it shipped. **Done**; see [Settings and Gating](#settings-and-gating). The retention setting is not part of step 0 and remains unbuilt (step 8).
 

@@ -244,7 +244,14 @@ export const buildIncidents = (
       const derived = incident.evidence;
 
       return {
-        id: incident.id,
+        /*
+          The persisted id when there is one, which is almost always. It is
+          stable where `incident.id` is not: that carries the sidecar
+          generation, so a mid-session sidecar restart renumbers every incident
+          — moving the steward's selection and detaching decisions from the
+          incidents they were made on.
+        */
+        id: incident.persistedId ?? incident.id,
         etSeconds: incident.etSeconds,
         timestampLabel: formatEt(incident.etSeconds),
         lapLabel: incident.lap !== undefined ? `L${incident.lap}` : '—',
@@ -359,5 +366,5 @@ export const useLiveSessionData = () => {
     [data.drivers, data.incidents],
   );
 
-  return { data, standings, incidents };
+  return { data, standings, incidents, sessionKey: data.sessionKey ?? '' };
 };

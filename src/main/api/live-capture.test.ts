@@ -41,9 +41,15 @@ jest.mock('electron-log', () => ({
   error: jest.fn(),
 }));
 
+const mockStoreSet = jest.fn();
+
 jest.mock('../storage/local-data-store', () => ({
-  getMainPersistentStore: () => ({ get: () => ({}), set: jest.fn() }),
+  getMainPersistentStore: () => ({ get: () => ({}), set: mockStoreSet }),
 }));
+
+/** Keys written to the persistent store during a test, in order. */
+const writtenKeys = (): string[] =>
+  mockStoreSet.mock.calls.map(([key]: [string]) => key);
 
 const makeChild = (): FakeChild => {
   const child = new EventEmitter() as FakeChild;
@@ -149,6 +155,7 @@ const feed = (...objects: unknown[]) => {
 
 beforeEach(() => {
   jest.resetModules();
+  mockStoreSet.mockClear();
   spawned = makeChild();
   // eslint-disable-next-line @typescript-eslint/no-var-requires, global-require
   capture = require('./live-capture') as Capture;
@@ -304,5 +311,72 @@ describe('live capture supervision', () => {
     } finally {
       jest.useRealTimers();
     }
+  });
+});
+
+/*
+  Watching a replay populates shared memory exactly as driving does — same
+  track, same field, a running session clock — so the supervisor recorded three
+  captured sessions for replays that were merely being watched, two of them with
+  no field at all. Observed in a real store on 2026-08-06.
+*/
+describe('replay playback', () => {
+  /** The same standings LMU reports while a replay is playing. */
+  const REPLAY_STANDINGS = {
+    ...STANDINGS,
+    drivers: STANDINGS.drivers.map((driver) => ({ ...driver, control: 3 })),
+  };
+
+  it('records nothing while a replay is being watched', () => {
+    feed(STATUS, REPLAY_STANDINGS, STEWARD_EVENT, CONTEXT);
+
+    expect(writtenKeys()).toEqual([]);
+  });
+
+  it('still shows a replay’s incidents on screen', () => {
+    feed(STATUS, REPLAY_STANDINGS, STEWARD_EVENT);
+
+    // Worth seeing live; just not worth keeping.
+    expect(capture.getLiveSessionData().incidents).toHaveLength(1);
+  });
+
+  it('records a real session normally', () => {
+    feed(STATUS, STANDINGS, STEWARD_EVENT, CONTEXT);
+
+    expect(writtenKeys()).toContain('liveSessions');
+    expect(writtenKeys()).toContain('liveIncidents');
+    expect(writtenKeys()).toContain('liveIncidentContexts');
+  });
+
+  /*
+    Shared memory is populated before the standings that say what the session
+    is, so writing on the first status tick produced rows with no field at all —
+    and no way to tell a session from the game merely being open.
+  */
+  it('waits for standings before writing a session row', () => {
+    feed(STATUS);
+
+    expect(writtenKeys()).toEqual([]);
+
+    feed(STANDINGS);
+
+    expect(writtenKeys()).toContain('liveSessions');
+  });
+
+  /*
+    A mixed field is a real session. Only unanimity means replay, which is the
+    conservative direction — a real session never contains a replay-controlled
+    car, so this cannot produce a false positive.
+  */
+  it('treats a field that is not entirely replay-controlled as live', () => {
+    feed(STATUS, {
+      ...STANDINGS,
+      drivers: [
+        { ...STANDINGS.drivers[0], control: 3 },
+        { ...STANDINGS.drivers[1], control: 0 },
+      ],
+    });
+
+    expect(writtenKeys()).toContain('liveSessions');
   });
 });

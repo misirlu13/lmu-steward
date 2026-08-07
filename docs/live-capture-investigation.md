@@ -286,6 +286,30 @@ Beyond the results stream, `VehicleScoringInfoV01` and `ScoringInfoV01` expose s
 > Note this cuts the other way for the camera: `/rest/watch/focus/<slot-id>`
 > addresses cars by **slot**, so both keys have to be carried.
 
+**Session vs replay**
+- `mControl` — `-1` nobody, `0` local player, `1` local AI, `2` remote, `3` replay
+
+> 🛑 **Watching a replay populates shared memory exactly like driving a
+> session.** Same track, same field, a running session clock, `state: live` on
+> the status line — nothing there distinguishes them. Live capture recorded
+> three "sessions" that were replays being watched before this was understood.
+>
+> `mControl == 3` on every car is the only reliable tell. Observed in a real
+> store: a 37-car Laguna Seca "session" with `controls={3: 37}` and no
+> incidents, alongside genuine sessions reading `controls={1: 38}`.
+>
+> The test is **unanimity, not any** — a real session never contains a
+> replay-controlled car, so requiring all of them cannot produce a false
+> positive, whereas a single stray value could. See `canPersistCapture` in
+> `src/main/api/live-capture.ts`.
+>
+> ⚠️ **The standings are what settle this, and they arrive after the status
+> line.** Nothing may be persisted until the first standings for a session have
+> been seen — writing on the first status tick produced session rows with no
+> field at all. Standings must also be **cleared on a session change**, or a new
+> session's first row carries the previous session's field, control values
+> included, which defeats the check entirely.
+
 ---
 
 ## Language and Runtime Analysis
