@@ -7,18 +7,13 @@ import { AiBadge } from '../../components/Common/AiBadge';
 import { StatDisplay } from '../../components/Common/StatDisplay';
 import { LiveFieldState } from '../../components/Live/LiveFieldState';
 import { useLiveSession } from '../../providers/LiveSessionContext';
-import { LiveIncident } from '../../components/Live/liveFixtures';
+import {
+  LiveIncident,
+  liveClassificationLabel,
+} from '../../components/Live/liveFixtures';
 
 /** Enough to see what the session is asking of you, not enough to work from. */
 const ATTENTION_LIMIT = 6;
-
-const classificationLabel: Record<string, string> = {
-  contact: 'Contact',
-  'track-limits': 'Track Limits',
-  'blue-flag': 'Blue Flag',
-  'unsafe-rejoin': 'Unsafe Rejoin',
-  'loss-of-control': 'Loss of Control',
-};
 
 interface AttentionRowProps {
   incident: LiveIncident;
@@ -46,7 +41,7 @@ const AttentionRow: React.FC<AttentionRowProps> = ({ incident, onOpen }) => (
       </Typography>
       <Chip
         size="small"
-        label={classificationLabel[incident.classification]}
+        label={liveClassificationLabel[incident.classification]}
         variant="outlined"
         sx={{ height: 20, fontSize: 10 }}
       />
@@ -104,6 +99,7 @@ export const LiveOverview: React.FC = () => {
     liveIndicator,
     unreviewedCount,
     flaggedCount,
+    deferredCount,
     decidedCount,
     onSelectIncident,
     onFocusCar,
@@ -166,6 +162,18 @@ export const LiveOverview: React.FC = () => {
                 {flaggedCount}
               </Typography>
             </StatDisplay>
+            {/*
+              Shown only once something has been deferred. Zero-by-default
+              counters teach a steward to stop reading the row; this one earns
+              its place by appearing when it has something to say.
+            */}
+            {deferredCount > 0 ? (
+              <StatDisplay label="Deferred" minWidth={120}>
+                <Typography variant="h5" color="info.main">
+                  {deferredCount}
+                </Typography>
+              </StatDisplay>
+            ) : null}
             <StatDisplay label="Decided" minWidth={120}>
               <Typography variant="h5">{decidedCount}</Typography>
             </StatDisplay>

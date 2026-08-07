@@ -118,9 +118,22 @@ describe('LiveSessionProvider referential stability', () => {
     expect(last.onSelectIncident).toBe(first.onSelectIncident);
     expect(last.onSelectTarget).toBe(first.onSelectTarget);
     expect(last.onChangeStateFilter).toBe(first.onChangeStateFilter);
+    expect(last.onChangeIncidentFilters).toBe(first.onChangeIncidentFilters);
+    expect(last.onResetIncidentFilters).toBe(first.onResetIncidentFilters);
     expect(last.onFocusCar).toBe(first.onFocusCar);
     expect(last.onFlag).toBe(first.onFlag);
+    expect(last.onDefer).toBe(first.onDefer);
     expect(last.onDecide).toBe(first.onDecide);
+
+    /*
+      The filters travel as one object into `LiveTriageQueue`, where they feed
+      the memo that narrows four hundred incidents and the effect that resets
+      the scroll window. A provider that rebuilt the object every tick would
+      re-filter the session once a second and yank the steward back to the top
+      of the list while they were reading it.
+    */
+    expect(last.incidentFilters).toBe(first.incidentFilters);
+    expect(last.incidentFilterOptions).toBe(first.incidentFilterOptions);
   });
 
   it('should pass the incident list through untouched when no decision applies', () => {

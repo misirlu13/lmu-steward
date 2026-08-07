@@ -7,7 +7,18 @@ import {
 } from '@types';
 import { followingCarFrames, leadingCarFrames } from './liveTraceFixture';
 
-export type LiveIncidentState = 'NEW' | 'FLAGGED' | 'DECIDED';
+/**
+ * `FLAGGED` and `DEFERRED` are both "not decided yet" and are still different
+ * things. `FLAGGED` means "park it, I'm coming back to this *during* the
+ * session" — it must be empty by the chequered flag. `DEFERRED` means "this
+ * needs the full replay, I'm deliberately not calling it live", which is a
+ * finished piece of live work, not an outstanding one.
+ *
+ * The distinction is what lets an end-of-session unresolved-flags prompt mean
+ * anything. Mirrors `StewardDecisionState` in types.ts, which has carried
+ * `DEFERRED` since the schema was written.
+ */
+export type LiveIncidentState = 'NEW' | 'FLAGGED' | 'DEFERRED' | 'DECIDED';
 
 export type LiveIncidentClassification =
   | 'contact'
@@ -15,6 +26,30 @@ export type LiveIncidentClassification =
   | 'blue-flag'
   | 'unsafe-rejoin'
   | 'loss-of-control';
+
+/**
+ * Fixed order for anything that lists classifications, so a chip row does not
+ * reshuffle itself as a session turns up kinds it had not seen yet.
+ */
+export const LIVE_INCIDENT_CLASSIFICATIONS: LiveIncidentClassification[] = [
+  'contact',
+  'track-limits',
+  'loss-of-control',
+  'unsafe-rejoin',
+  'blue-flag',
+];
+
+/** Shared so the queue, the overview and the filter bar cannot drift apart. */
+export const liveClassificationLabel: Record<
+  LiveIncidentClassification,
+  string
+> = {
+  contact: 'Contact',
+  'track-limits': 'Track Limits',
+  'blue-flag': 'Blue Flag',
+  'unsafe-rejoin': 'Unsafe Rejoin',
+  'loss-of-control': 'Loss of Control',
+};
 
 export type LiveDecisionOutcome =
   | 'penalty-5s'
@@ -116,6 +151,134 @@ export interface LiveIncident {
   decision?: LiveDecisionOutcome;
   decisionReasoning?: string;
 }
+
+/**
+ * The quick filters over the triage queue, held together so the whole set
+ * travels as one value.
+ *
+ * `state` is deliberately not in here: it is the queue's own axis, rendered as
+ * the counted buckets at the top of the list, and it reads against the set the
+ * filters below have already narrowed ("of the contacts over 1000, how many are
+ * still new").
+ *
+ * Everything is a scalar rather than a set. Multi-select reads well in a mockup
+ * and badly at the point of use — a steward narrowing to one driver's contacts
+ * wants exactly that, and a half-remembered second selection left checked is a
+ * filter that lies.
+ */
+export interface LiveIncidentFilters {
+  classification: LiveIncidentClassification | 'ALL';
+  /** A class code as `CarClassBadge` renders it, or `ALL`. */
+  carClass: string;
+  /** A party's identity key, or `ALL`. */
+  driverSteamId: string;
+  /** Contact-magnitude floor. `0` means no threshold at all. */
+  minMagnitude: number;
+}
+
+export const DEFAULT_LIVE_INCIDENT_FILTERS: LiveIncidentFilters = {
+  classification: 'ALL',
+  carClass: 'ALL',
+  driverSteamId: 'ALL',
+  minMagnitude: 0,
+};
+
+/**
+ * Thresholds rather than a slider. Magnitude is an LMU-internal number with no
+ * unit and no ceiling, so a continuous control invites precision the figure
+ * does not have; these are the bands the triage row already colours on.
+ */
+export const LIVE_MAGNITUDE_THRESHOLDS = [0, 500, 800, 2000];
+
+export const matchesLiveIncidentFilters = (
+  incident: LiveIncident,
+  filters: LiveIncidentFilters,
+): boolean => {
+  if (
+    filters.classification !== 'ALL' &&
+    incident.classification !== filters.classification
+  ) {
+    return false;
+  }
+  if (
+    filters.carClass !== 'ALL' &&
+    !incident.drivers.some((driver) => driver.carClass === filters.carClass)
+  ) {
+    return false;
+  }
+  if (
+    filters.driverSteamId !== 'ALL' &&
+    !incident.drivers.some((driver) => driver.steamId === filters.driverSteamId)
+  ) {
+    return false;
+  }
+  /*
+    An incident with no magnitude is not a quiet one — a track-limit element
+    carries no magnitude at all. Asking for a threshold is asking for contact,
+    so those drop out rather than being treated as zero-force contacts.
+  */
+  if (
+    filters.minMagnitude > 0 &&
+    (incident.contactMagnitude ?? 0) < filters.minMagnitude
+  ) {
+    return false;
+  }
+  return true;
+};
+
+export const hasActiveLiveIncidentFilters = (
+  filters: LiveIncidentFilters,
+): boolean =>
+  filters.classification !== 'ALL' ||
+  filters.carClass !== 'ALL' ||
+  filters.driverSteamId !== 'ALL' ||
+  filters.minMagnitude > 0;
+
+export interface LiveIncidentFilterOptions {
+  classifications: LiveIncidentClassification[];
+  carClasses: string[];
+  drivers: { steamId: string; label: string }[];
+}
+
+/**
+ * What there is to filter by, derived from the incidents themselves.
+ *
+ * Built from the *unfiltered* list on purpose: options computed from the
+ * filtered set empty themselves out as soon as one is picked, so the steward
+ * cannot switch from one driver to another without clearing first.
+ */
+export const buildLiveIncidentFilterOptions = (
+  incidents: LiveIncident[],
+): LiveIncidentFilterOptions => {
+  const classifications = new Set<LiveIncidentClassification>();
+  const carClasses = new Set<string>();
+  const drivers = new Map<string, string>();
+
+  incidents.forEach((incident) => {
+    classifications.add(incident.classification);
+    incident.drivers.forEach((driver) => {
+      if (driver.carClass) {
+        carClasses.add(driver.carClass);
+      }
+      if (!drivers.has(driver.steamId)) {
+        drivers.set(
+          driver.steamId,
+          `${driver.displayName} #${driver.carNumber}`,
+        );
+      }
+    });
+  });
+
+  return {
+    classifications: LIVE_INCIDENT_CLASSIFICATIONS.filter((entry) =>
+      classifications.has(entry),
+    ),
+    carClasses: [...carClasses].sort(),
+    drivers: [...drivers.entries()]
+      .map(([steamId, label]) => ({ steamId, label }))
+      .sort((a, b) => a.label.localeCompare(b.label)),
+  };
+};
 
 export interface LiveStanding {
   steamId: string;
@@ -333,7 +496,9 @@ export const liveIncidentsFixture: LiveIncident[] = [
         { steamId: drivers.bot.steamId, speedKph: 238.1, offTrack: false },
       ],
     },
-    state: 'FLAGGED',
+    // Parked for post-session review rather than flagged: a judgement call the
+    // steward has decided not to make from the live feed.
+    state: 'DEFERRED',
   },
   {
     id: 'inc-0008',
@@ -777,7 +942,9 @@ export const buildLiveCaptureFixture = ({
  * The renderer shape, newest first, matching what `buildIncidents` produces.
  *
  * Every fifth incident carries a decision so the queue's state buckets and the
- * decision merge are both exercised at scale rather than on an all-`NEW` list.
+ * decision merge are both exercised at scale rather than on an all-`NEW` list —
+ * including the deferred bucket, which is otherwise easy to leave untested at
+ * the only scale where the filters matter.
  */
 export const buildLiveIncidentsFixture = (count = 400): LiveIncident[] => {
   const roster = Object.values(drivers);
@@ -797,7 +964,13 @@ export const buildLiveIncidentsFixture = (count = 400): LiveIncident[] => {
         : classifications[1 + (index % 2)];
     const isContact = classification === 'contact';
     const state: LiveIncidentState =
-      index % 5 === 0 ? 'DECIDED' : index % 5 === 1 ? 'FLAGGED' : 'NEW';
+      index % 5 === 0
+        ? 'DECIDED'
+        : index % 5 === 1
+          ? 'FLAGGED'
+          : index % 5 === 2
+            ? 'DEFERRED'
+            : 'NEW';
 
     return {
       id: `fixture-session#${String(count - index).padStart(4, '0')}`,

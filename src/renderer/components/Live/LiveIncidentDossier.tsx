@@ -1,6 +1,7 @@
 import { useMemo } from 'react';
 import CenterFocusStrongIcon from '@mui/icons-material/CenterFocusStrong';
 import FlagIcon from '@mui/icons-material/Flag';
+import ScheduleIcon from '@mui/icons-material/Schedule';
 import {
   Box,
   Button,
@@ -189,6 +190,16 @@ interface LiveIncidentDossierProps {
   incident?: LiveIncident;
   onFocusCar: (slotId: number | undefined) => void;
   onFlag: (incidentId: string) => void;
+  /**
+   * Records "this one is for post-session review", not "I ran out of time".
+   *
+   * Optional because the replay-side dossier reuses this component, and there
+   * the steward *is* the post-session review — with the footage already on
+   * screen there is nothing left to defer to. The action is hidden rather than
+   * disabled: a control whose only honest tooltip is "you are already here"
+   * should not be drawn.
+   */
+  onDefer?: (incidentId: string) => void;
   onDecide: (incidentId: string, outcome: LiveDecisionOutcome) => void;
   /** Which driver a penalty would be assigned to. */
   targetSteamId?: string;
@@ -199,6 +210,7 @@ export const LiveIncidentDossier: React.FC<LiveIncidentDossierProps> = ({
   incident,
   onFocusCar,
   onFlag,
+  onDefer,
   onDecide,
   targetSteamId,
   onSelectTarget,
@@ -492,6 +504,38 @@ export const LiveIncidentDossier: React.FC<LiveIncidentDossierProps> = ({
           </Typography>
         ) : null}
 
+        {incident.state === 'DEFERRED' ? (
+          <Box
+            sx={{
+              mt: 2,
+              px: 1.5,
+              py: 1.25,
+              borderRadius: 1,
+              border: '1px solid',
+              borderColor: 'info.main',
+            }}
+          >
+            <Typography
+              variant="caption"
+              color="text.secondary"
+              sx={{
+                display: 'block',
+                textTransform: 'uppercase',
+                letterSpacing: 0.8,
+              }}
+            >
+              Deferred
+            </Typography>
+            <Typography variant="body2" fontWeight={700}>
+              Held for post-session review
+            </Typography>
+            <Typography variant="caption" color="text.secondary">
+              Not counted as unreviewed. Deciding it here still works and
+              replaces the deferral.
+            </Typography>
+          </Box>
+        ) : null}
+
         {incident.state === 'DECIDED' && incident.decision ? (
           <Box
             sx={{
@@ -561,23 +605,49 @@ export const LiveIncidentDossier: React.FC<LiveIncidentDossierProps> = ({
             </Button>
           ))}
         </Stack>
-        <Button
-          size="small"
-          variant={incident.state === 'FLAGGED' ? 'contained' : 'outlined'}
-          color="warning"
-          startIcon={<FlagIcon />}
-          onClick={() => onFlag(incident.id)}
-          sx={{ alignSelf: 'flex-start' }}
-        >
-          Flag for review
-          <Typography
-            component="span"
-            variant="caption"
-            sx={{ ml: 0.75, opacity: 0.7 }}
+        {/*
+          Two ways of not deciding, kept apart on purpose. A flag is a promise
+          to come back before the chequered flag; a deferral is a decision that
+          this one needs the full replay and is not going to be called live.
+          Collapsing them would make an end-of-session "these are still open"
+          list count deliberate hand-offs as unfinished work.
+        */}
+        <Stack direction="row" spacing={1} sx={{ alignSelf: 'flex-start' }}>
+          <Button
+            size="small"
+            variant={incident.state === 'FLAGGED' ? 'contained' : 'outlined'}
+            color="warning"
+            startIcon={<FlagIcon />}
+            onClick={() => onFlag(incident.id)}
           >
-            F
-          </Typography>
-        </Button>
+            Flag for review
+            <Typography
+              component="span"
+              variant="caption"
+              sx={{ ml: 0.75, opacity: 0.7 }}
+            >
+              F
+            </Typography>
+          </Button>
+          {onDefer ? (
+            <Button
+              size="small"
+              variant={incident.state === 'DEFERRED' ? 'contained' : 'outlined'}
+              color="info"
+              startIcon={<ScheduleIcon />}
+              onClick={() => onDefer(incident.id)}
+            >
+              Defer to post-session
+              <Typography
+                component="span"
+                variant="caption"
+                sx={{ ml: 0.75, opacity: 0.7 }}
+              >
+                D
+              </Typography>
+            </Button>
+          ) : null}
+        </Stack>
       </Stack>
     </Paper>
   );

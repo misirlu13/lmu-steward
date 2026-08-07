@@ -2,7 +2,11 @@ import React from 'react';
 import '@testing-library/jest-dom';
 import { fireEvent, render, screen } from '@testing-library/react';
 import { LiveTriageQueue } from './LiveTriageQueue';
-import { buildLiveIncidentsFixture } from './liveFixtures';
+import {
+  DEFAULT_LIVE_INCIDENT_FILTERS,
+  LiveIncidentFilters,
+  buildLiveIncidentsFixture,
+} from './liveFixtures';
 
 /*
   Counting row renders directly.
@@ -24,11 +28,15 @@ jest.mock('../CarClassBadge/CarClassBadge', () => ({
 
 const noop = () => {};
 
-const renderQueue = (incidents: ReturnType<typeof buildLiveIncidentsFixture>) =>
+const renderQueue = (
+  incidents: ReturnType<typeof buildLiveIncidentsFixture>,
+  filters: LiveIncidentFilters = DEFAULT_LIVE_INCIDENT_FILTERS,
+) =>
   render(
     <LiveTriageQueue
       incidents={incidents}
       stateFilter="ALL"
+      filters={filters}
       onSelectIncident={noop}
       onChangeStateFilter={noop}
     />,
@@ -42,6 +50,7 @@ const rerenderQueue = (
     <LiveTriageQueue
       incidents={incidents}
       stateFilter="ALL"
+      filters={DEFAULT_LIVE_INCIDENT_FILTERS}
       onSelectIncident={noop}
       onChangeStateFilter={noop}
     />,
@@ -61,13 +70,21 @@ describe('LiveTriageQueue at session scale', () => {
     expect(badgeRenders).not.toHaveBeenCalled();
   });
 
+  /*
+    Deliberately on a list short enough to mount whole. A decision changes an
+    incident's state, and state is the primary sort key, so at session scale the
+    changed row also leaves the scroll window and pulls another one into it —
+    which would make this count the window moving rather than the memo holding.
+    The 400-incident guards either side of this one cover the scale case.
+  */
   it('should render only the row that changed', () => {
-    const { rerender } = renderQueue(incidents);
+    const short = buildLiveIncidentsFixture(50);
+    const { rerender } = renderQueue(short);
     badgeRenders.mockClear();
 
     // A decision lands on one incident. Everything else is the object it
     // already was, because the build cache upstream keeps it that way.
-    const changed = incidents.map((incident, index) =>
+    const changed = short.map((incident, index) =>
       index === 2 ? { ...incident, state: 'DECIDED' as const } : incident,
     );
     rerenderQueue(rerender, changed);
@@ -112,6 +129,16 @@ describe('LiveTriageQueue at session scale', () => {
     );
   });
 
+  it('should count the state buckets over the whole session, not the window', () => {
+    renderQueue(incidents);
+
+    // Every fifth incident is decided, flagged and deferred in turn, so the
+    // deferred bucket is a fifth of the session — none of which is mounted
+    // beyond the first sixty rows.
+    expect(screen.getByText('All 400')).toBeInTheDocument();
+    expect(screen.getByText('Deferred 80')).toBeInTheDocument();
+  });
+
   it('should still show every incident once it has been scrolled to', () => {
     const short = buildLiveIncidentsFixture(70);
     renderQueue(short);
@@ -120,5 +147,95 @@ describe('LiveTriageQueue at session scale', () => {
     fireEvent.scroll(scroller as HTMLElement);
 
     expect(screen.queryByText(/more · keep scrolling/)).not.toBeInTheDocument();
+  });
+});
+
+/*
+  The order these two happen in is the whole point. Filtering the sixty rows
+  that happen to be mounted would let a steward search a four-hundred-incident
+  session and be told, wrongly, that there is nothing there.
+*/
+describe('LiveTriageQueue quick filters', () => {
+  const incidents = buildLiveIncidentsFixture(400);
+
+  // Written out rather than reusing `matchesLiveIncidentFilters`, so the test
+  // is checking the behaviour and not agreeing with the implementation.
+  const heavyContacts = incidents.filter(
+    (incident) =>
+      incident.classification === 'contact' &&
+      (incident.contactMagnitude ?? 0) >= 2000,
+  );
+
+  it('should narrow the list before the scroll window is taken', () => {
+    expect(heavyContacts.length).toBeGreaterThan(0);
+    // If this ever exceeds the page size the assertion below stops meaning
+    // what it says, so it is asserted rather than assumed.
+    expect(heavyContacts.length).toBeLessThan(60);
+
+    renderQueue(incidents, {
+      ...DEFAULT_LIVE_INCIDENT_FILTERS,
+      classification: 'contact',
+      minMagnitude: 2000,
+    });
+
+    // Every match is mounted, from anywhere in the session — not just from the
+    // rows the unfiltered window would have reached.
+    expect(screen.getAllByText(/ magnitude$/)).toHaveLength(
+      heavyContacts.length,
+    );
+    expect(screen.queryByText(/more · keep scrolling/)).not.toBeInTheDocument();
+    expect(screen.getByText(`All ${heavyContacts.length}`)).toBeInTheDocument();
+  });
+
+  it('should compose the filters rather than applying the last one', () => {
+    const contactsOnly = incidents.filter(
+      (incident) => incident.classification === 'contact',
+    );
+    expect(contactsOnly.length).toBeGreaterThan(heavyContacts.length);
+
+    renderQueue(incidents, {
+      ...DEFAULT_LIVE_INCIDENT_FILTERS,
+      classification: 'contact',
+    });
+    expect(screen.getByText(`All ${contactsOnly.length}`)).toBeInTheDocument();
+  });
+
+  it('should drop incidents with no magnitude when a threshold is asked for', () => {
+    // A track-limit element carries no magnitude at all. Treating that as a
+    // zero-force contact would leave the whole track-limit run in a list the
+    // steward asked to be contacts only.
+    renderQueue(incidents, {
+      ...DEFAULT_LIVE_INCIDENT_FILTERS,
+      minMagnitude: 500,
+    });
+
+    const withMagnitude = incidents.filter(
+      (incident) => (incident.contactMagnitude ?? 0) >= 500,
+    );
+    expect(screen.getByText(`All ${withMagnitude.length}`)).toBeInTheDocument();
+    expect(withMagnitude.length).toBeLessThan(incidents.length);
+  });
+
+  it('should say when the filters are what emptied the list', () => {
+    const onClearFilters = jest.fn();
+    render(
+      <LiveTriageQueue
+        incidents={incidents}
+        stateFilter="ALL"
+        filters={{
+          ...DEFAULT_LIVE_INCIDENT_FILTERS,
+          driverSteamId: 'nobody-in-this-session',
+        }}
+        onSelectIncident={noop}
+        onChangeStateFilter={noop}
+        onClearFilters={onClearFilters}
+      />,
+    );
+
+    // "Nothing in this bucket" here would read as a quiet session.
+    expect(screen.getByText(/400 hidden/)).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: /Clear filters/ }));
+    expect(onClearFilters).toHaveBeenCalled();
   });
 });

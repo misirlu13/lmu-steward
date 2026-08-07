@@ -123,6 +123,17 @@ export const ReplayIncidentDossier: React.FC<Props> = ({
       };
     }
 
+    /*
+      Same ranking as the live provider. A call the steward deliberately parked
+      for this review must not read back as "flagged, never got to it" — this
+      view is the thing it was deferred *to*. Showing the state accurately is
+      all that happens here; nothing routes deferred incidents into the replay
+      view, which is a feature of its own.
+    */
+    if (decisionsForIncident.some((entry) => entry.state === 'DEFERRED')) {
+      return { ...incident, state: 'DEFERRED' as const };
+    }
+
     return decisionsForIncident.length
       ? { ...incident, state: 'FLAGGED' as const }
       : incident;

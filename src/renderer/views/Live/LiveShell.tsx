@@ -23,8 +23,14 @@ const phaseColor: Record<LiveSessionPhase, string> = {
 
 const LiveShellBody: React.FC = () => {
   const navigate = useNavigate();
-  const { session, liveIndicator, useFixtures, unreviewedCount, flaggedCount } =
-    useLiveSession();
+  const {
+    session,
+    liveIndicator,
+    useFixtures,
+    unreviewedCount,
+    flaggedCount,
+    deferredCount,
+  } = useLiveSession();
   const { phase } = session;
 
   return (
@@ -80,6 +86,11 @@ const LiveShellBody: React.FC = () => {
         subtitle={
           <Typography variant="caption" color="text.secondary">
             {unreviewedCount} unreviewed · {flaggedCount} flagged for review
+            {/*
+              Only once there are any. A steward who has deferred nothing does
+              not need the word explaining itself in the header.
+            */}
+            {deferredCount > 0 ? ` · ${deferredCount} deferred` : ''}
           </Typography>
         }
         onBack={() => navigate('/')}
@@ -110,7 +121,13 @@ const LiveShellBody: React.FC = () => {
           mb: 3,
         }}
       >
-        <LiveNavRail />
+        {/*
+          The badge counts incidents with no decision record at all. Flagged,
+          deferred and decided ones are all things the steward has already
+          touched; a badge that kept counting them would never clear, and a
+          badge that never clears is one nobody looks at.
+        */}
+        <LiveNavRail badges={{ '/live/incidents': unreviewedCount }} />
 
         {/*
           The section owns its own internal layout; the shell only decides how

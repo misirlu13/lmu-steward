@@ -19,13 +19,17 @@ import {
   useLiveSessionData,
 } from '../hooks/useLiveSessionData';
 import {
+  DEFAULT_LIVE_INCIDENT_FILTERS,
   LiveDecisionOutcome,
   LiveDriverRef,
   LiveIncident,
+  LiveIncidentFilterOptions,
+  LiveIncidentFilters,
   LiveIncidentState,
   LivePressureBattle,
   LiveSessionState,
   LiveStanding,
+  buildLiveIncidentFilterOptions,
   isDriverScopedOutcome,
   liveIncidentsFixture,
   livePressureFixture,
@@ -114,8 +118,15 @@ export interface LiveSessionContextValue {
   /** Dev mode: the renderer is showing its own fixtures, not a live session. */
   useFixtures: boolean;
 
+  /**
+   * Incidents with no decision record at all. Deferred incidents are
+   * deliberately absent from this: the steward has already dealt with them by
+   * saying "not live", and a badge that keeps counting them would train them to
+   * ignore it.
+   */
   unreviewedCount: number;
   flaggedCount: number;
+  deferredCount: number;
   decidedCount: number;
 
   /* Selection. Held here so it survives navigating between live sections. */
@@ -124,6 +135,14 @@ export interface LiveSessionContextValue {
   /** Which driver a penalty would be assigned to, defaults resolved. */
   targetSteamId?: string;
   stateFilter: LiveIncidentState | 'ALL';
+  /**
+   * The rest of the quick filters. Held here rather than in the incidents view
+   * because they outlive it: a filter the steward set survives navigating to
+   * another section and back, and Step 7's timing view shares the class filter.
+   */
+  incidentFilters: LiveIncidentFilters;
+  /** Derived from every incident, not the filtered ones — see the builder. */
+  incidentFilterOptions: LiveIncidentFilterOptions;
 
   /*
     Every callback below is referentially stable for the life of the provider.
@@ -135,8 +154,12 @@ export interface LiveSessionContextValue {
   onSelectIncident: (incidentId: string) => void;
   onSelectTarget: (steamId: string) => void;
   onChangeStateFilter: (next: LiveIncidentState | 'ALL') => void;
+  /** Patches one filter without the caller having to hold the rest. */
+  onChangeIncidentFilters: (patch: Partial<LiveIncidentFilters>) => void;
+  onResetIncidentFilters: () => void;
   onFocusCar: (slotId: number | undefined) => void;
   onFlag: (incidentId: string) => void;
+  onDefer: (incidentId: string) => void;
   onDecide: (incidentId: string, outcome: LiveDecisionOutcome) => void;
 }
 
@@ -189,6 +212,24 @@ export const LiveSessionProvider: React.FC<{ children: React.ReactNode }> = ({
   const [targetSteamId, setTargetSteamId] = useState<string | undefined>();
   const [stateFilter, setStateFilter] = useState<LiveIncidentState | 'ALL'>(
     'ALL',
+  );
+  const [incidentFilters, setIncidentFilters] = useState<LiveIncidentFilters>(
+    DEFAULT_LIVE_INCIDENT_FILTERS,
+  );
+
+  /*
+    Both raw enough to be referentially stable for the life of the provider:
+    the patch form reads the previous value from the setter rather than closing
+    over it, so neither depends on anything that changes on a poll tick.
+  */
+  const onChangeIncidentFilters = useCallback(
+    (patch: Partial<LiveIncidentFilters>) =>
+      setIncidentFilters((current) => ({ ...current, ...patch })),
+    [],
+  );
+  const onResetIncidentFilters = useCallback(
+    () => setIncidentFilters(DEFAULT_LIVE_INCIDENT_FILTERS),
+    [],
   );
 
   const sourceIncidents = useFixtures ? liveIncidentsFixture : liveIncidents;
@@ -260,6 +301,16 @@ export const LiveSessionProvider: React.FC<{ children: React.ReactNode }> = ({
           };
         }
 
+        /*
+          Ranked, because an incident can carry more than one record: a
+          per-driver call is keyed on its target, an incident-scoped one is not.
+          A decision settles it, a deferral is a deliberate hand-off to
+          post-session, and a flag is the weakest claim of the three.
+        */
+        if (forIncident.some((entry) => entry.state === 'DEFERRED')) {
+          return { ...incident, state: 'DEFERRED' as const };
+        }
+
         return { ...incident, state: 'FLAGGED' as const };
       }),
     [decisionsByIncident, sourceIncidents],
@@ -289,13 +340,27 @@ export const LiveSessionProvider: React.FC<{ children: React.ReactNode }> = ({
             acc.unreviewed += 1;
           } else if (incident.state === 'FLAGGED') {
             acc.flagged += 1;
+          } else if (incident.state === 'DEFERRED') {
+            acc.deferred += 1;
           } else {
             acc.decided += 1;
           }
           return acc;
         },
-        { unreviewed: 0, flagged: 0, decided: 0 },
+        { unreviewed: 0, flagged: 0, deferred: 0, decided: 0 },
       ),
+    [incidents],
+  );
+
+  /*
+    Over every incident, not the filtered ones. Options that narrow themselves
+    as filters are applied leave the steward unable to switch from one driver to
+    another without clearing first. Recomputed only when the incident list
+    genuinely changes — the build cache upstream keeps its identity across a
+    quiet poll tick, which is what makes a memo over 400 incidents free.
+  */
+  const incidentFilterOptions = useMemo(
+    () => buildLiveIncidentFilterOptions(incidents),
     [incidents],
   );
 
@@ -339,6 +404,34 @@ export const LiveSessionProvider: React.FC<{ children: React.ReactNode }> = ({
 
       saveStewardDecision(
         buildDecision(incident, heldSession, heldKey, 'FLAGGED'),
+      );
+    },
+    [saveStewardDecision],
+  );
+
+  /*
+    "Not for now, and not because I ran out of time." Recorded as its own state
+    so the flags left at the chequered flag are the ones that genuinely went
+    unresolved.
+
+    What consumes it — an end-of-session prompt, and surfacing deferrals in the
+    replay view once the session is linked — is not built. This records the
+    state; nothing reads it back yet beyond the queue.
+  */
+  const onDefer = useCallback(
+    (incidentId: string) => {
+      const {
+        incidents: held,
+        session: heldSession,
+        sessionKey: heldKey,
+      } = latest.current;
+      const incident = held.find((entry) => entry.id === incidentId);
+      if (!incident) {
+        return;
+      }
+
+      saveStewardDecision(
+        buildDecision(incident, heldSession, heldKey, 'DEFERRED'),
       );
     },
     [saveStewardDecision],
@@ -421,6 +514,10 @@ export const LiveSessionProvider: React.FC<{ children: React.ReactNode }> = ({
         onFlag(selected);
         return;
       }
+      if (event.key.toLowerCase() === 'd') {
+        onDefer(selected);
+        return;
+      }
 
       // Picking the target is one keypress, so a contact stays a two-key call.
       if (event.key === 'ArrowLeft' || event.key === 'ArrowRight') {
@@ -446,7 +543,7 @@ export const LiveSessionProvider: React.FC<{ children: React.ReactNode }> = ({
 
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, [onDecide, onFlag, shortcutsEnabled]);
+  }, [onDecide, onDefer, onFlag, shortcutsEnabled]);
 
   const contextValue = useMemo<LiveSessionContextValue>(
     () => ({
@@ -459,27 +556,38 @@ export const LiveSessionProvider: React.FC<{ children: React.ReactNode }> = ({
       useFixtures,
       unreviewedCount: counts.unreviewed,
       flaggedCount: counts.flagged,
+      deferredCount: counts.deferred,
       decidedCount: counts.decided,
       selectedIncidentId,
       selectedIncident,
       targetSteamId: effectiveTargetSteamId,
       stateFilter,
+      incidentFilters,
+      incidentFilterOptions,
       onSelectIncident: setSelectedIncidentId,
       onSelectTarget: setTargetSteamId,
       onChangeStateFilter: setStateFilter,
+      onChangeIncidentFilters,
+      onResetIncidentFilters,
       onFocusCar,
       onFlag,
+      onDefer,
       onDecide,
     }),
     [
       battles,
       counts,
       effectiveTargetSteamId,
+      incidentFilterOptions,
+      incidentFilters,
       incidents,
       liveIndicator,
+      onChangeIncidentFilters,
       onDecide,
+      onDefer,
       onFlag,
       onFocusCar,
+      onResetIncidentFilters,
       selectedIncident,
       selectedIncidentId,
       session,

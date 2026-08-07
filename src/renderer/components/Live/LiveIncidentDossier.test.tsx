@@ -12,6 +12,7 @@ const renderDossier = (incident?: LiveIncident) =>
       incident={incident}
       onFocusCar={noop}
       onFlag={noop}
+      onDefer={noop}
       onDecide={noop}
       targetSteamId={undefined}
       onSelectTarget={noop}
@@ -91,6 +92,7 @@ describe('LiveIncidentDossier decision targeting', () => {
         incident={withEvidence}
         onFocusCar={noop}
         onFlag={noop}
+        onDefer={noop}
         onDecide={onDecide}
         targetSteamId={targetSteamId}
         onSelectTarget={onSelectTarget}
@@ -124,6 +126,65 @@ describe('LiveIncidentDossier decision targeting', () => {
     renderWithTarget(undefined);
 
     expect(screen.getByRole('button', { name: /No Action/ })).toBeEnabled();
+  });
+
+  /*
+    Deferring is a call about the incident, not about a driver, so it has to
+    stay available with nothing targeted — the same reasoning that keeps "no
+    action" enabled.
+  */
+  it('should defer without requiring a target', () => {
+    const onDefer = jest.fn();
+    render(
+      <LiveIncidentDossier
+        incident={withEvidence}
+        onFocusCar={noop}
+        onFlag={noop}
+        onDefer={onDefer}
+        onDecide={noop}
+        targetSteamId={undefined}
+        onSelectTarget={noop}
+      />,
+    );
+
+    const defer = screen.getByRole('button', { name: /Defer to post-session/ });
+    expect(defer).toBeEnabled();
+
+    fireEvent.click(defer);
+
+    expect(onDefer).toHaveBeenCalledWith(withEvidence.id);
+  });
+
+  // The replay-side dossier reuses this component, and there the steward is
+  // already in the review a deferral points at.
+  it('should hide the defer action when no handler is supplied', () => {
+    render(
+      <LiveIncidentDossier
+        incident={withEvidence}
+        onFocusCar={noop}
+        onFlag={noop}
+        onDecide={noop}
+        targetSteamId={undefined}
+        onSelectTarget={noop}
+      />,
+    );
+
+    expect(
+      screen.queryByRole('button', { name: /Defer to post-session/ }),
+    ).not.toBeInTheDocument();
+    // The other way of not deciding stays, because "come back to this" is
+    // still meaningful in a review session.
+    expect(
+      screen.getByRole('button', { name: /Flag for review/ }),
+    ).toBeInTheDocument();
+  });
+
+  it('should say a deferred incident is held for post-session review', () => {
+    renderDossier({ ...withEvidence, state: 'DEFERRED' });
+
+    expect(
+      screen.getByText(/Held for post-session review/i),
+    ).toBeInTheDocument();
   });
 
   it('should select a driver when their chip is clicked', () => {

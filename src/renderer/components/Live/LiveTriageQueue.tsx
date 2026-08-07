@@ -1,21 +1,25 @@
 import { memo, useCallback, useEffect, useMemo, useState } from 'react';
-import { Badge, Box, Chip, Paper, Stack, Typography } from '@mui/material';
+import {
+  Badge,
+  Box,
+  Button,
+  Chip,
+  Paper,
+  Stack,
+  Typography,
+} from '@mui/material';
 import { alpha } from '@mui/material/styles';
 import { CarClassBadge } from '../CarClassBadge/CarClassBadge';
 import { AiBadge } from '../Common/AiBadge';
 import {
   LiveIncident,
   LiveIncidentClassification,
+  LiveIncidentFilters,
   LiveIncidentState,
+  hasActiveLiveIncidentFilters,
+  liveClassificationLabel,
+  matchesLiveIncidentFilters,
 } from './liveFixtures';
-
-const classificationLabel: Record<LiveIncidentClassification, string> = {
-  contact: 'Contact',
-  'track-limits': 'Track Limits',
-  'blue-flag': 'Blue Flag',
-  'unsafe-rejoin': 'Unsafe Rejoin',
-  'loss-of-control': 'Loss of Control',
-};
 
 const classificationColor: Record<
   LiveIncidentClassification,
@@ -28,19 +32,41 @@ const classificationColor: Record<
   'loss-of-control': 'default',
 };
 
-const stateOrder: LiveIncidentState[] = ['NEW', 'FLAGGED', 'DECIDED'];
+/**
+ * Also the sort order of the list. Deferred sits below flagged and above
+ * decided: it is off the steward's plate for the session but not settled, and
+ * burying it under every decided incident would hide the post-session workload.
+ */
+const stateOrder: LiveIncidentState[] = [
+  'NEW',
+  'FLAGGED',
+  'DEFERRED',
+  'DECIDED',
+];
 
 const stateLabel: Record<LiveIncidentState, string> = {
   NEW: 'New',
   FLAGGED: 'Flagged',
+  DEFERRED: 'Deferred',
   DECIDED: 'Decided',
 };
 
-const stateColor: Record<LiveIncidentState, 'error' | 'warning' | 'success'> = {
+const stateColor: Record<
+  LiveIncidentState,
+  'error' | 'warning' | 'info' | 'success'
+> = {
   NEW: 'error',
   FLAGGED: 'warning',
+  DEFERRED: 'info',
   DECIDED: 'success',
 };
+
+const emptyStateCounts = (): Record<LiveIncidentState, number> => ({
+  NEW: 0,
+  FLAGGED: 0,
+  DEFERRED: 0,
+  DECIDED: 0,
+});
 
 const severityOf = (incident: LiveIncident): number =>
   incident.contactMagnitude ?? 0;
@@ -109,7 +135,7 @@ const LiveTriageRow: React.FC<LiveTriageRowProps> = memo(
         </Typography>
         <Chip
           size="small"
-          label={classificationLabel[incident.classification]}
+          label={liveClassificationLabel[incident.classification]}
           color={classificationColor[incident.classification]}
           variant="outlined"
           sx={{ height: 20, fontSize: 10 }}
@@ -122,6 +148,15 @@ const LiveTriageRow: React.FC<LiveTriageRowProps> = memo(
             color="warning"
             variant="filled"
             sx={{ height: 20, fontSize: 10, fontWeight: 700 }}
+          />
+        ) : null}
+        {incident.state === 'DEFERRED' ? (
+          <Chip
+            size="small"
+            label="Deferred"
+            color="info"
+            variant="outlined"
+            sx={{ height: 20, fontSize: 10 }}
           />
         ) : null}
         {incident.state === 'DECIDED' ? (
@@ -177,32 +212,52 @@ interface LiveTriageQueueProps {
   incidents: LiveIncident[];
   selectedIncidentId?: string;
   stateFilter: LiveIncidentState | 'ALL';
+  /**
+   * The rest of the quick filters, applied here rather than upstream so they
+   * land before the scroll window — filtering after it would search only the
+   * sixty rows that happen to be mounted.
+   */
+  filters: LiveIncidentFilters;
   onSelectIncident: (incidentId: string) => void;
   onChangeStateFilter: (next: LiveIncidentState | 'ALL') => void;
+  /** Offered when the filters have emptied the list, so it is one click out. */
+  onClearFilters?: () => void;
 }
 
 export const LiveTriageQueue: React.FC<LiveTriageQueueProps> = ({
   incidents,
   selectedIncidentId,
   stateFilter,
+  filters,
   onSelectIncident,
   onChangeStateFilter,
+  onClearFilters,
 }) => {
+  const matching = useMemo(
+    () =>
+      incidents.filter((incident) =>
+        matchesLiveIncidentFilters(incident, filters),
+      ),
+    [filters, incidents],
+  );
+
+  /*
+    Counted over the filtered set rather than the whole session, so the buckets
+    answer the question actually being asked: "of the contacts I am looking at,
+    how many are still new".
+  */
   const counts = useMemo(
     () =>
-      stateOrder.reduce<Record<LiveIncidentState, number>>(
-        (acc, state) => {
-          acc[state] = incidents.filter((i) => i.state === state).length;
-          return acc;
-        },
-        { NEW: 0, FLAGGED: 0, DECIDED: 0 },
-      ),
-    [incidents],
+      matching.reduce<Record<LiveIncidentState, number>>((acc, incident) => {
+        acc[incident.state] += 1;
+        return acc;
+      }, emptyStateCounts()),
+    [matching],
   );
 
   const visible = useMemo(
     () =>
-      incidents
+      matching
         .filter((i) => (stateFilter === 'ALL' ? true : i.state === stateFilter))
         .sort((a, b) => {
           const stateDelta =
@@ -212,14 +267,16 @@ export const LiveTriageQueue: React.FC<LiveTriageQueueProps> = ({
           }
           return severityOf(b) - severityOf(a);
         }),
-    [incidents, stateFilter],
+    [matching, stateFilter],
   );
+
+  const filtersActive = hasActiveLiveIncidentFilters(filters);
 
   const [limit, setLimit] = useState(PAGE_SIZE);
 
   // A different bucket is a different list; showing it already scrolled deep
-  // would be disorienting.
-  useEffect(() => setLimit(PAGE_SIZE), [stateFilter]);
+  // would be disorienting. The same goes for any of the other filters moving.
+  useEffect(() => setLimit(PAGE_SIZE), [stateFilter, filters]);
 
   const total = visible.length;
   const onScroll = useCallback(
@@ -256,7 +313,12 @@ export const LiveTriageQueue: React.FC<LiveTriageQueueProps> = ({
         direction="row"
         alignItems="center"
         spacing={1}
-        sx={{ px: 2, py: 1.5, borderBottom: '1px solid', borderColor: 'divider' }}
+        sx={{
+          px: 2,
+          py: 1.5,
+          borderBottom: '1px solid',
+          borderColor: 'divider',
+        }}
       >
         <Typography variant="subtitle2" fontWeight={700}>
           Triage Queue
@@ -264,7 +326,9 @@ export const LiveTriageQueue: React.FC<LiveTriageQueueProps> = ({
         <Badge
           badgeContent={counts.NEW}
           color="error"
-          sx={{ '& .MuiBadge-badge': { position: 'static', transform: 'none' } }}
+          sx={{
+            '& .MuiBadge-badge': { position: 'static', transform: 'none' },
+          }}
         />
         <Box sx={{ flex: 1 }} />
       </Stack>
@@ -277,7 +341,7 @@ export const LiveTriageQueue: React.FC<LiveTriageQueueProps> = ({
       >
         <Chip
           size="small"
-          label={`All ${incidents.length}`}
+          label={`All ${matching.length}`}
           clickable
           aria-pressed={stateFilter === 'ALL'}
           variant={stateFilter === 'ALL' ? 'filled' : 'outlined'}
@@ -317,13 +381,29 @@ export const LiveTriageQueue: React.FC<LiveTriageQueueProps> = ({
         onScroll={onScroll}
       >
         {visible.length === 0 ? (
-          <Typography
-            variant="body2"
-            color="text.secondary"
-            sx={{ px: 2, py: 3, textAlign: 'center' }}
-          >
-            Nothing in this bucket.
-          </Typography>
+          <Stack spacing={1} alignItems="center" sx={{ px: 2, py: 3 }}>
+            <Typography
+              variant="body2"
+              color="text.secondary"
+              textAlign="center"
+            >
+              {/*
+                An empty list has two very different causes, and a steward who
+                cannot tell them apart will read a filtered-out queue as a quiet
+                session.
+              */}
+              {filtersActive
+                ? `No incident matches these filters${
+                    incidents.length ? ` — ${incidents.length} hidden` : ''
+                  }.`
+                : 'Nothing in this bucket.'}
+            </Typography>
+            {filtersActive && onClearFilters ? (
+              <Button size="small" onClick={onClearFilters}>
+                Clear filters
+              </Button>
+            ) : null}
+          </Stack>
         ) : null}
 
         {rendered.map((incident) => (
