@@ -4,6 +4,7 @@ import {
   LiveHeldDuration,
   LiveIncidentFrame,
   LivePressureBattle,
+  StewardDecisionState,
 } from '@types';
 import { followingCarFrames, leadingCarFrames } from './liveTraceFixture';
 
@@ -166,6 +167,29 @@ export interface LiveIncident {
  * wants exactly that, and a half-remembered second selection left checked is a
  * filter that lies.
  */
+/**
+ * A call already made in this session that involves a given driver.
+ *
+ * Flattened out of `StewardDecision` rather than passed whole: the dossier
+ * needs four fields to draw a line of history, and handing a presentational
+ * component the persistence record invites it to start reading the rest.
+ *
+ * `wasTarget` is the distinction that makes the list worth reading. A record
+ * with a target is a call *against* this driver; one without is a finding about
+ * an incident they happened to be in, and reading the second as the first would
+ * make an innocent driver look like a repeat offender.
+ */
+export interface LivePriorCall {
+  decisionId: string;
+  /** Absent for an accumulation or conduct call, which cites no one incident. */
+  incidentId?: string;
+  lapLabel?: string;
+  state: StewardDecisionState;
+  outcome?: LiveDecisionOutcome;
+  wasTarget: boolean;
+  decidedAt: number;
+}
+
 export interface LiveIncidentFilters {
   classification: LiveIncidentClassification | 'ALL';
   /** A class code as `CarClassBadge` renders it, or `ALL`. */

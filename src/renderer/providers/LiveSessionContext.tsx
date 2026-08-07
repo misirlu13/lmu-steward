@@ -27,6 +27,7 @@ import {
   LiveIncidentFilters,
   LiveIncidentState,
   LivePressureBattle,
+  LivePriorCall,
   LiveSessionState,
   LiveStanding,
   buildLiveIncidentFilterOptions,
@@ -60,6 +61,9 @@ const shortcutToOutcome: Record<string, LiveDecisionOutcome> = {
  */
 const SHORTCUT_ROUTES = new Set(['/live', '/live/incidents']);
 
+/** Where a keystroke is text the steward is writing, not a command. */
+const EDITABLE_TAGS = new Set(['INPUT', 'TEXTAREA', 'SELECT']);
+
 /**
  * Builds the durable record. Session, driver, time and classification are
  * denormalised onto it deliberately: live incident ids do not survive a
@@ -72,6 +76,7 @@ const buildDecision = (
   state: StewardDecisionState,
   outcome?: LiveDecisionOutcome,
   target?: LiveDriverRef,
+  reasoning?: string,
 ): StewardDecision => ({
   id: buildStewardDecisionId(sessionKey, incident.id, target?.steamId),
   basis: 'incident',
@@ -98,6 +103,14 @@ const buildDecision = (
   trackPositionLabel: incident.evidence.trackPositionLabel,
   classification: incident.classification,
   outcome,
+  /*
+    Optional by design. Both design docs are explicit that a live call must not
+    be gated on typing an explanation — under time pressure the call itself is
+    the thing — and that reasoning is prompted for properly during post-session
+    review. An empty box records nothing rather than an empty string, so an
+    export can tell "no reasoning given" from "reasoning given as blank".
+  */
+  reasoning: reasoning?.trim() || undefined,
   stewardAuthor: STEWARD_AUTHOR,
   decidedAt: Date.now(),
   state,
@@ -144,6 +157,27 @@ export interface LiveSessionContextValue {
   /** Derived from every incident, not the filtered ones — see the builder. */
   incidentFilterOptions: LiveIncidentFilterOptions;
 
+  /**
+   * Every call already made in this session, indexed by the driver it concerns.
+   * Keyed on the same identity the standings and incident parties use, so a
+   * lookup works from either side.
+   */
+  priorCallsByDriver: Map<string, LivePriorCall[]>;
+  /**
+   * Penalties the *steward* has assigned, per driver — the other half of the
+   * watchlist's penalty picture. LMU's own `outstandingPenalties` counts what
+   * the game is making a driver serve; this counts what the steward has called
+   * and the game knows nothing about.
+   */
+  stewardPenaltiesByDriver: Map<string, number>;
+
+  /**
+   * The optional explanation attached to the next call, held here rather than
+   * in the dossier so the keyboard path picks it up too. A steward who types a
+   * reason and then hits `1` would otherwise watch it vanish.
+   */
+  reasoningDraft: string;
+
   /*
     Every callback below is referentially stable for the life of the provider.
     That is load-bearing, not incidental: `LiveTriageRow` is memoised, and a
@@ -157,6 +191,7 @@ export interface LiveSessionContextValue {
   /** Patches one filter without the caller having to hold the rest. */
   onChangeIncidentFilters: (patch: Partial<LiveIncidentFilters>) => void;
   onResetIncidentFilters: () => void;
+  onChangeReasoning: (next: string) => void;
   onFocusCar: (slotId: number | undefined) => void;
   onFlag: (incidentId: string) => void;
   onDefer: (incidentId: string) => void;
@@ -216,6 +251,9 @@ export const LiveSessionProvider: React.FC<{ children: React.ReactNode }> = ({
   const [incidentFilters, setIncidentFilters] = useState<LiveIncidentFilters>(
     DEFAULT_LIVE_INCIDENT_FILTERS,
   );
+  // Cleared when the steward moves on, and again once a call is written — a
+  // reason left over from the last incident is worse than none.
+  const [reasoningDraft, setReasoningDraft] = useState('');
 
   /*
     Both raw enough to be referentially stable for the life of the provider:
@@ -276,6 +314,87 @@ export const LiveSessionProvider: React.FC<{ children: React.ReactNode }> = ({
 
     return byIncident;
   }, [sessionKey, stewardDecisions]);
+
+  /*
+    A driver's history in this session, from the same store the incident states
+    come from.
+
+    Indexed on the target where there is one, and on every involved party where
+    there is not: a penalty against one driver of a two-car contact is a call
+    about that driver only, while a "no action" is a finding about the incident
+    and belongs to everyone who was in it. Depends on nothing that changes on a
+    poll tick, so the map — and every list in it — keeps its identity between
+    decisions.
+  */
+  const priorCallsByDriver = useMemo(() => {
+    const byDriver = new Map<string, LivePriorCall[]>();
+
+    Object.values(stewardDecisions).forEach((decision) => {
+      if (decision.sessionKey !== sessionKey) {
+        return;
+      }
+
+      const targetSteam = decision.target?.steamId;
+      const keys = targetSteam
+        ? [targetSteam]
+        : decision.involvedParties
+            .map((party) => party.steamId)
+            .filter((id): id is string => Boolean(id));
+
+      const call: LivePriorCall = {
+        decisionId: decision.id,
+        incidentId: decision.incidentId,
+        lapLabel: decision.lapLabel,
+        state: decision.state,
+        outcome: decision.outcome as LiveDecisionOutcome | undefined,
+        wasTarget: Boolean(targetSteam),
+        decidedAt: decision.decidedAt,
+      };
+
+      keys.forEach((key) => {
+        const existing = byDriver.get(key);
+        if (existing) {
+          existing.push(call);
+        } else {
+          byDriver.set(key, [call]);
+        }
+      });
+    });
+
+    // Newest first: the most recent call is the one that sets the precedent the
+    // steward is about to either follow or depart from.
+    byDriver.forEach((calls) =>
+      calls.sort((a, b) => b.decidedAt - a.decidedAt),
+    );
+
+    return byDriver;
+  }, [sessionKey, stewardDecisions]);
+
+  /*
+    Derived from the history rather than counted separately, so the watchlist
+    and the dossier cannot disagree about what the steward has already called.
+    Only driver-scoped outcomes count — "no action" and "note" are findings, not
+    penalties, and a watchlist that counted them would flag the drivers who were
+    cleared.
+  */
+  const stewardPenaltiesByDriver = useMemo(() => {
+    const byDriver = new Map<string, number>();
+
+    priorCallsByDriver.forEach((calls, steamId) => {
+      const penalties = calls.filter(
+        (call) =>
+          call.wasTarget &&
+          call.state === 'DECIDED' &&
+          call.outcome !== undefined &&
+          isDriverScopedOutcome(call.outcome),
+      ).length;
+      if (penalties > 0) {
+        byDriver.set(steamId, penalties);
+      }
+    });
+
+    return byDriver;
+  }, [priorCallsByDriver]);
 
   /*
     Deliberately returns the incidents it was given, untouched, where no
@@ -381,6 +500,7 @@ export const LiveSessionProvider: React.FC<{ children: React.ReactNode }> = ({
     sessionKey,
     selectedIncidentId,
     effectiveTargetSteamId,
+    reasoningDraft,
   });
   latest.current = {
     incidents,
@@ -388,6 +508,7 @@ export const LiveSessionProvider: React.FC<{ children: React.ReactNode }> = ({
     sessionKey,
     selectedIncidentId,
     effectiveTargetSteamId,
+    reasoningDraft,
   };
 
   const onFlag = useCallback(
@@ -396,15 +517,31 @@ export const LiveSessionProvider: React.FC<{ children: React.ReactNode }> = ({
         incidents: held,
         session: heldSession,
         sessionKey: heldKey,
+        reasoningDraft: heldReasoning,
       } = latest.current;
       const incident = held.find((entry) => entry.id === incidentId);
       if (!incident) {
         return;
       }
 
+      /*
+        A flag carries the reason too, where one was typed. The record schema
+        allows it on any state, and dropping a steward's note because they
+        parked the incident rather than calling it would lose the one sentence
+        that explains why they parked it.
+      */
       saveStewardDecision(
-        buildDecision(incident, heldSession, heldKey, 'FLAGGED'),
+        buildDecision(
+          incident,
+          heldSession,
+          heldKey,
+          'FLAGGED',
+          undefined,
+          undefined,
+          heldReasoning,
+        ),
       );
+      setReasoningDraft('');
     },
     [saveStewardDecision],
   );
@@ -424,6 +561,7 @@ export const LiveSessionProvider: React.FC<{ children: React.ReactNode }> = ({
         incidents: held,
         session: heldSession,
         sessionKey: heldKey,
+        reasoningDraft: heldReasoning,
       } = latest.current;
       const incident = held.find((entry) => entry.id === incidentId);
       if (!incident) {
@@ -431,8 +569,17 @@ export const LiveSessionProvider: React.FC<{ children: React.ReactNode }> = ({
       }
 
       saveStewardDecision(
-        buildDecision(incident, heldSession, heldKey, 'DEFERRED'),
+        buildDecision(
+          incident,
+          heldSession,
+          heldKey,
+          'DEFERRED',
+          undefined,
+          undefined,
+          heldReasoning,
+        ),
       );
+      setReasoningDraft('');
     },
     [saveStewardDecision],
   );
@@ -444,6 +591,7 @@ export const LiveSessionProvider: React.FC<{ children: React.ReactNode }> = ({
         session: heldSession,
         sessionKey: heldKey,
         effectiveTargetSteamId: heldTarget,
+        reasoningDraft: heldReasoning,
       } = latest.current;
       const incident = held.find((entry) => entry.id === incidentId);
       if (!incident) {
@@ -468,8 +616,10 @@ export const LiveSessionProvider: React.FC<{ children: React.ReactNode }> = ({
           'DECIDED',
           outcome,
           target,
+          heldReasoning,
         ),
       );
+      setReasoningDraft('');
     },
     [saveStewardDecision],
   );
@@ -483,6 +633,7 @@ export const LiveSessionProvider: React.FC<{ children: React.ReactNode }> = ({
   */
   useEffect(() => {
     setTargetSteamId(undefined);
+    setReasoningDraft('');
   }, [selectedIncidentId]);
 
   // Camera dispatch. LMU's /rest/watch/focus takes a slot id, so this is the one
@@ -505,6 +656,19 @@ export const LiveSessionProvider: React.FC<{ children: React.ReactNode }> = ({
     }
 
     const onKeyDown = (event: KeyboardEvent) => {
+      /*
+        The shortcuts live on `window`, and the dossier now has a text field in
+        it. Without this, typing "contact at turn 1" into the reasoning box
+        would issue a drive-through on the `3` and flag the incident on the `f`.
+      */
+      const source = event.target as HTMLElement | null;
+      if (
+        source?.isContentEditable ||
+        (source?.tagName && EDITABLE_TAGS.has(source.tagName))
+      ) {
+        return;
+      }
+
       const { incidents: current, selectedIncidentId: selected } =
         latest.current;
       if (!selected) {
@@ -564,11 +728,15 @@ export const LiveSessionProvider: React.FC<{ children: React.ReactNode }> = ({
       stateFilter,
       incidentFilters,
       incidentFilterOptions,
+      priorCallsByDriver,
+      stewardPenaltiesByDriver,
+      reasoningDraft,
       onSelectIncident: setSelectedIncidentId,
       onSelectTarget: setTargetSteamId,
       onChangeStateFilter: setStateFilter,
       onChangeIncidentFilters,
       onResetIncidentFilters,
+      onChangeReasoning: setReasoningDraft,
       onFocusCar,
       onFlag,
       onDefer,
@@ -588,12 +756,15 @@ export const LiveSessionProvider: React.FC<{ children: React.ReactNode }> = ({
       onFlag,
       onFocusCar,
       onResetIncidentFilters,
+      priorCallsByDriver,
+      reasoningDraft,
       selectedIncident,
       selectedIncidentId,
       session,
       sessionKey,
       standings,
       stateFilter,
+      stewardPenaltiesByDriver,
       useFixtures,
     ],
   );

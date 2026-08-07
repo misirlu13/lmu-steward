@@ -1,8 +1,12 @@
 import React from 'react';
 import '@testing-library/jest-dom';
-import { fireEvent, render, screen } from '@testing-library/react';
+import { fireEvent, render, screen, within } from '@testing-library/react';
 import { LiveIncidentDossier } from './LiveIncidentDossier';
-import { LiveIncident, liveIncidentsFixture } from './liveFixtures';
+import {
+  LiveIncident,
+  LivePriorCall,
+  liveIncidentsFixture,
+} from './liveFixtures';
 
 const noop = () => {};
 
@@ -64,7 +68,27 @@ describe('LiveIncidentDossier', () => {
 
     expect(screen.getByText(/Inputs and speed/i)).toBeInTheDocument();
     expect(screen.getAllByText(/On track throughout/i)).toHaveLength(2);
-    expect(screen.getByText(/located to within 0.10s/i)).toBeInTheDocument();
+    expect(screen.getByText(/±0.10s/i)).toBeInTheDocument();
+  });
+
+  /*
+    The number was already in the caption. The band is what lets a steward see
+    whether a brake release falls inside the uncertainty or outside it, which is
+    the difference between "he braked, then was hit" and "cannot be ordered".
+  */
+  it('should draw the contact uncertainty as a band on every trace', () => {
+    renderDossier(withEvidence);
+
+    // One per car, since each trace gets its own chart.
+    expect(screen.getAllByTestId('trace-uncertainty-band')).toHaveLength(2);
+  });
+
+  it('should draw no band when the contact instant was located exactly', () => {
+    renderDossier({ ...withEvidence, anchorErrorSeconds: 0 });
+
+    expect(screen.queryByTestId('trace-uncertainty-band')).toBeNull();
+    // And says so plainly rather than pointing at a band nobody can see.
+    expect(screen.getByText(/located to within 0.00s/i)).toBeInTheDocument();
   });
 
   it('should show a dash rather than a guess when no context was captured', () => {
@@ -198,5 +222,141 @@ describe('LiveIncidentDossier decision targeting', () => {
       withEvidence.drivers.find((d) => d.displayName === 'Nils Lindqvist')
         ?.steamId,
     );
+  });
+});
+
+describe('LiveIncidentDossier prior calls', () => {
+  const [drake, lindqvist] = withEvidence.drivers;
+
+  const call = (over: Partial<LivePriorCall> = {}): LivePriorCall => ({
+    decisionId: 'd-1',
+    incidentId: 'inc-9000',
+    lapLabel: 'L12',
+    state: 'DECIDED',
+    outcome: 'penalty-10s',
+    wasTarget: true,
+    decidedAt: 1,
+    ...over,
+  });
+
+  const renderWithHistory = (history: Map<string, LivePriorCall[]>) =>
+    render(
+      <LiveIncidentDossier
+        incident={withEvidence}
+        onFocusCar={noop}
+        onFlag={noop}
+        onDecide={noop}
+        targetSteamId={undefined}
+        onSelectTarget={noop}
+        priorCallsByDriver={history}
+      />,
+    );
+
+  it('should list every prior call against a party', () => {
+    renderWithHistory(
+      new Map([
+        [
+          drake.steamId,
+          [
+            call({ decisionId: 'd-1', lapLabel: 'L12' }),
+            call({
+              decisionId: 'd-2',
+              lapLabel: 'L20',
+              outcome: undefined,
+              state: 'FLAGGED',
+            }),
+          ],
+        ],
+      ]),
+    );
+
+    const row = screen.getByTestId(`prior-calls-${drake.steamId}`);
+    expect(within(row).getByText('L12 · 10s Penalty')).toBeInTheDocument();
+    expect(within(row).getByText('L20 · Flagged')).toBeInTheDocument();
+  });
+
+  /*
+    The comparison is the whole value of the section. A panel that listed only
+    the driver with a record would hide that the other one has none, which is
+    exactly what a steward weighing a two-car contact wants to know.
+  */
+  it('should show the other party as having none rather than omitting them', () => {
+    renderWithHistory(new Map([[drake.steamId, [call()]]]));
+
+    const row = screen.getByTestId(`prior-calls-${lindqvist.steamId}`);
+    expect(within(row).getByText('None')).toBeInTheDocument();
+  });
+
+  it('should stay hidden when neither party has a record', () => {
+    renderWithHistory(new Map());
+
+    expect(screen.queryByText(/Prior calls this session/i)).toBeNull();
+  });
+
+  // Citing the call just made on the incident in front of the steward as
+  // precedent for itself.
+  it('should exclude this incident own record', () => {
+    renderWithHistory(
+      new Map([[drake.steamId, [call({ incidentId: withEvidence.id })]]]),
+    );
+
+    expect(screen.queryByText(/Prior calls this session/i)).toBeNull();
+  });
+
+  it('should collapse a long history to a count', () => {
+    renderWithHistory(
+      new Map([
+        [
+          drake.steamId,
+          Array.from({ length: 7 }, (_, index) =>
+            call({ decisionId: `d-${index}`, lapLabel: `L${index}` }),
+          ),
+        ],
+      ]),
+    );
+
+    expect(screen.getByText('+3 earlier')).toBeInTheDocument();
+  });
+});
+
+describe('LiveIncidentDossier reasoning capture', () => {
+  it('should offer an optional reasoning field without gating the tariff', () => {
+    const onChangeReasoning = jest.fn();
+    render(
+      <LiveIncidentDossier
+        incident={withEvidence}
+        onFocusCar={noop}
+        onFlag={noop}
+        onDecide={noop}
+        targetSteamId={undefined}
+        onSelectTarget={noop}
+        reasoning=""
+        onChangeReasoning={onChangeReasoning}
+      />,
+    );
+
+    const field = screen.getByLabelText(/Reasoning \(optional\)/i);
+    fireEvent.change(field, { target: { value: 'Dived from too far back' } });
+
+    expect(onChangeReasoning).toHaveBeenCalledWith('Dived from too far back');
+    // Nothing is gated on it — an empty reason must never block a call.
+    expect(screen.getByRole('button', { name: /No Action/ })).toBeEnabled();
+  });
+
+  // The replay dossier passes no handler: reviewing there revises a record that
+  // already carries its reasoning.
+  it('should draw no field when there is nowhere for the text to go', () => {
+    render(
+      <LiveIncidentDossier
+        incident={withEvidence}
+        onFocusCar={noop}
+        onFlag={noop}
+        onDecide={noop}
+        targetSteamId={undefined}
+        onSelectTarget={noop}
+      />,
+    );
+
+    expect(screen.queryByLabelText(/Reasoning \(optional\)/i)).toBeNull();
   });
 });

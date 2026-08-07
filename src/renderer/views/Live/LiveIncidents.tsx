@@ -24,7 +24,10 @@ export const LiveIncidents: React.FC = () => {
     stateFilter,
     incidentFilters,
     incidentFilterOptions,
+    priorCallsByDriver,
+    reasoningDraft,
     targetSteamId,
+    onChangeReasoning,
     onSelectIncident,
     onChangeStateFilter,
     onChangeIncidentFilters,
@@ -92,6 +95,9 @@ export const LiveIncidents: React.FC = () => {
       <LiveIncidentDossier
         incident={selectedIncident}
         targetSteamId={targetSteamId}
+        priorCallsByDriver={priorCallsByDriver}
+        reasoning={reasoningDraft}
+        onChangeReasoning={onChangeReasoning}
         onSelectTarget={onSelectTarget}
         onFocusCar={onFocusCar}
         onFlag={onFlag}

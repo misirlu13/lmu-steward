@@ -11,6 +11,7 @@ import {
   LiveDecisionOutcome,
   LiveDriverRef,
   LiveIncident,
+  LivePriorCall,
   isDriverScopedOutcome,
 } from '../Live/liveFixtures';
 import { buildIncidents } from '../../hooks/useLiveSessionData';
@@ -140,6 +141,65 @@ export const ReplayIncidentDossier: React.FC<Props> = ({
   }, [decisionsForIncident, incident]);
 
   /*
+    The same per-driver history the live dossier shows, built from the same
+    store over the session this replay is linked to.
+
+    Wired here deliberately rather than left live-only. The dossier is one
+    component, so a section that appears during the session and vanishes in the
+    review reads as a bug — and post-session is when a pattern across a driver's
+    session is most worth seeing, since it is all there to be read at once.
+
+    Indexed on the target where there is one, on every involved party where
+    there is not: exactly the rule the provider applies, because a penalty
+    against one driver of a contact is a call about that driver only.
+  */
+  const priorCallsByDriver = useMemo(() => {
+    const byDriver = new Map<string, LivePriorCall[]>();
+    const sessionKey = liveData?.sessionKey;
+    if (!sessionKey) {
+      return byDriver;
+    }
+
+    Object.values(stewardDecisions ?? {}).forEach((decision) => {
+      if (decision.sessionKey !== sessionKey) {
+        return;
+      }
+
+      const targetSteam = decision.target?.steamId;
+      const keys = targetSteam
+        ? [targetSteam]
+        : decision.involvedParties
+            .map((party) => party.steamId)
+            .filter((id): id is string => Boolean(id));
+
+      const call: LivePriorCall = {
+        decisionId: decision.id,
+        incidentId: decision.incidentId,
+        lapLabel: decision.lapLabel,
+        state: decision.state,
+        outcome: decision.outcome as LiveDecisionOutcome | undefined,
+        wasTarget: Boolean(targetSteam),
+        decidedAt: decision.decidedAt,
+      };
+
+      keys.forEach((key) => {
+        const existing = byDriver.get(key);
+        if (existing) {
+          existing.push(call);
+        } else {
+          byDriver.set(key, [call]);
+        }
+      });
+    });
+
+    byDriver.forEach((calls) =>
+      calls.sort((a, b) => b.decidedAt - a.decidedAt),
+    );
+
+    return byDriver;
+  }, [liveData?.sessionKey, stewardDecisions]);
+
+  /*
     A solo incident has one party, so targeting it needs no extra click. A
     contact has no default, because picking either driver would be the app
     quietly deciding fault.
@@ -264,6 +324,14 @@ export const ReplayIncidentDossier: React.FC<Props> = ({
     hide the closing speeds and measurements a steward can already act on.
   */
 
+  /*
+    No `onChangeReasoning`, so the dossier draws no reasoning field. Reviewing
+    here revises an existing record, and a blank box wired straight into
+    `buildDecision` would wipe the reasoning the live call already carries —
+    which is why `buildDecision` reads `source.decisionReasoning` instead.
+    Prompting for reasoning against the record being revised is its own piece of
+    work, and both design docs describe it as a prompt rather than a field.
+  */
   return (
     <Box>
       <LiveIncidentDossier
@@ -272,6 +340,7 @@ export const ReplayIncidentDossier: React.FC<Props> = ({
         onFlag={onFlag}
         onDecide={onDecide}
         targetSteamId={effectiveTargetSteamId}
+        priorCallsByDriver={priorCallsByDriver}
         onSelectTarget={setTargetSteamId}
       />
     </Box>

@@ -1,5 +1,5 @@
 import WarningAmberIcon from '@mui/icons-material/WarningAmber';
-import { Box, Chip, Paper, Stack, Typography } from '@mui/material';
+import { Box, Chip, Paper, Stack, Tooltip, Typography } from '@mui/material';
 import { CarClassBadge } from '../CarClassBadge/CarClassBadge';
 import { AiBadge } from '../Common/AiBadge';
 import {
@@ -49,31 +49,77 @@ interface LiveFieldStateProps {
   battles: LivePressureBattle[];
   captureLabel: string;
   isCaptureLive: boolean;
+  /**
+   * Penalties the steward has assigned this session, per driver identity.
+   * Optional so the panel renders without a decision store behind it.
+   */
+  stewardPenaltiesByDriver?: Map<string, number>;
   onFocusCar: (slotId: number | undefined) => void;
 }
 
+/**
+ * The Overview's field-state column: session clock, watchlist, pressure list,
+ * standings.
+ *
+ * **The watchlist stays here.** The plan's file list said it "moves out to its
+ * own panel" without naming a destination, and that line predates the sectioned
+ * shell — so the call is made here rather than left for Step 9 to trip over.
+ *
+ * It belongs on Overview because the question it answers is a monitoring one:
+ * *who should I be watching?* That is what Overview is for. The incidents view
+ * answers the adjudication question — *has this driver been here before?* — and
+ * now answers it properly, in the dossier's prior-calls list, against the two
+ * drivers actually in front of the steward. A driver-level tally on that page
+ * would compete with the dossier for the same attention and answer a question
+ * nobody is asking mid-incident. `/live/incidents` also has no room for it: it
+ * is a filter strip over two columns, and a third panel would take width from
+ * the queue or the dossier, which is the clutter the whole shell exists to
+ * undo.
+ *
+ * Step 9 promotes the pressure monitor out of here onto the timing view, which
+ * leaves this panel as session + watchlist + field. That is a coherent column,
+ * not a leftover.
+ */
 export const LiveFieldState: React.FC<LiveFieldStateProps> = ({
   session,
   standings,
   battles,
   captureLabel,
   isCaptureLive,
+  stewardPenaltiesByDriver,
   onFocusCar,
 }) => {
-  // A heuristic, deliberately. LMU reports track limits as a running points
-  // total whose relationship to mTrackLimitsStepsPerPenalty is not yet
-  // understood, so this counts events rather than pretending to know how close
-  // a driver is to a penalty. The previous rule compared a count of strikes
-  // against a count of steps — different units, so nothing ever qualified.
+  const stewardPenaltiesFor = (steamId: string) =>
+    stewardPenaltiesByDriver?.get(steamId) ?? 0;
+
+  /*
+    A heuristic, deliberately. LMU reports track limits as a running points
+    total whose relationship to mTrackLimitsStepsPerPenalty is not yet
+    understood, so this counts events rather than pretending to know how close
+    a driver is to a penalty. The previous rule compared a count of strikes
+    against a count of steps — different units, so nothing ever qualified.
+
+    Two kinds of penalty are counted and they are kept apart on screen. The
+    game's own `outstandingPenalties` is what a driver is being made to serve;
+    the steward's tally is what has been called against them, which LMU knows
+    nothing about and cannot show. Summing them would double-count a call the
+    steward also entered in-game, and would make "who has been penalised" and
+    "who is still serving something" impossible to tell apart.
+
+    A steward's own call qualifies a driver on its own: a driver who has already
+    been penalised this session is by definition one worth watching.
+  */
   const watchlist = [...standings]
     .filter(
       (s) =>
         s.outstandingPenalties > 0 ||
+        stewardPenaltiesFor(s.steamId) > 0 ||
         s.trackLimitStrikes >= 2 ||
         s.incidentCount >= 2,
     )
     .sort(
       (a, b) =>
+        stewardPenaltiesFor(b.steamId) - stewardPenaltiesFor(a.steamId) ||
         b.outstandingPenalties - a.outstandingPenalties ||
         b.incidentCount - a.incidentCount ||
         b.trackLimitStrikes - a.trackLimitStrikes,
@@ -157,6 +203,7 @@ export const LiveFieldState: React.FC<LiveFieldStateProps> = ({
               return (
                 <Box
                   key={driver.steamId}
+                  data-testid={`watchlist-${driver.steamId}`}
                   onClick={() => onFocusCar(driver.slotId)}
                   sx={{ cursor: 'pointer' }}
                 >
@@ -170,14 +217,26 @@ export const LiveFieldState: React.FC<LiveFieldStateProps> = ({
                     </Typography>
                     <CarClassBadge carClass={driver.carClass} />
                     <Box sx={{ flex: 1 }} />
+                    {stewardPenaltiesFor(driver.steamId) > 0 ? (
+                      <Tooltip title="Penalties assigned by the steward this session">
+                        <Chip
+                          size="small"
+                          label={`${stewardPenaltiesFor(driver.steamId)} steward`}
+                          color="warning"
+                          sx={{ height: 18, fontSize: 10 }}
+                        />
+                      </Tooltip>
+                    ) : null}
                     {driver.outstandingPenalties > 0 ? (
-                      <Chip
-                        size="small"
-                        label={`${driver.outstandingPenalties} pen`}
-                        color="error"
-                        variant="outlined"
-                        sx={{ height: 18, fontSize: 10 }}
-                      />
+                      <Tooltip title="Penalties the game is making this driver serve">
+                        <Chip
+                          size="small"
+                          label={`${driver.outstandingPenalties} in-game`}
+                          color="error"
+                          variant="outlined"
+                          sx={{ height: 18, fontSize: 10 }}
+                        />
+                      </Tooltip>
                     ) : null}
                   </Stack>
                   <Typography variant="caption" color="text.secondary">

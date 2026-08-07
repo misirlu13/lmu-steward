@@ -9,6 +9,8 @@ import {
   Divider,
   Paper,
   Stack,
+  TextField,
+  Tooltip,
   Typography,
 } from '@mui/material';
 import { CarClassBadge } from '../CarClassBadge/CarClassBadge';
@@ -20,6 +22,7 @@ import {
   LiveDecisionOutcome,
   LiveIncident,
   LiveIncidentTrace,
+  LivePriorCall,
   isDriverScopedOutcome,
 } from './liveFixtures';
 
@@ -42,6 +45,128 @@ const decisionLabel: Record<LiveDecisionOutcome, string> = {
   'no-action': 'No Action',
   note: 'Note Only',
 };
+
+/**
+ * Prior calls shown per driver before it collapses to a count.
+ *
+ * A steward is looking for a pattern, and four entries is enough to see one.
+ * Beyond that the list starts competing with the incident actually on screen.
+ */
+const PRIOR_CALL_LIMIT = 4;
+
+const priorCallLabel = (call: LivePriorCall): string => {
+  const lap = call.lapLabel ? `${call.lapLabel} · ` : '';
+  if (call.outcome) {
+    return `${lap}${decisionLabel[call.outcome]}`;
+  }
+  if (call.state === 'FLAGGED') {
+    return `${lap}Flagged`;
+  }
+  if (call.state === 'DEFERRED') {
+    return `${lap}Deferred`;
+  }
+  return `${lap}Decided`;
+};
+
+/**
+ * A penalty against this driver reads loudest, an unresolved call next, and a
+ * finding they were merely part of reads quietest — the ordering a steward
+ * would apply themselves if the chips were plain text.
+ */
+const priorCallColor = (
+  call: LivePriorCall,
+): 'error' | 'warning' | 'info' | 'default' => {
+  if (call.outcome && isDriverScopedOutcome(call.outcome)) {
+    return 'error';
+  }
+  if (call.state === 'FLAGGED') {
+    return 'warning';
+  }
+  if (call.state === 'DEFERRED') {
+    return 'info';
+  }
+  return 'default';
+};
+
+interface PriorCallsProps {
+  entries: {
+    driver: { steamId: string; displayName: string };
+    calls: LivePriorCall[];
+  }[];
+}
+
+/**
+ * Every prior call this session against each party.
+ *
+ * Both parties are listed whenever either has history, because the comparison
+ * is the point: "three against one of them and none against the other" is a
+ * different situation from "one each", and a panel that only listed the driver
+ * with a record would hide that.
+ */
+const PriorCalls: React.FC<PriorCallsProps> = ({ entries }) => (
+  <Box sx={{ mt: 2 }}>
+    <Typography
+      variant="caption"
+      color="text.secondary"
+      sx={{
+        display: 'block',
+        textTransform: 'uppercase',
+        letterSpacing: 0.8,
+        mb: 0.5,
+      }}
+    >
+      Prior calls this session
+    </Typography>
+    <Stack spacing={0.75}>
+      {entries.map(({ driver, calls }) => (
+        <Stack
+          key={driver.steamId}
+          direction="row"
+          spacing={1}
+          alignItems="center"
+          flexWrap="wrap"
+          useFlexGap
+          data-testid={`prior-calls-${driver.steamId}`}
+        >
+          <Typography variant="body2" sx={{ minWidth: 168 }}>
+            {driver.displayName}
+          </Typography>
+          {calls.length === 0 ? (
+            <Typography variant="caption" color="text.secondary">
+              None
+            </Typography>
+          ) : null}
+          {calls.slice(0, PRIOR_CALL_LIMIT).map((call) => (
+            <Tooltip
+              key={call.decisionId}
+              title={
+                call.wasTarget
+                  ? 'Called against this driver'
+                  : 'A finding about an incident this driver was in'
+              }
+            >
+              <Chip
+                size="small"
+                label={priorCallLabel(call)}
+                color={priorCallColor(call)}
+                // Filled where the call was against this driver, outlined where
+                // they were only involved. The distinction has to survive being
+                // read at a glance.
+                variant={call.wasTarget ? 'filled' : 'outlined'}
+                sx={{ height: 20, fontSize: 10 }}
+              />
+            </Tooltip>
+          ))}
+          {calls.length > PRIOR_CALL_LIMIT ? (
+            <Typography variant="caption" color="text.secondary">
+              +{calls.length - PRIOR_CALL_LIMIT} earlier
+            </Typography>
+          ) : null}
+        </Stack>
+      ))}
+    </Stack>
+  </Box>
+);
 
 interface EvidenceRowProps {
   label: string;
@@ -204,6 +329,22 @@ interface LiveIncidentDossierProps {
   /** Which driver a penalty would be assigned to. */
   targetSteamId?: string;
   onSelectTarget: (steamId: string) => void;
+  /**
+   * Every call already made this session, indexed by driver. Optional so a
+   * caller with no decision store — and the dossier's own tests — still render.
+   */
+  priorCallsByDriver?: Map<string, LivePriorCall[]>;
+  /**
+   * The optional explanation the next call will carry.
+   *
+   * Both props together or neither: the field is only drawn when there is
+   * somewhere for the text to go. The replay dossier deliberately passes
+   * neither — post-session reasoning is a prompt against the record being
+   * revised, not a box bolted to the live footer, and wiring it here would
+   * quietly overwrite the reasoning a live call already carries.
+   */
+  reasoning?: string;
+  onChangeReasoning?: (next: string) => void;
 }
 
 export const LiveIncidentDossier: React.FC<LiveIncidentDossierProps> = ({
@@ -214,6 +355,9 @@ export const LiveIncidentDossier: React.FC<LiveIncidentDossierProps> = ({
   onDecide,
   targetSteamId,
   onSelectTarget,
+  priorCallsByDriver,
+  reasoning,
+  onChangeReasoning,
 }) => {
   /*
     The window is pulled when the dossier is opened rather than carried on the
@@ -246,6 +390,24 @@ export const LiveIncidentDossier: React.FC<LiveIncidentDossierProps> = ({
       };
     });
   }, [context, incident]);
+
+  /*
+    This incident's own record is excluded: a dossier that listed the call the
+    steward has just made on the incident in front of them as "prior" would be
+    citing itself as precedent.
+  */
+  const priorCalls = useMemo(
+    () =>
+      incident
+        ? incident.drivers.map((driver) => ({
+            driver,
+            calls: (priorCallsByDriver?.get(driver.steamId) ?? []).filter(
+              (call) => call.incidentId !== incident.id,
+            ),
+          }))
+        : [],
+    [incident, priorCallsByDriver],
+  );
 
   if (!incident) {
     return (
@@ -504,6 +666,17 @@ export const LiveIncidentDossier: React.FC<LiveIncidentDossierProps> = ({
           </Typography>
         ) : null}
 
+        {/*
+          Placed last in the evidence, immediately above the tariff: it is the
+          only thing on this panel that is not about this incident, and it is
+          read at the moment of deciding rather than while working through the
+          evidence. Drawn only when there is something to say — a "no prior
+          calls" block on every dossier in a clean session is furniture.
+        */}
+        {priorCalls.some((entry) => entry.calls.length > 0) ? (
+          <PriorCalls entries={priorCalls} />
+        ) : null}
+
         {incident.state === 'DEFERRED' ? (
           <Box
             sx={{
@@ -574,6 +747,28 @@ export const LiveIncidentDossier: React.FC<LiveIncidentDossierProps> = ({
         spacing={1}
         sx={{ px: 2, py: 1.5, borderTop: '1px solid', borderColor: 'divider' }}
       >
+        {/*
+          Optional, and nothing below it is gated on it. A live call is made
+          under time pressure and the call itself is what matters; the design
+          docs are explicit that reasoning is prompted for properly during
+          post-session review, so forcing it here would only teach stewards to
+          type a full stop to unlock the buttons.
+
+          It sits above the tariff because that is the order the work happens
+          in, and it carries onto a flag or a deferral as well as a decision —
+          "why I parked this" is worth as much as "why I called it".
+        */}
+        {onChangeReasoning ? (
+          <TextField
+            size="small"
+            fullWidth
+            value={reasoning ?? ''}
+            onChange={(event) => onChangeReasoning(event.target.value)}
+            placeholder="Reasoning (optional)"
+            inputProps={{ 'aria-label': 'Reasoning (optional)' }}
+          />
+        ) : null}
+
         <Typography
           variant="caption"
           color={targetDriver ? 'warning.main' : 'text.secondary'}

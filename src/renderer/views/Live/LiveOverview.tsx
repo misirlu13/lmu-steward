@@ -101,6 +101,7 @@ export const LiveOverview: React.FC = () => {
     flaggedCount,
     deferredCount,
     decidedCount,
+    stewardPenaltiesByDriver,
     onSelectIncident,
     onFocusCar,
   } = useLiveSession();
@@ -250,6 +251,7 @@ export const LiveOverview: React.FC = () => {
         battles={battles}
         captureLabel={liveIndicator.label}
         isCaptureLive={liveIndicator.state === 'live'}
+        stewardPenaltiesByDriver={stewardPenaltiesByDriver}
         onFocusCar={onFocusCar}
       />
     </Box>

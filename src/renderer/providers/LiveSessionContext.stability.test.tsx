@@ -120,6 +120,7 @@ describe('LiveSessionProvider referential stability', () => {
     expect(last.onChangeStateFilter).toBe(first.onChangeStateFilter);
     expect(last.onChangeIncidentFilters).toBe(first.onChangeIncidentFilters);
     expect(last.onResetIncidentFilters).toBe(first.onResetIncidentFilters);
+    expect(last.onChangeReasoning).toBe(first.onChangeReasoning);
     expect(last.onFocusCar).toBe(first.onFocusCar);
     expect(last.onFlag).toBe(first.onFlag);
     expect(last.onDefer).toBe(first.onDefer);
@@ -134,6 +135,16 @@ describe('LiveSessionProvider referential stability', () => {
     */
     expect(last.incidentFilters).toBe(first.incidentFilters);
     expect(last.incidentFilterOptions).toBe(first.incidentFilterOptions);
+
+    /*
+      Both are derived from the decision store, which does not change on a poll
+      tick — so both must survive one. `priorCallsByDriver` feeds a `useMemo` in
+      the dossier; rebuilding it every second would re-filter every party's
+      history once a second for no reason, and `stewardPenaltiesByDriver` is
+      read on every row of the watchlist.
+    */
+    expect(last.priorCallsByDriver).toBe(first.priorCallsByDriver);
+    expect(last.stewardPenaltiesByDriver).toBe(first.stewardPenaltiesByDriver);
   });
 
   it('should pass the incident list through untouched when no decision applies', () => {

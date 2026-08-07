@@ -10,6 +10,11 @@ import { LiveIncidentTrace } from './liveFixtures';
  * The position summary under each trace is not decoration: a brake spike is
  * innocent if there is a corner there, so the trace is only evidence when read
  * with where the car actually was.
+ *
+ * The shaded band around the contact line is the same honesty applied to the
+ * time axis. LMU reports the contact against a coarser clock than the frames
+ * are sampled at, so the instant is a range; drawing it stops the dashed line
+ * being read as a precision it does not have.
  */
 
 const VIEW_WIDTH = 600;
@@ -85,6 +90,39 @@ export const LiveIncidentTraceChart: React.FC<LiveIncidentTraceChartProps> = ({
 
   const contactX = toX(0);
 
+  /*
+    How wide the contact instant actually is.
+
+    `anchorErrorSeconds` was already stated in the caption, which answers "how
+    precise is this" but not the question a steward is actually asking — "is
+    that brake release before the contact or after it?". Drawn against the same
+    axis as the traces, the band answers it directly: an input inside the band
+    cannot be ordered against the contact at all, and one outside it can.
+
+    Clamped to the viewport, because the error can exceed the captured window on
+    a sparsely sampled incident and a band running off the chart would read as
+    no band at all.
+  */
+  const bandLeft = Math.max(0, toX(-(anchorErrorSeconds ?? 0)));
+  const bandRight = Math.min(VIEW_WIDTH, toX(anchorErrorSeconds ?? 0));
+  const bandWidth =
+    anchorErrorSeconds !== undefined && anchorErrorSeconds > 0
+      ? Math.max(0, bandRight - bandLeft)
+      : 0;
+
+  /*
+    The band and the figure say the same thing, so the caption names the band
+    where there is one and falls back to the bare number where the error is
+    zero or unknown — a sentence pointing at a band nobody can see is worse than
+    no sentence.
+  */
+  const caption =
+    bandWidth > 0
+      ? `The dashed line is the reported contact, and the shaded band is how precisely it could be located: ±${(anchorErrorSeconds as number).toFixed(2)}s. Inputs inside the band cannot be ordered against the contact.`
+      : anchorErrorSeconds !== undefined
+        ? `The dashed line is the reported contact, located to within ${anchorErrorSeconds.toFixed(2)}s.`
+        : 'The dashed line is the reported contact.';
+
   return (
     <Box sx={{ mt: 2 }}>
       <Stack direction="row" alignItems="baseline" spacing={1.5} sx={{ mb: 1 }}>
@@ -139,6 +177,22 @@ export const LiveIncidentTraceChart: React.FC<LiveIncidentTraceChartProps> = ({
               borderRadius: 1,
             }}
           >
+            {/*
+              Behind the traces on purpose: it is the context they are read in,
+              not a channel of its own, and drawn over the top it would wash out
+              the brake trace it exists to help interpret.
+            */}
+            {bandWidth > 0 ? (
+              <rect
+                data-testid="trace-uncertainty-band"
+                x={bandLeft}
+                y={0}
+                width={bandWidth}
+                height={VIEW_HEIGHT}
+                fill={theme.palette.warning.main}
+                opacity={0.16}
+              />
+            ) : null}
             <path
               d={buildArea(trace.frames, toX, (frame) => frame.throttle)}
               fill={theme.palette.success.main}
@@ -171,11 +225,7 @@ export const LiveIncidentTraceChart: React.FC<LiveIncidentTraceChartProps> = ({
       ))}
 
       <Typography variant="caption" color="text.secondary">
-        The dashed line is the reported contact
-        {anchorErrorSeconds !== undefined
-          ? `, located to within ${anchorErrorSeconds.toFixed(2)}s`
-          : ''}
-        .
+        {caption}
       </Typography>
     </Box>
   );
