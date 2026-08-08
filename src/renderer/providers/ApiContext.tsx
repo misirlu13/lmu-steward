@@ -945,6 +945,23 @@ export const ApiProvider: React.FC<{ children: React.ReactNode }> = ({
       [CONSTANTS.API.POST_CAMERA_ANGLE]: createHandler(
         CONSTANTS.API.POST_CAMERA_ANGLE,
       ),
+      /*
+        The three channels that ask the game what it is actually doing, all
+        owned by the live camera bar. `GET_IS_REPLAY_ACTIVE` is below with the
+        replay view's state, which is the same fact and stays one value.
+      */
+      [CONSTANTS.API.GET_FOCUSED_CAR]: createHandler(
+        CONSTANTS.API.GET_FOCUSED_CAR,
+      ),
+      [CONSTANTS.API.GET_CAMERA_INFO]: createHandler(
+        CONSTANTS.API.GET_CAMERA_INFO,
+      ),
+      [CONSTANTS.API.POST_REPLAY_REWATCH]: createHandler(
+        CONSTANTS.API.POST_REPLAY_REWATCH,
+      ),
+      [CONSTANTS.API.POST_REPLAY_RETURN_TO_LIVE]: createHandler(
+        CONSTANTS.API.POST_REPLAY_RETURN_TO_LIVE,
+      ),
       [CONSTANTS.API.POST_SELECT_IMPORT_FILE]: createHandler(
         CONSTANTS.API.POST_SELECT_IMPORT_FILE,
         (data: unknown) => {

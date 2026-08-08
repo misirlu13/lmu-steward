@@ -57,6 +57,8 @@ import {
   postArchiveNote,
   postArchiveReplays,
   postCloseReplay,
+  postReplayRewatch,
+  postReplayReturnToLive,
   postRestoreReplays,
   postToggleUIElement,
   postWatchReplay,
@@ -99,6 +101,7 @@ import {
   postSetCameraAngle,
   putFocusCar,
   getFocusedCar,
+  getCameraInfo,
 } from './api/camera';
 import {
   getUserSettings,
@@ -215,6 +218,7 @@ const CHANNEL_CALLBACK_HANDLERS: Partial<
   [CONSTANTS.API.GET_IS_REPLAY_ACTIVE]: withEventOnly(getIsReplayActive),
   [CONSTANTS.API.GET_SESSION_INFO]: withEventOnly(getSessionInfo),
   [CONSTANTS.API.GET_FOCUSED_CAR]: withEventOnly(getFocusedCar),
+  [CONSTANTS.API.GET_CAMERA_INFO]: withEventOnly(getCameraInfo),
   [CONSTANTS.API.GET_CAREER_SUMMARY]: withEventAndData<
     CareerFilters | undefined
   >(getCareerSummary),
@@ -246,6 +250,12 @@ const CHANNEL_CALLBACK_HANDLERS: Partial<
     withEventAndData<ArchiveReplaysRequest>(postArchiveNote),
   [CONSTANTS.API.POST_CAMERA_ANGLE]:
     withEventAndData<CameraAngleRequestBody>(postSetCameraAngle),
+  [CONSTANTS.API.POST_REPLAY_REWATCH]: withEventAndData<{ etSeconds?: number }>(
+    postReplayRewatch,
+  ),
+  [CONSTANTS.API.POST_REPLAY_RETURN_TO_LIVE]: withEventOnly(
+    postReplayReturnToLive,
+  ),
   [CONSTANTS.API.POST_CLOSE_REPLAY]: withEventOnly(postCloseReplay),
   [CONSTANTS.API.POST_CLOSE_LMU]: withEventOnly(postCloseLmu),
   [CONSTANTS.API.POST_CLEAR_LOCAL_STORAGE]: withEventOnly(

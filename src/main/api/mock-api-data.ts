@@ -418,6 +418,27 @@ const mockLiveSessionSegments = (requestData: unknown) => {
 const MOCK_REPLAY_LOADING_DURATION_MS = 6500;
 let mockReplayLoadingStartedAtMs: number | null = null;
 
+/**
+ * Whether the mocked game is showing a replay, held so the three replay
+ * channels agree with each other.
+ *
+ * A flat `data: true` would have made `isActive` say one thing while the
+ * rewatch and return-to-live channels reported another — and this is a feature
+ * whose whole point is that the app stops guessing at game state, so a mock
+ * that guesses would be testing the wrong thing.
+ *
+ * Starts `true` because the replay view's own poll expects it: it navigates
+ * back to the dashboard when `isActive` goes true→false, so a mock that opened
+ * at `false` would eject a developer from the replay screen on load. The live
+ * footer therefore boots dev mode showing its replay strip; pressing **View
+ * live** clears it, which is the state pair worth iterating on anyway.
+ *
+ * Dev mode is not evidence about the game. `POST_CAMERA_ANGLE` returns success
+ * unconditionally here, so the camera error path is unreachable under
+ * `LMU_DEVMODE=true` — check real behaviour with plain `npm start`.
+ */
+let mockReplayActive = true;
+
 const getMockLoadingStatus = () => {
   if (mockReplayLoadingStartedAtMs === null) {
     return {
@@ -592,14 +613,54 @@ export const mockApiData: Partial<Record<ApiChannel, MockApiResolver>> = {
   [CONSTANTS.API.GET_LIVE_CAR_POSITIONS]: liveCarPositionsResponse,
   [CONSTANTS.API.GET_STANDINGS_HISTORY]: standingsHistoryResponse,
   [CONSTANTS.API.GET_SESSION_INFO]: sessionInfoResponse,
-  [CONSTANTS.API.GET_IS_REPLAY_ACTIVE]: {
+  [CONSTANTS.API.GET_IS_REPLAY_ACTIVE]: () => ({
     status: 'success',
-    data: true,
+    data: mockReplayActive,
+  }),
+  [CONSTANTS.API.POST_REPLAY_REWATCH]: (requestData: unknown) => {
+    mockReplayActive = true;
+    const etSeconds = Number(
+      (requestData as { etSeconds?: number })?.etSeconds,
+    );
+
+    return {
+      status: 'success',
+      data: {
+        isReplayActive: true,
+        seekToSeconds: Number.isFinite(etSeconds)
+          ? Math.max(etSeconds - 5, 0)
+          : 0,
+      },
+    };
   },
+  [CONSTANTS.API.POST_REPLAY_RETURN_TO_LIVE]: () => {
+    mockReplayActive = false;
+
+    return { status: 'success', data: { isReplayActive: false } };
+  },
+  /*
+    A bare number, which is what the endpoint actually answers — verified live
+    on 2026-08-08 against a running session, where `/rest/watch/focus` returned
+    `30` and not an object. This mock previously carried `{slotID: 0}` and no
+    renderer code had ever read it, so nothing noticed. The reader accepts both
+    shapes rather than trusting either, because the response body is not in
+    LMU's Swagger spec.
+  */
   [CONSTANTS.API.GET_FOCUSED_CAR]: {
     status: 'success',
+    data: 0,
+  },
+  /*
+    The auto-director entry, not a numbered group — `TracksideCycle` is where
+    LMU's trackside group actually starts, and the case a naive lowercase
+    compare against `CameraMode` gets wrong. Dev mode serves it deliberately so
+    the mapping is exercised rather than papered over.
+  */
+  [CONSTANTS.API.GET_CAMERA_INFO]: {
+    status: 'success',
     data: {
-      slotID: 0,
+      cameraName: 'TRACKING021',
+      currentCameraGroup: 'TracksideCycle',
     },
   },
   [CONSTANTS.API.GET_PROFILE_INFO]: {

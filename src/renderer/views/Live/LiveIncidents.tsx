@@ -44,6 +44,7 @@ export const LiveIncidents: React.FC = () => {
     onResetIncidentFilters,
     onSelectTarget,
     onFocusCar,
+    onRewatchIncident,
     onFlag,
     onDefer,
     onDecide,
@@ -139,6 +140,13 @@ export const LiveIncidents: React.FC = () => {
           dossier hides it rather than disabling it.
         */
         onFocusCar={isReviewingRecord ? undefined : onFocusCar}
+        /*
+          And no rewatch against a record either, for the sibling reason: the
+          elapsed times in a finished session's incidents index *that* session's
+          replay, while the seek addresses the buffer of the one running now.
+          The picture would land at an unrelated moment and look correct.
+        */
+        onRewatch={isReviewingRecord ? undefined : onRewatchIncident}
         onFlag={onFlag}
         onDefer={onDefer}
         onDecide={onDecide}

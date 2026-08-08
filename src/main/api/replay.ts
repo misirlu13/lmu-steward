@@ -1,4 +1,4 @@
-import { CONSTANTS } from '@constants';
+import { CONSTANTS, replayJumpTargetSeconds } from '@constants';
 import {
   ArchivedReplayRecord,
   ArchivedReplayStore,
@@ -1267,6 +1267,146 @@ export const putReplayTime = async (
     });
   } catch (error: unknown) {
     event.reply(CONSTANTS.API.PUT_REPLAY_COMMAND_TIME, {
+      status: 'error',
+      message: toErrorMessage(error),
+    });
+  }
+};
+
+/**
+ * Is the game's picture currently showing a replay rather than the live edge?
+ *
+ * Read fresh rather than passed in. `/rest/replay/toggleactive` has no setter
+ * to pair with it — there is no `setActive` among LMU's endpoints — so the only
+ * way to reach a *known* state is to read, then toggle if the answer is wrong.
+ * A cached answer would let the steward's own press of the game's LIVE button
+ * turn "rewatch" into "return to live".
+ *
+ * Returns null when the question cannot be answered, which is the one case
+ * neither caller may guess at: toggling on a null would be a coin flip between
+ * doing nothing and yanking the picture off the live session.
+ */
+const readIsReplayActive = async (): Promise<boolean | null> => {
+  const response = await fetch(
+    `${CONSTANTS.LMU_API_BASE_URL}/rest/replay/isActive`,
+  );
+
+  if (!response.ok) {
+    return null;
+  }
+
+  return (await response.text()).trim().toLowerCase() === 'true';
+};
+
+const toggleReplayActive = async (): Promise<void> => {
+  const response = await fetch(
+    `${CONSTANTS.LMU_API_BASE_URL}/rest/replay/toggleactive`,
+    { method: 'POST' },
+  );
+
+  if (!response.ok) {
+    throw new Error(`API responded with status ${response.status}`);
+  }
+};
+
+/**
+ * POST
+ * Show the steward a moment from the live session's own replay buffer.
+ *
+ * `read isActive → toggle if live → seek`, in that order, in one place.
+ *
+ * The order is not incidental. `PUT /rest/watch/replaytime/{seconds}` is
+ * **inert while `isActive` is false** — measured at the live edge, it answers
+ * 200 and does nothing — so a seek sent before the toggle silently fails. And
+ * the toggle on its own lands at lap 1, so the two are never separable: there
+ * is no honest "enter replay mode" button, only "show me this moment".
+ *
+ * Verified safe on 2026-08-08: with the picture seeked back 3,800 s from a live
+ * edge of ~7911, `sessionInfo.currentEventTime` kept advancing in real time and
+ * standings still reported the leader's live lap. `toggleactive` moves the
+ * rendered camera and nothing else — the sidecar's shared-memory scoring, the
+ * standings feed and therefore the live capture never see the rewind. **If that
+ * ever stops being true this feature corrupts live captures**, and the symptom
+ * would be a session appearing to split mid-race as the backwards ET jump blew
+ * through `SESSION_RESTART_ET_TOLERANCE`.
+ */
+
+export const postReplayRewatch = async (
+  event: Electron.IpcMainEvent,
+  request: { etSeconds?: number },
+) => {
+  try {
+    const etSeconds = Number(request?.etSeconds);
+
+    if (!Number.isFinite(etSeconds)) {
+      throw new Error('No incident time to rewatch.');
+    }
+
+    const isActive = await readIsReplayActive();
+
+    if (isActive === null) {
+      throw new Error(
+        'Le Mans Ultimate did not report whether a replay is playing.',
+      );
+    }
+
+    if (!isActive) {
+      await toggleReplayActive();
+    }
+
+    const seekToSeconds = replayJumpTargetSeconds(etSeconds);
+    const seekResponse = await fetch(
+      `${CONSTANTS.LMU_API_BASE_URL}/rest/watch/replaytime/${seekToSeconds}`,
+      { method: 'PUT' },
+    );
+
+    if (!seekResponse.ok) {
+      throw new Error(`API responded with status ${seekResponse.status}`);
+    }
+
+    event.reply(CONSTANTS.API.POST_REPLAY_REWATCH, {
+      status: 'success',
+      data: { isReplayActive: true, seekToSeconds },
+    });
+  } catch (error: unknown) {
+    event.reply(CONSTANTS.API.POST_REPLAY_REWATCH, {
+      status: 'error',
+      message: toErrorMessage(error),
+    });
+  }
+};
+
+/**
+ * POST
+ * Put the game's picture back on the live edge.
+ *
+ * Reads first and toggles only if a replay is actually playing, so pressing it
+ * twice — or pressing it after the steward has already used the game's own LIVE
+ * button — cannot rewind the picture into a replay. LMU resets playback speed
+ * to 1x on the way back, which is why the footer drops its speed control rather
+ * than leaving a stale one on screen.
+ */
+
+export const postReplayReturnToLive = async (event: Electron.IpcMainEvent) => {
+  try {
+    const isActive = await readIsReplayActive();
+
+    if (isActive === null) {
+      throw new Error(
+        'Le Mans Ultimate did not report whether a replay is playing.',
+      );
+    }
+
+    if (isActive) {
+      await toggleReplayActive();
+    }
+
+    event.reply(CONSTANTS.API.POST_REPLAY_RETURN_TO_LIVE, {
+      status: 'success',
+      data: { isReplayActive: false },
+    });
+  } catch (error: unknown) {
+    event.reply(CONSTANTS.API.POST_REPLAY_RETURN_TO_LIVE, {
       status: 'error',
       message: toErrorMessage(error),
     });

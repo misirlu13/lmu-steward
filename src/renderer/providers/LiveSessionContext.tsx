@@ -26,6 +26,10 @@ import {
 import { LiveTrackMapResult, useLiveTrackMap } from '../hooks/useLiveTrackMap';
 import { useLiveSessionSegments } from '../hooks/useLiveSessionSegments';
 import {
+  LiveGameCameraReading,
+  useLiveGameState,
+} from '../hooks/useLiveGameState';
+import {
   isDriverScopedOutcome,
   outcomeForShortcut,
 } from '../utils/stewardActions';
@@ -59,6 +63,17 @@ const SHORTCUT_ROUTES = new Set(['/live', '/live/incidents']);
 
 /** Where a keystroke is text the steward is writing, not a command. */
 const EDITABLE_TAGS = new Set(['INPUT', 'TEXTAREA', 'SELECT']);
+
+/**
+ * How long a focus the app has asked for outranks the focus the game reports.
+ *
+ * Long enough to cover a burst of stepping — the game confirms in 5–8 ms, so
+ * any wait beyond a poll tick or two means the request did not land — and short
+ * enough that a slot LMU quietly refused does not leave the bar naming a car
+ * nobody is watching. Slots outside the field are the known case: `38`–`100`
+ * answer 200 and no-op.
+ */
+const FOCUS_CONFIRM_TIMEOUT_MS = 3000;
 
 /**
  * Which session a call is being made *about*, which is not always the one the
@@ -455,14 +470,42 @@ export interface LiveSessionContextValue {
   reasoningDraft: string;
 
   /**
-   * The slot the app last pointed the camera at.
+   * The slot the camera is on.
    *
-   * What *this app* asked for, not necessarily what the game is showing: LMU's
-   * camera can be moved from inside the game and nothing tells us when it was.
-   * Good enough for a control that drives the camera, and deliberately labelled
-   * as a selection rather than as a readout.
+   * Now a readout rather than a wish. It is still set optimistically when the
+   * app moves the camera — a control that waits for a round trip before naming
+   * the car it just moved to feels broken — but it is reconciled against
+   * `GET /rest/watch/focus` on every poll tick, so a camera moved from inside
+   * the game or by LMU's own auto-director corrects it within a second.
    */
   focusedSlotId?: number;
+  /**
+   * Whether anything can drive the camera at all: a live session, or dev mode's
+   * fixtures standing in for one.
+   *
+   * Resolved here rather than in the shell so the bar's existence, the poll that
+   * feeds it and the shell's bottom padding are one decision. They were briefly
+   * three, and a bar that renders without its poll is a bar that guesses.
+   */
+  canDriveCamera: boolean;
+  /**
+   * Whether the *game* is showing a rewound picture rather than the live edge.
+   *
+   * Null when it could not be asked. Polled, never assumed:
+   * `/rest/replay/toggleactive` is a toggle with no setter, and the steward can
+   * press the game's own LIVE button at any moment — a footer holding its own
+   * idea of this would offer "View live" while already live, and toggle
+   * *into* a replay.
+   *
+   * The rest of the app stays live while this is true, and says so. Scoring
+   * does not follow the picture: standings, timing, the track map and the
+   * pressure monitor all keep showing the running session. That is the same
+   * ruling segment selection took — a half-moved view is worse than either
+   * whole one — and the reason the footer announces the split in words.
+   */
+  isReplayActive: boolean | null;
+  /** What the game reports its camera is doing, for the bar to reconcile against. */
+  gameCamera?: LiveGameCameraReading;
 
   /*
     Every callback below is referentially stable for the life of the provider.
@@ -490,6 +533,17 @@ export interface LiveSessionContextValue {
   onFocusCar: (slotId: number | undefined) => void;
   /** Step the camera through the field, honouring the class filter. */
   onCycleFocus: (direction: 'previous' | 'next') => void;
+  /**
+   * Rewind the game's picture to just before an incident, without leaving the
+   * live session.
+   *
+   * One call, because the sequence behind it is not separable: entering replay
+   * mode on its own lands at lap 1, and a seek sent before the mode change is
+   * inert. Main reads `isActive` and does both in order.
+   */
+  onRewatchIncident: (incidentId: string) => void;
+  /** Put the picture back on the live edge. A no-op if it is already there. */
+  onReturnToLive: () => void;
   onFlag: (incidentId: string) => void;
   onDefer: (incidentId: string) => void;
   onDecide: (incidentId: string, outcome: LiveDecisionOutcome) => void;
@@ -538,6 +592,17 @@ export const LiveSessionProvider: React.FC<{ children: React.ReactNode }> = ({
     (liveData as { useRendererFixtures?: boolean }).useRendererFixtures ===
     true;
 
+  /*
+    No camera controls when there is nothing to drive, and — the reason this
+    lives here rather than in the shell — no poll either. A camera control that
+    cannot move a camera is worse than none: the steward presses it, nothing
+    happens, and they learn to distrust the row.
+  */
+  const canDriveCamera = useFixtures || liveIndicator.state === 'live';
+
+  const { isReplayActive, camera: gameCamera } =
+    useLiveGameState(canDriveCamera);
+
   const [selectedIncidentId, setSelectedIncidentId] = useState<
     string | undefined
   >();
@@ -561,6 +626,10 @@ export const LiveSessionProvider: React.FC<{ children: React.ReactNode }> = ({
   );
   const [classFilter, setClassFilter] = useState<string>('ALL');
   const [focusedSlotId, setFocusedSlotId] = useState<number | undefined>();
+  // The slot the app has asked for and the game has not yet confirmed.
+  const pendingFocusRef = useRef<
+    { slotId: number; requestedAt: number } | undefined
+  >(undefined);
   const [incidentFilters, setIncidentFilters] = useState<LiveIncidentFilters>(
     DEFAULT_LIVE_INCIDENT_FILTERS,
   );
@@ -1057,6 +1126,82 @@ export const LiveSessionProvider: React.FC<{ children: React.ReactNode }> = ({
     // Held so the camera bar can name the car it just moved to, and so
     // stepping through the field continues from wherever the steward jumped.
     setFocusedSlotId(slotId);
+    pendingFocusRef.current = { slotId, requestedAt: Date.now() };
+  }, []);
+
+  /*
+    Reconciling the app's pointer with the camera the game is actually on.
+
+    The defect this fixes, reproduced live: step via the app to classification
+    index 25, move the camera out-of-band to index 2 as LMU's own controls or
+    its auto-director would, press **next** once — and it goes to index 26, its
+    own pointer plus one, yanking the camera off what was on screen and then
+    naming the wrong driver. Stepping now starts from what the game reports.
+
+    A command the app has issued outranks the reading until the game confirms
+    it. Without that, stepping would fight itself: `onFocusCar` is optimistic by
+    design — twenty clicks at 142 ms apiece land twenty exact steps precisely
+    because nothing waits for a round trip — and a poll landing between the
+    click and the PUT would drag the pointer back one place. The pending slot is
+    cleared the moment the game agrees, and abandoned after
+    `FOCUS_CONFIRM_TIMEOUT_MS` whether it agrees or not: an app that cannot get
+    its way is the case where trusting its own pointer is *most* wrong.
+
+    Keyed on the reading object, not on the slot id, because the failure being
+    caught is a request that changed nothing — "the value is the same as last
+    tick" is the symptom, not a reason to skip the check.
+  */
+  useEffect(() => {
+    const reported = gameCamera?.focusedSlotId;
+    if (reported === undefined) {
+      return;
+    }
+
+    const pending = pendingFocusRef.current;
+    if (pending) {
+      if (pending.slotId === reported) {
+        pendingFocusRef.current = undefined;
+      } else if (Date.now() - pending.requestedAt < FOCUS_CONFIRM_TIMEOUT_MS) {
+        return;
+      } else {
+        pendingFocusRef.current = undefined;
+      }
+    }
+
+    setFocusedSlotId((previous) =>
+      previous === reported ? previous : reported,
+    );
+  }, [gameCamera]);
+
+  /*
+    Rewatching, and returning to live.
+
+    Both are single messages because both are read-then-act sequences against a
+    toggle with no setter, and main is where that read belongs — see
+    `POST_REPLAY_REWATCH` in `constants.ts`. The renderer deliberately holds no
+    "we are in replay now" flag of its own: the poll answers that, and a second
+    copy would be the same defect as the camera pointer wearing a different hat.
+
+    Nothing else moves. The timing screen, track map, pressure monitor and
+    standings stay on the running session while the game shows a rewound
+    picture, because scoring does not follow the replay — verified live, and the
+    reason a live capture survives this at all.
+  */
+  const onRewatchIncident = useCallback((incidentId: string) => {
+    const incident = latest.current.incidents.find(
+      (entry) => entry.id === incidentId,
+    );
+    if (!incident) {
+      return;
+    }
+
+    sendMessage(CONSTANTS.API.POST_REPLAY_REWATCH, {
+      etSeconds: incident.etSeconds,
+    });
+  }, []);
+
+  const onReturnToLive = useCallback(() => {
+    sendMessage(CONSTANTS.API.POST_REPLAY_RETURN_TO_LIVE);
   }, []);
 
   /*
@@ -1205,6 +1350,9 @@ export const LiveSessionProvider: React.FC<{ children: React.ReactNode }> = ({
       stewardPenaltiesByDriver,
       reasoningDraft,
       focusedSlotId,
+      canDriveCamera,
+      isReplayActive,
+      gameCamera,
       onSelectIncident: setSelectedIncidentId,
       onSelectSegment,
       onSelectTarget: setTargetSteamId,
@@ -1215,6 +1363,8 @@ export const LiveSessionProvider: React.FC<{ children: React.ReactNode }> = ({
       onChangeReasoning: setReasoningDraft,
       onFocusCar,
       onCycleFocus,
+      onRewatchIncident,
+      onReturnToLive,
       onFlag,
       onDefer,
       onDecide,
@@ -1222,12 +1372,17 @@ export const LiveSessionProvider: React.FC<{ children: React.ReactNode }> = ({
     [
       activeSessionKey,
       battles,
+      canDriveCamera,
       classFilter,
       counts,
       effectiveTargetSteamId,
       fieldByClass,
       focusedSlotId,
+      gameCamera,
+      isReplayActive,
       onCycleFocus,
+      onRewatchIncident,
+      onReturnToLive,
       incidentFilterOptions,
       incidentFilters,
       incidents,

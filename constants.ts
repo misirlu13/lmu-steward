@@ -31,6 +31,21 @@ const EXPERIMENTAL_FEATURES: ExperimentalFeature[] = [
   },
 ];
 
+/**
+ * How far before an incident the picture lands when the app seeks to it.
+ *
+ * A steward dropped exactly on the contact sees the aftermath; what they are
+ * adjudicating is the approach. Five seconds was already the replay view's
+ * answer in two places, and the live view's Rewatch has to agree with it — the
+ * same button on two screens seeking to two different moments is the kind of
+ * disagreement nobody reports as a bug and everybody distrusts.
+ */
+export const REPLAY_INCIDENT_LEAD_IN_SECONDS = 5;
+
+/** The seek target for an incident at `etSeconds`, never before the session start. */
+export const replayJumpTargetSeconds = (etSeconds: number): number =>
+  Math.max(etSeconds - REPLAY_INCIDENT_LEAD_IN_SECONDS, 0);
+
 export const CONSTANTS = {
   LMU_API_BASE_URL: 'http://localhost:6397',
   LMU_DEFAULT_EXECUTABLE_PATH:
@@ -82,6 +97,16 @@ export const CONSTANTS = {
     GET_IS_REPLAY_ACTIVE: 'get.is-replay-active',
     GET_SESSION_INFO: 'get.session-info',
     GET_FOCUSED_CAR: 'get.focused-car',
+    /**
+     * What the game's camera is actually set to — `{cameraName,
+     * currentCameraGroup}` from `/rest/replay/CameraController/getCameraInfo`.
+     *
+     * The other half of "ask the game what it is showing". `GET_FOCUSED_CAR`
+     * answers *which car* and carries no camera group; this answers *which
+     * group* and carries no slot id. Neither can reconcile the other's value,
+     * so the camera bar reads both.
+     */
+    GET_CAMERA_INFO: 'get.camera-info',
     GET_STORAGE_DEBUG_INFO: 'get.storage-debug-info',
     GET_CAREER_SUMMARY: 'get.career-summary',
     POST_CAREER_RESCAN: 'post.career-rescan',
@@ -94,6 +119,27 @@ export const CONSTANTS = {
     POST_RESTORE_REPLAYS: 'post.restore-replays',
     POST_ARCHIVE_NOTE: 'post.archive-note',
     POST_CAMERA_ANGLE: 'post.camera-angle',
+    /**
+     * Show the steward a moment from the live session's own replay buffer.
+     *
+     * Two intent-named channels rather than one `toggleactive` passthrough,
+     * because `/rest/replay/toggleactive` is a **toggle with no setter** —
+     * there is no `setActive` among LMU's 179 endpoints. Every caller therefore
+     * has to read `/rest/replay/isActive` first and act on the answer, and a
+     * renderer holding a polled copy would eventually act on a stale one: the
+     * steward can press the game's own LIVE button between the poll and the
+     * click, and the bar would then do the exact opposite of what its label
+     * says.
+     *
+     * So the read-then-act sequence lives in main, next to the calls, and the
+     * raw toggle is never exposed. That also settles the ordering constraint
+     * for free — `replaytime` is inert while `isActive` is false, returning 200
+     * and doing nothing — and makes it impossible to enter replay mode without
+     * a seek target, which would drop the steward at lap 1.
+     */
+    POST_REPLAY_REWATCH: 'post.replay-rewatch',
+    /** Return the game's picture to the live edge. A no-op if already live. */
+    POST_REPLAY_RETURN_TO_LIVE: 'post.replay-return-to-live',
     POST_CLOSE_REPLAY: 'post.close-replay',
     POST_CLOSE_LMU: 'post.close-lmu',
     POST_CLEAR_LOCAL_STORAGE: 'post.clear-local-storage',

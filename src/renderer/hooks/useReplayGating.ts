@@ -7,9 +7,18 @@ import { deriveLiveIndicator } from './useLiveIndicator';
  * One exported string rather than a sentence per call site. Loading a replay is
  * the same act wherever it is triggered from, and a steward who reads two
  * different explanations for the same dead button learns to trust neither.
+ *
+ * The second sentence exists because the live view now has a **Rewatch** button
+ * that visibly rewinds the game, and without it these two read as a flat
+ * contradiction — one screen refusing to touch the replay while another rewinds
+ * it on request. They are different acts. Loading a *stored* replay calls
+ * `/rest/watch/play/{id}` and makes the game load a different session, ending
+ * the one being captured. Scrubbing the running session's own buffer moves only
+ * the rendered camera: scoring keeps advancing, standings keep reporting live
+ * values, and the capture never sees it.
  */
 export const LIVE_SESSION_REPLAY_BLOCK_REASON =
-  'A live session is running. Loading a replay takes over Le Mans Ultimate and would end the session, so this is unavailable until it finishes.';
+  'A live session is running. Loading a stored replay takes over Le Mans Ultimate and would end the session, so this is unavailable until it finishes. Rewatching an incident from the live view is a different thing and stays available — it rewinds only the picture.';
 
 /**
  * Whether loading a replay right now would interrupt a running session.

@@ -1,7 +1,7 @@
 import React from 'react';
 import '@testing-library/jest-dom';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
-import { fireEvent, render, screen, within } from '@testing-library/react';
+import { act, fireEvent, render, screen, within } from '@testing-library/react';
 import { CONSTANTS } from '@constants';
 import { LiveShell } from './LiveShell';
 import { LiveOverview } from './LiveOverview';
@@ -56,18 +56,50 @@ const pollResult = (standings: LiveStanding[] = STANDINGS) => ({
 
 let liveSessionStatus: { state: string } = { state: 'live' };
 
+/*
+  A working subscription registry, not a bare `jest.fn()`. The bar now reconciles
+  itself against replies from the game, so a mock that swallows them can only
+  ever test the half of the behaviour that guesses.
+*/
+let subscribers: Record<string, Set<(payload: unknown) => void>> = {};
+
+const emit = (channel: string, payload: unknown) =>
+  act(() => {
+    subscribers[channel]?.forEach((callback) => callback(payload));
+  });
+
+/**
+ * What the game answers when asked which car is on screen.
+ *
+ * A bare number, which is what `/rest/watch/focus` actually returns — verified
+ * against a running session on 2026-08-08, where it answered `30`. The dev-mode
+ * mock had carried `{slotID: 0}` since it was written and nothing had ever read
+ * it, so the wrong shape cost nothing until now.
+ */
+const gameFocus = (slotId: number) =>
+  emit(CONSTANTS.API.GET_FOCUSED_CAR, { status: 'success', data: slotId });
+
 beforeEach(() => {
   jest.clearAllMocks();
   liveSessionStatus = { state: 'live' };
+  subscribers = {};
   useApiMock.mockImplementation(
     () =>
       ({
         isConnected: true,
         hasApiStatusResponse: true,
         liveSessionStatus,
+        isReplayActive: false,
         stewardDecisions: {},
         saveStewardDecision: jest.fn(),
-        subscribeToApiChannel: jest.fn(),
+        subscribeToApiChannel: (
+          channel: string,
+          callback: (payload: unknown) => void,
+        ) => {
+          subscribers[channel] ??= new Set();
+          subscribers[channel].add(callback);
+          return () => subscribers[channel]?.delete(callback);
+        },
       }) as unknown as ReturnType<typeof useApi>,
   );
   useLiveSessionDataMock.mockImplementation(
@@ -213,6 +245,88 @@ describe('live camera driver cycling', () => {
     fireEvent.click(screen.getByText('Incidents'));
 
     expect(bar().getByText(STANDINGS[0].displayName)).toBeInTheDocument();
+  });
+
+  /*
+    The defect, reproduced. Live: stepped via the app to classification index
+    25, moved the camera out-of-band to index 2 as LMU's own controls or its
+    auto-director would, pressed **next** once — and it went to index 26, its
+    own pointer plus one, yanking the camera off what was on screen and then
+    naming the wrong driver in the bar. Fixed means it steps from the game.
+  */
+  it('should step from the car the game says is on screen, not from its own pointer', () => {
+    renderLive();
+    const controls = bar();
+
+    fireEvent.click(controls.getByLabelText('Next car'));
+    gameFocus(1);
+    expect(focusCalls().at(-1)?.[1]).toBe('1');
+
+    // The camera moves inside the game, and the app is told about it only by
+    // being asked.
+    gameFocus(5);
+    expect(controls.getByText(STANDINGS[4].displayName)).toBeInTheDocument();
+
+    fireEvent.click(controls.getByLabelText('Next car'));
+
+    expect(focusCalls().at(-1)?.[1]).toBe('6');
+  });
+
+  /*
+    But a reading that arrives between the click and the game acting on it must
+    not drag the pointer back. Stepping is optimistic on purpose — twenty clicks
+    at 142 ms apiece landed twenty exact steps precisely because nothing waits
+    for a round trip — and reconciling mid-step would be worse than the drift it
+    fixes.
+  */
+  it('should not let a stale reading fight the steward mid-step', () => {
+    renderLive();
+    const controls = bar();
+
+    fireEvent.click(controls.getByLabelText('Next car'));
+    fireEvent.click(controls.getByLabelText('Next car'));
+    expect(focusCalls().at(-1)?.[1]).toBe('2');
+
+    // The game is still reporting the car from before either click.
+    gameFocus(1);
+    expect(controls.getByText(STANDINGS[1].displayName)).toBeInTheDocument();
+
+    fireEvent.click(controls.getByLabelText('Next car'));
+    expect(focusCalls().at(-1)?.[1]).toBe('3');
+  });
+
+  /*
+    Both shapes, because the endpoint's response body is not documented in LMU's
+    Swagger spec — it lists paths, methods and parameters only. A live call says
+    it is a bare number today; an object was believed for long enough to be
+    written into a mock, and reading only one of the two would silently disable
+    the reconciliation above rather than fail loudly.
+  */
+  it('should read the slot whether the game sends a number or an object', () => {
+    renderLive();
+    const controls = bar();
+
+    emit(CONSTANTS.API.GET_FOCUSED_CAR, { status: 'success', data: 3 });
+    expect(controls.getByText(STANDINGS[2].displayName)).toBeInTheDocument();
+
+    emit(CONSTANTS.API.GET_FOCUSED_CAR, {
+      status: 'success',
+      data: { slotID: 4 },
+    });
+    expect(controls.getByText(STANDINGS[3].displayName)).toBeInTheDocument();
+  });
+
+  // A car the game says nothing about leaves the bar as it was, rather than
+  // clearing to "no car selected" once a second.
+  it('should ignore a focus reading it cannot read', () => {
+    renderLive();
+    const controls = bar();
+
+    fireEvent.click(controls.getByLabelText('Next car'));
+    gameFocus(1);
+    emit(CONSTANTS.API.GET_FOCUSED_CAR, { status: 'error', message: 'gone' });
+
+    expect(controls.getByText(STANDINGS[0].displayName)).toBeInTheDocument();
   });
 
   // Slots come from the capture; the layout fixtures carry none, and LMU's

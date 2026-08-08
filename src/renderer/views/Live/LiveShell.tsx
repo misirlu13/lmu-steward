@@ -46,16 +46,17 @@ const LiveShellBody: React.FC = () => {
     isReviewingRecord,
     selectedSegment,
     onCycleFocus,
+    /*
+      Resolved in the provider, not here. The same condition decides whether the
+      bar exists, whether the poll that keeps it honest runs, and how much room
+      the shell leaves at the bottom — three things that must never disagree.
+    */
+    canDriveCamera,
+    isReplayActive,
+    gameCamera,
+    onReturnToLive,
   } = useLiveSession();
   const { phase } = session;
-
-  /*
-    No bar when there is nothing to drive. A camera control that cannot move a
-    camera is worse than no camera control: the steward presses it, nothing
-    happens, and they learn to distrust the row. The shell already explains the
-    absent session directly above.
-  */
-  const canDriveCamera = useFixtures || liveIndicator.state === 'live';
 
   return (
     <Box sx={{ pb: canDriveCamera ? `${LIVE_CAMERA_BAR_HEIGHT}px` : 0 }}>
@@ -207,6 +208,9 @@ const LiveShellBody: React.FC = () => {
           classFilter={classFilter}
           focusedSlotId={focusedSlotId}
           onCycleFocus={onCycleFocus}
+          isReplayActive={isReplayActive}
+          gameCamera={gameCamera}
+          onReturnToLive={onReturnToLive}
         />
       ) : null}
     </Box>

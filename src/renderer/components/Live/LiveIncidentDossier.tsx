@@ -1,6 +1,7 @@
 import { useMemo } from 'react';
 import CenterFocusStrongIcon from '@mui/icons-material/CenterFocusStrong';
 import FlagIcon from '@mui/icons-material/Flag';
+import HistoryIcon from '@mui/icons-material/History';
 import ScheduleIcon from '@mui/icons-material/Schedule';
 import {
   Box,
@@ -310,6 +311,20 @@ interface LiveIncidentDossierProps {
    * than disabled, on the same reasoning as `onDefer` below.
    */
   onFocusCar?: (slotId: number | undefined) => void;
+  /**
+   * Rewind the game's picture to just before this incident.
+   *
+   * Optional and absent means the button is not drawn, on the same reasoning as
+   * `onFocusCar`: the replay-side dossier already *is* the footage, and a
+   * finished segment's elapsed times address a different session's replay
+   * buffer, so the seek would land somewhere unrelated and look like it worked.
+   *
+   * Deliberately not offered on the queue rows. Selecting a row opens this
+   * dossier — the same click — so a per-row button would be a second control
+   * for the same act, paid for in MUI components on every one of up to four
+   * hundred rows the queue keeps mounted.
+   */
+  onRewatch?: (incidentId: string) => void;
   onFlag: (incidentId: string) => void;
   /**
    * Records "this one is for post-session review", not "I ran out of time".
@@ -346,6 +361,7 @@ interface LiveIncidentDossierProps {
 export const LiveIncidentDossier: React.FC<LiveIncidentDossierProps> = ({
   incident,
   onFocusCar,
+  onRewatch,
   onFlag,
   onDefer,
   onDecide,
@@ -483,6 +499,27 @@ export const LiveIncidentDossier: React.FC<LiveIncidentDossierProps> = ({
           {incident.id}
         </Typography>
         <Box sx={{ flex: 1 }} />
+        {/*
+          One button, not two. There is no honest "enter replay mode" control to
+          pair a seek with: entering replay on its own drops the steward at lap
+          1, and a seek sent while the picture is live is inert. So the act
+          offered is the one a steward actually wants — show me this moment —
+          and main does the read-toggle-seek behind it.
+
+          The picture lands five seconds early, the replay view's own lead-in, so
+          the contact is approached rather than joined.
+        */}
+        {onRewatch ? (
+          <Tooltip title="Rewind the game's picture to just before this incident. Timing and standings stay live, and the session keeps being captured.">
+            <Button
+              size="small"
+              startIcon={<HistoryIcon />}
+              onClick={() => onRewatch(incident.id)}
+            >
+              Rewatch
+            </Button>
+          </Tooltip>
+        ) : null}
         <Typography variant="caption" color="text.secondary">
           {incident.timestampLabel} · {incident.lapLabel}
         </Typography>

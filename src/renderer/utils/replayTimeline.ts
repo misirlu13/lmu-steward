@@ -1,3 +1,4 @@
+import { replayJumpTargetSeconds } from '@constants';
 import { normalizeDriverCarClass } from './sessionUtils';
 import { toArray } from './collections';
 import {
@@ -359,7 +360,7 @@ export const buildReplayTimelineEvents = ({
       ? Math.max(sourceEtSeconds - (replayTimeBaselineSeconds ?? 0), 0)
       : sourceEtSeconds;
 
-    const jumpToSeconds = Math.max(sourceEtSeconds - 5, 0);
+    const jumpToSeconds = replayJumpTargetSeconds(sourceEtSeconds);
     const matchedPrimaryDriver = primaryDriverRawName
       ? getMatchedDriver(primaryDriverRawName)
       : undefined;

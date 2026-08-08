@@ -22,7 +22,12 @@ import {
   cameraModeConfig,
   useCameraControls,
 } from '../../hooks/useCameraControls';
-import { useReplayPlaybackControls } from './hooks/useReplayPlaybackControls';
+import {
+  REPLAY_SPEEDS,
+  replaySpeedLabel,
+  ReplaySpeed,
+  useReplayPlaybackControls,
+} from '../../hooks/useReplayPlaybackControls';
 
 interface ReplayJumpBarProps {
   incidents: ReplayIncidentEvent[];
@@ -304,15 +309,17 @@ export const ReplayJumpBar = ({
             size="small"
             exclusive
             value={speed}
-            onChange={(_, value: 0.5 | 1 | 2 | null) => {
+            onChange={(_, value: ReplaySpeed | null) => {
               if (value) {
                 onSpeedChange(value);
               }
             }}
           >
-            <ToggleButton value={0.5}>x0.5</ToggleButton>
-            <ToggleButton value={1}>x1.0</ToggleButton>
-            <ToggleButton value={2}>x2.0</ToggleButton>
+            {REPLAY_SPEEDS.map((option) => (
+              <ToggleButton key={option} value={option}>
+                {replaySpeedLabel[option]}
+              </ToggleButton>
+            ))}
           </ToggleButtonGroup>
 
           {hasIncidents ? (

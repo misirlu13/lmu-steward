@@ -143,6 +143,40 @@ describe('LiveIncidentDossier', () => {
   });
 });
 
+describe('LiveIncidentDossier rewatch', () => {
+  it('should hand back the incident, leaving the sequence to main', () => {
+    const onRewatch = jest.fn();
+    render(
+      <LiveIncidentDossier
+        incident={withEvidence}
+        onRewatch={onRewatch}
+        onFlag={noop}
+        onDecide={noop}
+        targetSteamId={undefined}
+        onSelectTarget={noop}
+      />,
+    );
+
+    fireEvent.click(screen.getByText('Rewatch'));
+
+    expect(onRewatch).toHaveBeenCalledWith(withEvidence.id);
+  });
+
+  /*
+    Hidden, not disabled, and for the same reason `onFocusCar` is: against a
+    finished segment the elapsed times index *that* session's replay while the
+    seek addresses the buffer of the one running now. The picture would land
+    somewhere unrelated and look like it had worked, which is worse than the
+    button not being there. The replay-side dossier passes nothing for the same
+    reason — it already is the footage.
+  */
+  it('should not be drawn when the caller has no live buffer to seek', () => {
+    renderDossier(withEvidence);
+
+    expect(screen.queryByText('Rewatch')).not.toBeInTheDocument();
+  });
+});
+
 describe('LiveIncidentDossier decision targeting', () => {
   const renderWithTarget = (targetSteamId?: string) => {
     const onDecide = jest.fn();
