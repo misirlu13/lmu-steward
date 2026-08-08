@@ -45,7 +45,7 @@
  * Adding an endpoint to the safe list is a decision to make deliberately.
  */
 /*
- * The endpoint tables below quote the app's source text verbatim, `${trackId}`
+ * The endpoint tables below quote the app's source text verbatim, `${slotId}`
  * placeholders and all, because that text is the lookup key discovery produces.
  * They are keys to match on, never strings meant to interpolate.
  */
@@ -70,9 +70,8 @@ const SWAGGER_PATH = path.join(REPO_ROOT, 'plans', 'lmu-swagger-schema.json');
  * inventory would drift the moment somebody added a call, which is the exact
  * class of bug this file exists to catch.
  *
- * Test files are excluded so the inventory reflects production call sites; the
- * literal `/rest/race/track/77/thumbnail` in `session.test.ts` is a fixture,
- * not a thing the app does.
+ * Test files are excluded so the inventory reflects production call sites: a
+ * URL a test fixture happens to contain is not a thing the app does.
  */
 const collectTsFiles = (dir: string): string[] =>
   readdirSync(dir).flatMap((entry) => {
@@ -108,11 +107,8 @@ const APP_ENDPOINTS = discoverEndpoints();
 /**
  * Endpoints safe to probe with a GET. Anything not listed here is treated as
  * mutating and is never called.
- *
- * `${...}` placeholders that need a real value are resolved at runtime; a
- * `null` value means "resolve in beforeAll".
  */
-const SAFE_GET_ENDPOINTS: Record<string, string | null> = {
+const SAFE_GET_ENDPOINTS: Record<string, string> = {
   '/navigation/state': '/navigation/state',
   '/rest/profile/profileInfo/getProfileInfo':
     '/rest/profile/profileInfo/getProfileInfo',
@@ -125,8 +121,6 @@ const SAFE_GET_ENDPOINTS: Record<string, string | null> = {
   '/rest/watch/standings': '/rest/watch/standings',
   '/rest/watch/standings/history': '/rest/watch/standings/history',
   '/rest/watch/trackMap': '/rest/watch/trackMap',
-  // Needs a real track id from the live track list.
-  '/rest/race/track/${trackId}/thumbnail': null,
 };
 
 /**
@@ -146,20 +140,6 @@ const MUTATING_ENDPOINTS: Record<string, string> = {
   '/rest/watch/replayCommand/${command}': 'changes playback speed/direction',
   '/rest/watch/replaytime/${seekToSeconds}': 'seeks the replay clock',
   '/rest/watch/replaytime/${timeInSeconds}': 'seeks the replay clock',
-};
-
-/**
- * Endpoints the app calls that the game does not have. Excluded from the
- * "is routed" and "is documented" sweeps and owned instead by the pinned-defect
- * block at the bottom of this file, which asserts the absence directly.
- *
- * Keeping them out of the sweeps is not an excuse: the pin is a STRONGER
- * assertion, because it fails if the endpoint ever starts working — at which
- * point the app's handler needs fixing rather than the test relaxing.
- */
-const KNOWN_ABSENT_ENDPOINTS: Record<string, string> = {
-  '/rest/race/track/${trackId}/thumbnail':
-    '404s for every track id, and is absent from the Swagger spec — see the pinned block below',
 };
 
 // ---------------------------------------------------------------------------
@@ -276,19 +256,25 @@ describe('LMU live contract — the endpoint inventory itself', () => {
 });
 
 describe('LMU live contract — every endpoint the app calls is routed', () => {
-  const probeable = Object.keys(SAFE_GET_ENDPOINTS).filter(
-    (endpoint) => !(endpoint in KNOWN_ABSENT_ENDPOINTS),
+  /**
+   * Every safe endpoint is probed. There is no known-absent escape hatch: when
+   * the app called an endpoint the game does not have, the answer was to delete
+   * the caller, not to except it from this sweep. If that situation recurs,
+   * pin the absence with a direct assertion — a pin fails when the endpoint
+   * starts working, whereas an exception list quietly stops testing the app.
+   */
+  it.each(Object.keys(SAFE_GET_ENDPOINTS))(
+    '%s does not 404',
+    async (endpoint) => {
+      const { status } = await probe(SAFE_GET_ENDPOINTS[endpoint]);
+
+      // 404 is a real, distinguishable signal from this server: a path one
+      // letter wrong (`/rest/watch/trackMapp`) answers 404 with an empty body,
+      // so a route that exists and one that does not are genuinely tellable
+      // apart.
+      expect(status).not.toBe(404);
+    },
   );
-
-  it.each(probeable)('%s does not 404', async (endpoint) => {
-    const suffix = SAFE_GET_ENDPOINTS[endpoint] as string;
-    const { status } = await probe(suffix);
-
-    // 404 is a real, distinguishable signal from this server: a path one letter
-    // wrong (`/rest/watch/trackMapp`) answers 404 with an empty body, so a
-    // route that exists and one that does not are genuinely tellable apart.
-    expect(status).not.toBe(404);
-  });
 });
 
 describe('LMU live contract — response shapes the app hardcodes beliefs about', () => {
@@ -408,12 +394,8 @@ describe('LMU live contract — the app against the Swagger spec', () => {
   // A missing spec is a missing input, not a missing game: plans/ is gitignored.
   const describeSpec = SWAGGER_PATHS ? describe : describe.skip;
 
-  const documented = APP_ENDPOINTS.filter(
-    (endpoint) => !(endpoint in KNOWN_ABSENT_ENDPOINTS),
-  );
-
   describeSpec('spec coverage', () => {
-    it.each(documented)('%s is documented in the spec', (endpoint) => {
+    it.each(APP_ENDPOINTS)('%s is documented in the spec', (endpoint) => {
       expect(findSpecPath(endpoint)).toBeDefined();
     });
 
@@ -440,59 +422,19 @@ describe('LMU live contract — the app against the Swagger spec', () => {
   });
 });
 
-describe('LMU live contract — known defects, pinned', () => {
-  /**
-   * PINNED FAILURE, NOT AN EXCUSE.
-   *
-   * `getTrackThumbnail` (`session.ts:164`) calls
-   * `/rest/race/track/{id}/thumbnail`, and the endpoint 404s for EVERY track
-   * id — including ids taken straight from the game's own track list, whose
-   * `thumbnail` field advertises exactly that path. The handler's own docstring
-   * says "Not sure confirmed this will work". It does not.
-   *
-   * It has gone unnoticed because no renderer code subscribes to
-   * GET_TRACK_THUMBNAIL — the same reason the focus mock carried a wrong shape
-   * for as long as it did.
-   *
-   * The assertion is written the way the world actually is, so the suite stays
-   * honest. If LMU ever starts serving thumbnails this test fails, and that
-   * failure is the signal to delete the pin and fix the handler.
-   */
-  it('track thumbnails 404 for every id, including ids the game itself advertises', async () => {
-    const results = await Promise.all(
-      liveTracks.slice(0, 3).map(async (track) => {
-        const { status } = await probe(
-          `/rest/race/track/${track.id}/thumbnail`,
-        );
-        return status;
-      }),
-    );
-
-    expect(results).toEqual([404, 404, 404]);
-  });
-
-  it('track thumbnails are absent from the Swagger spec, consistent with the 404', () => {
-    if (!SWAGGER_PATHS) return;
-
-    // The spec has /rest/race/track/{id}/trackmap but no thumbnail sibling.
-    // Undocumented AND unrouted is a coherent story: it does not exist.
-    expect(
-      findSpecPath('/rest/race/track/${trackId}/thumbnail'),
-    ).toBeUndefined();
-    expect(findSpecPath('/rest/race/track/${trackId}/trackmap')).toBe(
-      '/rest/race/track/{id}/trackmap',
-    );
-  });
-
-  /**
-   * `getTrackThumbnail` types its parameter `trackId: number`. Track ids are
-   * 40-character hex strings. Pinned so the wrong type is recorded rather than
-   * rediscovered.
-   */
-  it('track ids are 40-character hex strings, not numbers', () => {
-    expect(liveTracks.length).toBeGreaterThan(0);
-    liveTracks.forEach((track) => {
-      expect(track.id).toMatch(/^[0-9a-f]{40}$/);
-    });
-  });
-});
+/*
+ * The pinned-defect block that used to live here covered `getTrackThumbnail`
+ * and went away with it (2026-08-08). It pinned three facts: the endpoint 404s
+ * for every track id, it is absent from the Swagger spec, and track ids are
+ * 40-character hex strings rather than the `number` the handler declared.
+ *
+ * All three were true and none of them are the app's business any more. The
+ * handler was the only caller of `/rest/race/track/{id}/...` anywhere in the
+ * app, so with it deleted these assertions would have gone on testing LMU
+ * rather than testing the app — the failure mode this file exists to prevent.
+ *
+ * `/rest/race/track/{id}/image`, the sibling the track list advertises next to
+ * `thumbnail`, was probed before deciding: it 404s for all 37 tracks too, and
+ * the only image route in the whole 179-endpoint spec is
+ * `/rest/race/car/{id}/image`. There was nothing to point the handler at.
+ */

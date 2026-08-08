@@ -5,7 +5,6 @@ import {
   getStandings,
   getStandingsHistory,
   getTrackMap,
-  getTrackThumbnail,
 } from './session';
 
 describe('main/session API contracts', () => {
@@ -20,39 +19,33 @@ describe('main/session API contracts', () => {
 
   const successCases: Array<{
     name: string;
-    handler: (event: Electron.IpcMainEvent, arg?: number) => Promise<void>;
+    handler: (event: Electron.IpcMainEvent) => Promise<void>;
     eventChannel: string;
     url: string;
-    arg?: number;
-    expectsWrappedSuccess: boolean;
   }> = [
     {
       name: 'getSessionInfo',
       handler: (event) => getSessionInfo(event),
       eventChannel: CONSTANTS.API.GET_SESSION_INFO,
       url: `${CONSTANTS.LMU_API_BASE_URL}/rest/watch/sessionInfo`,
-      expectsWrappedSuccess: true,
     },
     {
       name: 'getStandings',
       handler: (event) => getStandings(event),
       eventChannel: CONSTANTS.API.GET_STANDINGS,
       url: `${CONSTANTS.LMU_API_BASE_URL}/rest/watch/standings`,
-      expectsWrappedSuccess: true,
     },
     {
       name: 'getStandingsHistory',
       handler: (event) => getStandingsHistory(event),
       eventChannel: CONSTANTS.API.GET_STANDINGS_HISTORY,
       url: `${CONSTANTS.LMU_API_BASE_URL}/rest/watch/standings/history`,
-      expectsWrappedSuccess: true,
     },
     {
       name: 'getTrackMap',
       handler: (event) => getTrackMap(event),
       eventChannel: CONSTANTS.API.GET_TRACK_MAP,
       url: `${CONSTANTS.LMU_API_BASE_URL}/rest/watch/trackMap`,
-      expectsWrappedSuccess: true,
     },
     /*
       Same endpoint as getTrackMap, different reply channel — on purpose. The
@@ -66,21 +59,12 @@ describe('main/session API contracts', () => {
       handler: (event) => getLiveTrackMap(event),
       eventChannel: CONSTANTS.API.GET_LIVE_TRACK_MAP,
       url: `${CONSTANTS.LMU_API_BASE_URL}/rest/watch/trackMap`,
-      expectsWrappedSuccess: true,
-    },
-    {
-      name: 'getTrackThumbnail',
-      handler: (event, trackId) => getTrackThumbnail(event, Number(trackId)),
-      eventChannel: CONSTANTS.API.GET_TRACK_THUMBNAIL,
-      url: `${CONSTANTS.LMU_API_BASE_URL}/rest/race/track/77/thumbnail`,
-      arg: 77,
-      expectsWrappedSuccess: false,
     },
   ];
 
   it.each(successCases)(
     '$name returns success reply on ok response',
-    async ({ handler, eventChannel, url, arg, expectsWrappedSuccess }) => {
+    async ({ handler, eventChannel, url }) => {
       const event = createEvent();
       const payload = { ok: true };
 
@@ -89,32 +73,20 @@ describe('main/session API contracts', () => {
         json: async () => payload,
       });
 
-      await handler(event, arg);
+      await handler(event);
 
       expect(fetchMock).toHaveBeenCalledWith(url);
 
-      if (expectsWrappedSuccess) {
-        // Shared table-driven helper: the branch selects which response shape
-        // to assert, rather than making the assertion itself conditional on
-        // runtime behaviour.
-        // eslint-disable-next-line jest/no-conditional-expect
-        expect(event.reply as jest.Mock).toHaveBeenCalledWith(eventChannel, {
-          status: 'success',
-          data: payload,
-        });
-        return;
-      }
-
-      expect(event.reply as jest.Mock).toHaveBeenCalledWith(
-        eventChannel,
-        payload,
-      );
+      expect(event.reply as jest.Mock).toHaveBeenCalledWith(eventChannel, {
+        status: 'success',
+        data: payload,
+      });
     },
   );
 
   it.each(successCases)(
     '$name returns error reply on non-ok response',
-    async ({ handler, eventChannel, arg }) => {
+    async ({ handler, eventChannel }) => {
       const event = createEvent();
 
       fetchMock.mockResolvedValue({
@@ -123,7 +95,7 @@ describe('main/session API contracts', () => {
         json: async () => ({}),
       });
 
-      await handler(event, arg);
+      await handler(event);
 
       expect(event.reply as jest.Mock).toHaveBeenCalledWith(eventChannel, {
         status: 'error',
@@ -134,12 +106,12 @@ describe('main/session API contracts', () => {
 
   it.each(successCases)(
     '$name returns error reply when fetch throws',
-    async ({ handler, eventChannel, arg }) => {
+    async ({ handler, eventChannel }) => {
       const event = createEvent();
 
       fetchMock.mockRejectedValue(new Error('LMU API unreachable'));
 
-      await handler(event, arg);
+      await handler(event);
 
       expect(event.reply as jest.Mock).toHaveBeenCalledWith(eventChannel, {
         status: 'error',

@@ -88,7 +88,6 @@ import {
   SetImportedNoteRequest,
 } from './api/replay-import-handlers';
 import {
-  getTrackThumbnail,
   getStandings,
   getStandingsHistory,
   getTrackMap,
@@ -209,8 +208,6 @@ const CHANNEL_CALLBACK_HANDLERS: Partial<
   [CONSTANTS.API.GET_REPLAYS]: withEventAndData<GetReplaysRequest | undefined>(
     getReplays,
   ),
-  [CONSTANTS.API.GET_TRACK_THUMBNAIL]:
-    withEventAndData<number>(getTrackThumbnail),
   [CONSTANTS.API.GET_USER_SETTINGS]: withEventOnly(getUserSettings),
   [CONSTANTS.API.GET_PROFILE_INFO]: withEventOnly(getProfileInfo),
   [CONSTANTS.API.GET_STANDINGS_HISTORY]: withEventOnly(getStandingsHistory),

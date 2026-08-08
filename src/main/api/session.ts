@@ -153,39 +153,6 @@ export const getTrackMap = async (event: Electron.IpcMainEvent) =>
 export const getLiveTrackMap = async (event: Electron.IpcMainEvent) =>
   fetchTrackMap(event, CONSTANTS.API.GET_LIVE_TRACK_MAP);
 
-/**
- * Not sure confirmed this will work
- *
- * GET
- * /rest/race/track/{id}/thumbnail
- * Gets the track thumbnail for the specified track ID
- */
-
-export const getTrackThumbnail = async (
-  event: Electron.IpcMainEvent,
-  trackId: number,
-) => {
-  try {
-    const response = await fetch(
-      `${CONSTANTS.LMU_API_BASE_URL}/rest/race/track/${trackId}/thumbnail`,
-    );
-    if (!response.ok) {
-      event.reply(CONSTANTS.API.GET_TRACK_THUMBNAIL, {
-        status: 'error',
-        message: `API responded with status ${response.status}`,
-      });
-      return;
-    }
-    const data = await response.json();
-    event.reply(CONSTANTS.API.GET_TRACK_THUMBNAIL, data);
-  } catch (error: unknown) {
-    event.reply(CONSTANTS.API.GET_TRACK_THUMBNAIL, {
-      status: 'error',
-      message: toErrorMessage(error),
-    });
-  }
-};
-
 /*
 
 /rest/watch/standings

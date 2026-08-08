@@ -87,7 +87,6 @@ export const CONSTANTS = {
      */
     GET_LIVE_CAR_POSITIONS: 'get.live-car-positions',
     GET_REPLAYS: 'get.replays',
-    GET_TRACK_THUMBNAIL: 'get.track-thumbnail',
     GET_USER_SETTINGS: 'get.user-settings',
     PUSH_USER_SETTINGS: 'push.user-settings',
     PUSH_REPLAY_SYNC_STATUS: 'push.replay-sync-status',
