@@ -36,7 +36,15 @@ const sendMessageMock = sendMessage as jest.MockedFunction<typeof sendMessage>;
 const INCIDENT: LiveIncident = {
   ...liveIncidentsFixture[0],
   etSeconds: 2841.6,
+  // Slots attached explicitly: the camera addresses a car by slot and nothing
+  // else, and the layout fixtures predate them.
+  drivers: liveIncidentsFixture[0].drivers.map((driver, index) => ({
+    ...driver,
+    slotId: index === 0 ? 14 : 21,
+  })),
 };
+
+const [FIRST_PARTY, SECOND_PARTY] = INCIDENT.drivers;
 
 const STANDINGS = liveStandingsFixture.map((standing, index) => ({
   ...standing,
@@ -116,9 +124,47 @@ describe('rewatching an incident from the live view', () => {
     fireEvent.click(screen.getByText('Rewatch'));
 
     expect(callsOn(CONSTANTS.API.POST_REPLAY_REWATCH)).toEqual([
-      [CONSTANTS.API.POST_REPLAY_REWATCH, { etSeconds: INCIDENT.etSeconds }],
+      [
+        CONSTANTS.API.POST_REPLAY_REWATCH,
+        { etSeconds: INCIDENT.etSeconds, slotId: FIRST_PARTY.slotId },
+      ],
     ]);
     expect(callsOn(CONSTANTS.API.PUT_REPLAY_COMMAND_TIME)).toHaveLength(0);
+  });
+
+  /*
+    Reported from real use: rewinding without aiming the camera drops the steward
+    at the right moment pointed at whatever they were last watching, so the
+    incident is not on screen. The only workaround was to focus a driver and
+    press Rewatch a second time — which is the app making the steward do the
+    second half of its own job.
+  */
+  it('should aim the camera at a party to the incident', () => {
+    renderLive();
+    openTheDossier();
+
+    fireEvent.click(screen.getByText('Rewatch'));
+
+    const [[, payload]] = callsOn(CONSTANTS.API.POST_REPLAY_REWATCH);
+    expect((payload as { slotId?: number }).slotId).toBe(FIRST_PARTY.slotId);
+  });
+
+  /*
+    Unless the steward has said who they are interested in. Naming a penalty
+    target and then having the camera swing to the other car would contradict
+    them — the same preference the replay view's jump already makes.
+  */
+  it('should prefer the penalty target once one has been picked', () => {
+    renderLive();
+    openTheDossier();
+
+    fireEvent.click(
+      screen.getByTestId(`dossier-driver-${SECOND_PARTY.steamId}`),
+    );
+    fireEvent.click(screen.getByText('Rewatch'));
+
+    const [[, payload]] = callsOn(CONSTANTS.API.POST_REPLAY_REWATCH);
+    expect((payload as { slotId?: number }).slotId).toBe(SECOND_PARTY.slotId);
   });
 });
 

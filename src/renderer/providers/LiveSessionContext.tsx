@@ -1188,15 +1188,44 @@ export const LiveSessionProvider: React.FC<{ children: React.ReactNode }> = ({
     reason a live capture survives this at all.
   */
   const onRewatchIncident = useCallback((incidentId: string) => {
-    const incident = latest.current.incidents.find(
-      (entry) => entry.id === incidentId,
-    );
+    const { incidents: held, effectiveTargetSteamId: heldTarget } =
+      latest.current;
+    const incident = held.find((entry) => entry.id === incidentId);
     if (!incident) {
       return;
     }
 
+    /*
+      Which car the camera lands on.
+
+      The penalty target when the steward has picked one, otherwise the first
+      party with a slot — the same preference the replay view's jump already
+      makes (`resolveIncidentFocusTarget`). Usually nobody has picked yet at the
+      moment Rewatch is pressed, so in practice this is the first driver; but a
+      steward who *has* named a target is telling us who they are interested in,
+      and swinging the camera to the other car would contradict them.
+
+      Falls through to the first slot-bearing party rather than the literal
+      first, because a party whose slot never reached the capture cannot be
+      addressed — LMU's focus endpoint takes nothing but a slot.
+    */
+    const withSlot = incident.drivers.filter(
+      (driver) => driver.slotId !== undefined,
+    );
+    const focus =
+      withSlot.find((driver) => driver.steamId === heldTarget) ?? withSlot[0];
+
+    /*
+      The rewatch owns the camera from here, so a step the steward made a moment
+      ago must stop outranking what the game reports — otherwise the confirm
+      gate would suppress the new position for up to three seconds and the bar
+      would name the car they were watching before.
+    */
+    pendingFocusRef.current = undefined;
+
     sendMessage(CONSTANTS.API.POST_REPLAY_REWATCH, {
       etSeconds: incident.etSeconds,
+      slotId: focus?.slotId,
     });
   }, []);
 

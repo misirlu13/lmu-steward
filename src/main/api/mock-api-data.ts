@@ -439,6 +439,15 @@ let mockReplayLoadingStartedAtMs: number | null = null;
  */
 let mockReplayActive = true;
 
+/**
+ * Which car the mocked game has on screen.
+ *
+ * Held for the same reason `mockReplayActive` is: the camera bar's whole job is
+ * now to report what the game says, so a mock whose focus channel never moved
+ * would show the bar failing to follow a rewatch and look like a real defect.
+ */
+let mockFocusedSlotId = 0;
+
 const getMockLoadingStatus = () => {
   if (mockReplayLoadingStartedAtMs === null) {
     return {
@@ -619,9 +628,19 @@ export const mockApiData: Partial<Record<ApiChannel, MockApiResolver>> = {
   }),
   [CONSTANTS.API.POST_REPLAY_REWATCH]: (requestData: unknown) => {
     mockReplayActive = true;
-    const etSeconds = Number(
-      (requestData as { etSeconds?: number })?.etSeconds,
-    );
+    const request = requestData as { etSeconds?: number; slotId?: number };
+    const etSeconds = Number(request?.etSeconds);
+    const slotId = Number(request?.slotId);
+
+    /*
+      The focus is echoed into the mocked focus channel, so dev mode's camera
+      bar names the car a rewatch moved to rather than whatever it said before.
+      A mock that rewound without moving the camera would reproduce the exact
+      defect this sequence exists to fix.
+    */
+    if (Number.isFinite(slotId)) {
+      mockFocusedSlotId = slotId;
+    }
 
     return {
       status: 'success',
@@ -630,6 +649,7 @@ export const mockApiData: Partial<Record<ApiChannel, MockApiResolver>> = {
         seekToSeconds: Number.isFinite(etSeconds)
           ? Math.max(etSeconds - 5, 0)
           : 0,
+        focusedSlotId: Number.isFinite(slotId) ? slotId : undefined,
       },
     };
   },
@@ -646,10 +666,10 @@ export const mockApiData: Partial<Record<ApiChannel, MockApiResolver>> = {
     shapes rather than trusting either, because the response body is not in
     LMU's Swagger spec.
   */
-  [CONSTANTS.API.GET_FOCUSED_CAR]: {
+  [CONSTANTS.API.GET_FOCUSED_CAR]: () => ({
     status: 'success',
-    data: 0,
-  },
+    data: mockFocusedSlotId,
+  }),
   /*
     The auto-director entry, not a numbered group — `TracksideCycle` is where
     LMU's trackside group actually starts, and the case a naive lowercase
@@ -732,11 +752,27 @@ export const mockApiData: Partial<Record<ApiChannel, MockApiResolver>> = {
   [CONSTANTS.API.PUT_REPLAY_COMMAND_TIME]: {
     status: 'success',
   },
-  [CONSTANTS.API.PUT_REPLAY_COMMAND_FOCUS_CAR]: {
-    status: 'success',
+  /*
+    Both focus writes move the mocked game, so the reconciliation the camera bar
+    now does has something real to reconcile against: step the field in dev mode and
+    the focus channel reports the new slot back on the next poll, exactly as a
+    running game would.
+  */
+  [CONSTANTS.API.PUT_REPLAY_COMMAND_FOCUS_CAR]: (requestData: unknown) => {
+    const slotId = Number(requestData);
+    if (Number.isFinite(slotId)) {
+      mockFocusedSlotId = slotId;
+    }
+
+    return { status: 'success' };
   },
-  [CONSTANTS.API.PUT_FOCUS_CAR]: {
-    status: 'success',
+  [CONSTANTS.API.PUT_FOCUS_CAR]: (requestData: unknown) => {
+    const slotId = Number(requestData);
+    if (Number.isFinite(slotId)) {
+      mockFocusedSlotId = slotId;
+    }
+
+    return { status: 'success' };
   },
 };
 

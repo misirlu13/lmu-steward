@@ -54,20 +54,84 @@ beforeEach(() => {
 });
 
 describe('rewatching an incident from a live session', () => {
-  it('should read the game before toggling, then seek in that order', async () => {
+  it('should read the game before toggling, then seek, then aim the camera', async () => {
     const calls = mockGame(false);
 
-    await postReplayRewatch(event, { etSeconds: 3474.98 });
+    await postReplayRewatch(event, { etSeconds: 3474.98, slotId: 12 });
 
     expect(calls).toEqual([
       '/rest/replay/isActive',
       '/rest/replay/toggleactive',
       '/rest/watch/replaytime/3469.98',
+      '/rest/watch/focus/12',
     ]);
     expect(reply).toHaveBeenCalledWith(CONSTANTS.API.POST_REPLAY_REWATCH, {
       status: 'success',
-      data: { isReplayActive: true, seekToSeconds: 3469.98 },
+      data: { isReplayActive: true, seekToSeconds: 3469.98, focusedSlotId: 12 },
     });
+  });
+
+  /*
+    The half that shipped missing. Seeking alone rewinds the clock and leaves the
+    camera wherever it happened to be, so the steward arrives at the right moment
+    pointed at the wrong car — and the only way to see the incident was to focus
+    a driver manually and press Rewatch a second time. Reported from real use.
+
+    Focus goes last on purpose: the toggle lands at lap 1 and the seek moves the
+    clock, and neither may be allowed to drag the camera off the car afterwards.
+  */
+  it('should aim the camera after the seek, never before it', async () => {
+    const calls = mockGame(true);
+
+    await postReplayRewatch(event, { etSeconds: 100, slotId: 7 });
+
+    expect(calls.indexOf('/rest/watch/focus/7')).toBeGreaterThan(
+      calls.indexOf('/rest/watch/replaytime/95'),
+    );
+  });
+
+  /*
+    A slot is the only key LMU's focus endpoint takes, and not every incident
+    carries one. Refusing to seek because the camera cannot be aimed would be
+    worse than seeking without aiming it.
+  */
+  it('should still seek for an incident with no addressable car', async () => {
+    const calls = mockGame(true);
+
+    await postReplayRewatch(event, { etSeconds: 100 });
+
+    expect(calls).toEqual([
+      '/rest/replay/isActive',
+      '/rest/watch/replaytime/95',
+    ]);
+    expect(reply).toHaveBeenCalledWith(
+      CONSTANTS.API.POST_REPLAY_REWATCH,
+      expect.objectContaining({ status: 'success' }),
+    );
+  });
+
+  /*
+    Focus is the one call in this sequence LMU can actually refuse — it answers
+    400 outside a session, where `setCamera` answers 200 to anything. Reported
+    rather than swallowed, even though the picture has already moved by then.
+  */
+  it('should report a camera the game would not move', async () => {
+    global.fetch = jest.fn().mockImplementation(async (url: string) => {
+      if (url.endsWith('/rest/replay/isActive')) {
+        return { ok: true, status: 200, text: async () => 'true' };
+      }
+      if (url.includes('/rest/watch/focus/')) {
+        return { ok: false, status: 400 };
+      }
+      return { ok: true, status: 200 };
+    }) as typeof global.fetch;
+
+    await postReplayRewatch(event, { etSeconds: 100, slotId: 9999 });
+
+    expect(reply).toHaveBeenCalledWith(
+      CONSTANTS.API.POST_REPLAY_REWATCH,
+      expect.objectContaining({ status: 'error' }),
+    );
   });
 
   /*

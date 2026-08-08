@@ -1313,13 +1313,21 @@ const toggleReplayActive = async (): Promise<void> => {
  * POST
  * Show the steward a moment from the live session's own replay buffer.
  *
- * `read isActive → toggle if live → seek`, in that order, in one place.
+ * `read isActive → toggle if live → seek → focus`, in that order, in one place.
  *
  * The order is not incidental. `PUT /rest/watch/replaytime/{seconds}` is
  * **inert while `isActive` is false** — measured at the live edge, it answers
  * 200 and does nothing — so a seek sent before the toggle silently fails. And
  * the toggle on its own lands at lap 1, so the two are never separable: there
  * is no honest "enter replay mode" button, only "show me this moment".
+ *
+ * **The focus is not optional garnish; without it the feature does not work.**
+ * Seeking alone rewinds the clock and leaves the camera wherever it was, so the
+ * steward arrives at the right moment pointed at the wrong car and has to focus
+ * a driver and press Rewatch a second time. The replay view's own jump has
+ * always sent both halves (`jumpToIncidentInReplay`); this shipped with only
+ * one of them. It goes last so that neither the toggle — which lands at lap 1
+ * and resets the view — nor the seek can move the camera off the car afterwards.
  *
  * Verified safe on 2026-08-08: with the picture seeked back 3,800 s from a live
  * edge of ~7911, `sessionInfo.currentEventTime` kept advancing in real time and
@@ -1333,7 +1341,7 @@ const toggleReplayActive = async (): Promise<void> => {
 
 export const postReplayRewatch = async (
   event: Electron.IpcMainEvent,
-  request: { etSeconds?: number },
+  request: { etSeconds?: number; slotId?: number },
 ) => {
   try {
     const etSeconds = Number(request?.etSeconds);
@@ -1341,6 +1349,16 @@ export const postReplayRewatch = async (
     if (!Number.isFinite(etSeconds)) {
       throw new Error('No incident time to rewatch.');
     }
+
+    /*
+      Optional, because a slot is the only key LMU's focus endpoint takes and
+      not every incident carries one — the layout fixtures have none, and a
+      party whose slot never reached the capture has none either. Seeking
+      without focusing is still worth doing; refusing to seek because the
+      camera cannot be aimed would be worse.
+    */
+    const slotId = Number(request?.slotId);
+    const hasSlot = Number.isFinite(slotId);
 
     const isActive = await readIsReplayActive();
 
@@ -1364,9 +1382,33 @@ export const postReplayRewatch = async (
       throw new Error(`API responded with status ${seekResponse.status}`);
     }
 
+    /*
+      Checked rather than fired and forgotten, even though the seek has already
+      landed by this point and the picture has visibly moved. This is the one
+      call here that LMU can actually refuse — focus answers 400 on a slot
+      outside a session, where `setCamera` answers 200 to anything — so a silent
+      `await fetch` would hide the only real failure in the sequence.
+    */
+    if (hasSlot) {
+      const focusResponse = await fetch(
+        `${CONSTANTS.LMU_API_BASE_URL}/rest/watch/focus/${slotId}`,
+        { method: 'PUT' },
+      );
+
+      if (!focusResponse.ok) {
+        throw new Error(
+          `Rewound to the incident, but the camera would not move to slot ${slotId} (status ${focusResponse.status}).`,
+        );
+      }
+    }
+
     event.reply(CONSTANTS.API.POST_REPLAY_REWATCH, {
       status: 'success',
-      data: { isReplayActive: true, seekToSeconds },
+      data: {
+        isReplayActive: true,
+        seekToSeconds,
+        focusedSlotId: hasSlot ? slotId : undefined,
+      },
     });
   } catch (error: unknown) {
     event.reply(CONSTANTS.API.POST_REPLAY_REWATCH, {
