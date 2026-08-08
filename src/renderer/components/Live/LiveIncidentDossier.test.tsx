@@ -270,7 +270,7 @@ describe('LiveIncidentDossier prior calls', () => {
     incidentId: 'inc-9000',
     lapLabel: 'L12',
     state: 'DECIDED',
-    outcome: 'penalty-10s',
+    outcome: '10s Penalty',
     wasTarget: true,
     decidedAt: 1,
     ...over,
@@ -310,6 +310,22 @@ describe('LiveIncidentDossier prior calls', () => {
     const row = screen.getByTestId(`prior-calls-${drake.steamId}`);
     expect(within(row).getByText('L12 · 10s Penalty')).toBeInTheDocument();
     expect(within(row).getByText('L20 · Flagged')).toBeInTheDocument();
+  });
+
+  /*
+    The outcome is the steward's own words, stored on the record, so a call made
+    under an action that has since been renamed or deleted has to read back as
+    the text it was made under. `penalty-10s` is what the shipped enum used to
+    store, and it is exactly what a decision predating a configured tariff
+    carries — there is no label table left to miss a key in.
+  */
+  it('should print an outcome from a vocabulary no longer configured', () => {
+    renderWithHistory(
+      new Map([[drake.steamId, [call({ outcome: 'penalty-10s' })]]]),
+    );
+
+    const row = screen.getByTestId(`prior-calls-${drake.steamId}`);
+    expect(within(row).getByText('L12 · penalty-10s')).toBeInTheDocument();
   });
 
   /*

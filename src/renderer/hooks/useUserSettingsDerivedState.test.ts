@@ -22,6 +22,7 @@ describe('useUserSettingsDerivedState', () => {
     experimentalFeaturesEnabled: false,
     liveCaptureEnabled: false,
     stewardAuthorName: '',
+    storedStewardActions: null,
     // removed replayLogMatchThresholdMinutes
     anonymizeDriverData: false,
     telemetryCacheEnabled: true,
@@ -66,6 +67,7 @@ describe('useUserSettingsDerivedState', () => {
       experimentalFeaturesEnabled: false,
       liveCaptureEnabled: false,
       stewardAuthorName: '',
+      stewardActions: null,
       anonymizeDriverData: false,
       telemetryCacheEnabled: true,
       clearCacheOnExit: false,
@@ -105,6 +107,31 @@ describe('useUserSettingsDerivedState', () => {
     );
 
     expect(result.current.autosavePayload.stewardAuthorName).toBe('');
+  });
+
+  /*
+    `null` is the shipped tariff, and it has to reach the store as `null` rather
+    than as a copy of the five defaults: absent is what makes "revert" a deletion
+    and what lets a later change to the shipped set reach anyone who never
+    customised.
+  */
+  it('sends the shipped tariff as nothing at all', () => {
+    const { result } = renderHook(() => useUserSettingsDerivedState(baseArgs));
+
+    expect(result.current.autosavePayload.stewardActions).toBeNull();
+  });
+
+  it('sends a customised tariff as the list itself', () => {
+    const custom = [{ id: 'a', label: 'DT', driverScoped: true }];
+
+    const { result } = renderHook(() =>
+      useUserSettingsDerivedState({
+        ...baseArgs,
+        storedStewardActions: custom,
+      }),
+    );
+
+    expect(result.current.autosavePayload.stewardActions).toEqual(custom);
   });
 
   it('disables sync and manual save when disconnected and invalid', () => {

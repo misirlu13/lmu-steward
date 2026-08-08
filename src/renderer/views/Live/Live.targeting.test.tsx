@@ -6,6 +6,7 @@ import { LiveShell } from './LiveShell';
 import { LiveOverview } from './LiveOverview';
 import { LiveIncidents } from './LiveIncidents';
 import { useApi } from '../../providers/ApiContext';
+import { DEFAULT_STEWARD_ACTIONS } from '../../utils/stewardActions';
 import { useLiveSessionData } from '../../hooks/useLiveSessionData';
 import { liveIncidentsFixture } from '../../components/Live/liveFixtures';
 
@@ -52,6 +53,7 @@ beforeEach(() => {
     liveSessionStatus: { state: 'live' },
     stewardDecisions: {},
     saveStewardDecision: jest.fn(),
+    stewardActions: DEFAULT_STEWARD_ACTIONS,
     // The dossier pulls the captured trace on demand rather than reading it
     // off the polled incident, so it subscribes even when there is nothing to
     // fetch.

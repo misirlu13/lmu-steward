@@ -12,8 +12,8 @@ import {
   LiveDriverRef,
   LiveIncident,
   LivePriorCall,
-  isDriverScopedOutcome,
 } from '../Live/liveFixtures';
+import { isDriverScopedOutcome } from '../../utils/stewardActions';
 import { buildIncidents } from '../../hooks/useLiveSessionData';
 import { useLiveIncidentContext } from '../../hooks/useLiveIncidentContext';
 import { sendMessage } from '../../utils/postMessage';
@@ -43,7 +43,17 @@ export const ReplayIncidentDossier: React.FC<Props> = ({
   liveData,
   replayHash,
 }) => {
-  const { stewardDecisions, saveStewardDecision, stewardAuthor } = useApi();
+  const {
+    stewardDecisions,
+    saveStewardDecision,
+    stewardAuthor,
+    /*
+      The same resolved tariff the live shell guards with. Read off the context
+      rather than derived here: a call made live and revised in this view must be
+      offered one vocabulary, not two.
+    */
+    stewardActions,
+  } = useApi();
   const [targetSteamId, setTargetSteamId] = useState<string | undefined>();
 
   const liveIncidentId = event?.liveIncidentId;
@@ -115,7 +125,7 @@ export const ReplayIncidentDossier: React.FC<Props> = ({
       return {
         ...incident,
         state: 'DECIDED' as const,
-        decision: decided.outcome as LiveDecisionOutcome | undefined,
+        decision: decided.outcome,
         decisionReasoning: decided.reasoning,
         atFaultSteamId: decided.target?.steamId,
       };
@@ -174,7 +184,7 @@ export const ReplayIncidentDossier: React.FC<Props> = ({
         incidentId: decision.incidentId,
         lapLabel: decision.lapLabel,
         state: decision.state,
-        outcome: decision.outcome as LiveDecisionOutcome | undefined,
+        outcome: decision.outcome,
         wasTarget: Boolean(targetSteam),
         decidedAt: decision.decidedAt,
       };
@@ -281,12 +291,22 @@ export const ReplayIncidentDossier: React.FC<Props> = ({
         return;
       }
 
-      const target = decidedIncident.drivers.find(
-        (driver) => driver.steamId === effectiveTargetSteamId,
-      );
+      /*
+        Same rule as the live path, from the same list: the action decides
+        whether the record names a driver. A finding about the incident as a
+        whole carries no target even with one selected, which is what keeps
+        `target` the durable answer to "was this against someone" — and stops a
+        "No Action" from marking that driver at fault.
+      */
+      const needsTarget = isDriverScopedOutcome(stewardActions, outcome);
+      const target = needsTarget
+        ? decidedIncident.drivers.find(
+            (driver) => driver.steamId === effectiveTargetSteamId,
+          )
+        : undefined;
 
       // A penalty without a target is not a call.
-      if (isDriverScopedOutcome(outcome) && !target) {
+      if (needsTarget && !target) {
         return;
       }
 
@@ -299,6 +319,7 @@ export const ReplayIncidentDossier: React.FC<Props> = ({
       decidedIncident,
       effectiveTargetSteamId,
       saveStewardDecision,
+      stewardActions,
     ],
   );
 

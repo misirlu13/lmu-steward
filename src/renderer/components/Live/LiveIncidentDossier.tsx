@@ -17,34 +17,10 @@ import { CarClassBadge } from '../CarClassBadge/CarClassBadge';
 import { AiBadge } from '../Common/AiBadge';
 import { StatDisplay } from '../Common/StatDisplay';
 import { useLiveIncidentContext } from '../../hooks/useLiveIncidentContext';
+import { useApi } from '../../providers/ApiContext';
+import { stewardActionShortcut } from '../../utils/stewardActions';
 import { LiveIncidentTraceChart } from './LiveIncidentTraceChart';
-import {
-  LiveDecisionOutcome,
-  LiveIncident,
-  LiveIncidentTrace,
-  LivePriorCall,
-  isDriverScopedOutcome,
-} from './liveFixtures';
-
-const tariff: {
-  outcome: LiveDecisionOutcome;
-  label: string;
-  shortcut: string;
-}[] = [
-  { outcome: 'penalty-5s', label: '5s Penalty', shortcut: '1' },
-  { outcome: 'penalty-10s', label: '10s Penalty', shortcut: '2' },
-  { outcome: 'drive-through', label: 'Drive-Through', shortcut: '3' },
-  { outcome: 'no-action', label: 'No Action', shortcut: '4' },
-  { outcome: 'note', label: 'Note Only', shortcut: '5' },
-];
-
-const decisionLabel: Record<LiveDecisionOutcome, string> = {
-  'penalty-5s': '5s Penalty',
-  'penalty-10s': '10s Penalty',
-  'drive-through': 'Drive-Through',
-  'no-action': 'No Action',
-  note: 'Note Only',
-};
+import { LiveIncident, LiveIncidentTrace, LivePriorCall } from './liveFixtures';
 
 /**
  * Prior calls shown per driver before it collapses to a count.
@@ -56,8 +32,13 @@ const PRIOR_CALL_LIMIT = 4;
 
 const priorCallLabel = (call: LivePriorCall): string => {
   const lap = call.lapLabel ? `${call.lapLabel} · ` : '';
+  /*
+    Printed, not looked up. The label is the value, so a call made under an
+    action that has since been renamed or deleted still reads back as the text it
+    was made under — there is no table to miss a key in.
+  */
   if (call.outcome) {
-    return `${lap}${decisionLabel[call.outcome]}`;
+    return `${lap}${call.outcome}`;
   }
   if (call.state === 'FLAGGED') {
     return `${lap}Flagged`;
@@ -72,11 +53,16 @@ const priorCallLabel = (call: LivePriorCall): string => {
  * A penalty against this driver reads loudest, an unresolved call next, and a
  * finding they were merely part of reads quietest — the ordering a steward
  * would apply themselves if the chips were plain text.
+ *
+ * Read off the record rather than off the configured tariff. `wasTarget` means
+ * the decision named this driver, which is only ever true of a driver-scoped
+ * call — so a past call is classified by what it says about itself, not by
+ * looking up an action that may since have been renamed or deleted.
  */
 const priorCallColor = (
   call: LivePriorCall,
 ): 'error' | 'warning' | 'info' | 'default' => {
-  if (call.outcome && isDriverScopedOutcome(call.outcome)) {
+  if (call.outcome && call.wasTarget) {
     return 'error';
   }
   if (call.state === 'FLAGGED') {
@@ -335,7 +321,7 @@ interface LiveIncidentDossierProps {
    * should not be drawn.
    */
   onDefer?: (incidentId: string) => void;
-  onDecide: (incidentId: string, outcome: LiveDecisionOutcome) => void;
+  onDecide: (incidentId: string, outcome: string) => void;
   /** Which driver a penalty would be assigned to. */
   targetSteamId?: string;
   onSelectTarget: (steamId: string) => void;
@@ -369,6 +355,16 @@ export const LiveIncidentDossier: React.FC<LiveIncidentDossierProps> = ({
   reasoning,
   onChangeReasoning,
 }) => {
+  /*
+    The tariff, taken resolved off the API context rather than held here.
+
+    Both dossiers draw these buttons and both decide paths guard them, so the one
+    place the league's list is resolved is `ApiContext` — this component does not
+    know a shipped default exists. Read here rather than passed in so the two
+    callers cannot pass different lists.
+  */
+  const { stewardActions } = useApi();
+
   /*
     The window is pulled when the dossier is opened rather than carried on the
     incident list. A window is a few hundred frames per car and a race holds
@@ -743,8 +739,13 @@ export const LiveIncidentDossier: React.FC<LiveIncidentDossierProps> = ({
             >
               Decision
             </Typography>
+            {/*
+              The stored outcome, verbatim. A call made under an action that has
+              since been renamed or removed still reads back correctly, because
+              the record carries its own words rather than a key into a list.
+            */}
             <Typography variant="body2" fontWeight={700}>
-              {decisionLabel[incident.decision]}
+              {incident.decision}
             </Typography>
             {incident.decisionReasoning ? (
               <Typography variant="caption" color="text.secondary">
@@ -790,27 +791,40 @@ export const LiveIncidentDossier: React.FC<LiveIncidentDossierProps> = ({
             : 'Select a driver above to assign a penalty'}
         </Typography>
         <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap>
-          {tariff.map((entry) => (
-            <Button
-              key={entry.outcome}
-              size="small"
-              disabled={isDriverScopedOutcome(entry.outcome) && !targetDriver}
-              variant={
-                incident.decision === entry.outcome ? 'contained' : 'outlined'
-              }
-              onClick={() => onDecide(incident.id, entry.outcome)}
-            >
-              {entry.label}
-              <Typography
-                component="span"
-                variant="caption"
-                color="text.secondary"
-                sx={{ ml: 0.75 }}
+          {stewardActions.map((action, index) => {
+            const shortcut = stewardActionShortcut(index);
+
+            return (
+              <Button
+                key={action.id}
+                size="small"
+                /*
+                  The action's own flag, not a guess from its text. A
+                  league-defined penalty still refuses to be recorded against a
+                  two-car incident with nobody named — the check the very first
+                  live UI was missing.
+                */
+                disabled={action.driverScoped && !targetDriver}
+                variant={
+                  incident.decision === action.label ? 'contained' : 'outlined'
+                }
+                onClick={() => onDecide(incident.id, action.label)}
               >
-                {entry.shortcut}
-              </Typography>
-            </Button>
-          ))}
+                {action.label}
+                {/* Past the ninth there is no key left to print. */}
+                {shortcut ? (
+                  <Typography
+                    component="span"
+                    variant="caption"
+                    color="text.secondary"
+                    sx={{ ml: 0.75 }}
+                  >
+                    {shortcut}
+                  </Typography>
+                ) : null}
+              </Button>
+            );
+          })}
         </Stack>
         {/*
           Two ways of not deciding, kept apart on purpose. A flag is a promise

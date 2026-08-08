@@ -38,6 +38,7 @@ describe('ApiContext integration', () => {
     const {
       isConnected,
       stewardAuthor,
+      stewardActions,
       quickViewEnabled,
       isReplaySyncInProgress,
       replaySyncStatus,
@@ -76,6 +77,14 @@ describe('ApiContext integration', () => {
         <div data-testid="connected">{String(isConnected)}</div>
         <div data-testid="quick-view">{String(quickViewEnabled)}</div>
         <div data-testid="steward-author">{stewardAuthor}</div>
+        <div data-testid="steward-actions">
+          {stewardActions
+            .map(
+              (entry) =>
+                `${entry.label}${entry.driverScoped ? '/driver' : '/incident'}`,
+            )
+            .join(', ')}
+        </div>
         <div data-testid="syncing">{String(isReplaySyncInProgress)}</div>
         <div data-testid="sync-progress">
           {String(replaySyncStatus.percentage)}
@@ -331,6 +340,106 @@ describe('ApiContext integration', () => {
       await waitFor(() => {
         expect(screen.getByTestId('steward-author').textContent).toBe(
           'Race Control',
+        );
+      });
+    });
+  });
+
+  /*
+    The tariff is resolved here for the same reason and with more at stake: it
+    reaches four places — both dossiers' buttons and the driver-target guard on
+    each decide path — so a second resolution is a button that offers a penalty
+    the guard then refuses. These cover the resolution point; the two surfaces
+    agreeing is `stewardActions.integration.test.tsx`.
+  */
+  describe('the tariff both dossiers are offered', () => {
+    const SHIPPED =
+      '5s Penalty/driver, 10s Penalty/driver, Drive-Through/driver, No Action/incident, Note Only/incident';
+
+    it('should carry the configured list from settings', async () => {
+      render(
+        <ApiProvider>
+          <TestConsumer />
+        </ApiProvider>,
+      );
+
+      act(() => {
+        handlers[CONSTANTS.API.GET_USER_SETTINGS]?.({
+          status: 'success',
+          data: {
+            stewardActions: [
+              { id: 'a', label: 'DT', driverScoped: true },
+              { id: 'b', label: 'Racing Incident', driverScoped: false },
+            ],
+          },
+        });
+      });
+
+      await waitFor(() => {
+        expect(screen.getByTestId('steward-actions').textContent).toBe(
+          'DT/driver, Racing Incident/incident',
+        );
+      });
+    });
+
+    /*
+      Before settings arrive, and after they arrive empty — which is the shipped
+      state, since nothing is stored until the user departs from the defaults. An
+      empty list here would be a dossier with nothing to press.
+    */
+    it.each([
+      ['never set', undefined],
+      ['explicitly cleared', null],
+      ['unusable', [{ label: '  ' }]],
+    ])(
+      'should never be empty when the setting is %s',
+      async (_case, stewardActions) => {
+        render(
+          <ApiProvider>
+            <TestConsumer />
+          </ApiProvider>,
+        );
+
+        expect(screen.getByTestId('steward-actions').textContent).toBe(SHIPPED);
+
+        act(() => {
+          handlers[CONSTANTS.API.GET_USER_SETTINGS]?.({
+            status: 'success',
+            data: { stewardActions },
+          });
+        });
+
+        await waitFor(() => {
+          expect(screen.getByTestId('steward-actions').textContent).toBe(
+            SHIPPED,
+          );
+        });
+      },
+    );
+
+    // Every later change comes back on the write reply. Without this an edited
+    // tariff only takes effect after a restart.
+    it('should update from the settings write reply, without a reload', async () => {
+      render(
+        <ApiProvider>
+          <TestConsumer />
+        </ApiProvider>,
+      );
+
+      act(() => {
+        handlers[CONSTANTS.API.POST_USER_SETTINGS]?.({
+          status: 'success',
+          data: {
+            stewardActions: [
+              { id: 'a', label: 'Reprimand', driverScoped: false },
+            ],
+          },
+        });
+      });
+
+      await waitFor(() => {
+        expect(screen.getByTestId('steward-actions').textContent).toBe(
+          'Reprimand/incident',
         );
       });
     });

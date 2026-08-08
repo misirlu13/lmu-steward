@@ -4,6 +4,7 @@ import {
   LiveHeldDuration,
   LiveIncidentFrame,
   LivePressureBattle,
+  StewardDecisionOutcome,
   StewardDecisionState,
 } from '@types';
 import { followingCarFrames, leadingCarFrames } from './liveTraceFixture';
@@ -86,27 +87,16 @@ export const liveSegmentLabel = (session: number): string => {
   return 'Test Day';
 };
 
-export type LiveDecisionOutcome =
-  | 'penalty-5s'
-  | 'penalty-10s'
-  | 'drive-through'
-  | 'no-action'
-  | 'note';
-
 /**
- * A penalty is always against a driver; "no action" is a finding about the
- * incident as a whole and has no target. Treating them alike is what let the
- * first version record a penalty against a two-car incident with no indication
- * of who it was for — a call nobody could act on.
+ * The same free string the record carries — the steward's own label for the
+ * call. Aliased rather than redeclared: a second definition of the outcome
+ * vocabulary is exactly the drift the configured tariff exists to remove.
+ *
+ * Whether an outcome needs a target driver is no longer answerable here. It is a
+ * question about the *configured* list, so it lives with it, in
+ * `utils/stewardActions.ts`.
  */
-const DRIVER_SCOPED_OUTCOMES = new Set<LiveDecisionOutcome>([
-  'penalty-5s',
-  'penalty-10s',
-  'drive-through',
-]);
-
-export const isDriverScopedOutcome = (outcome: LiveDecisionOutcome): boolean =>
-  DRIVER_SCOPED_OUTCOMES.has(outcome);
+export type LiveDecisionOutcome = StewardDecisionOutcome;
 
 export type LiveSessionPhase = 'green' | 'red' | 'finished';
 
@@ -683,7 +673,7 @@ export const liveIncidentsFixture: LiveIncident[] = [
       ],
     },
     state: 'DECIDED',
-    decision: 'penalty-10s',
+    decision: '10s Penalty',
     decisionReasoning:
       'Rejoined across the racing line under yellow, heavy contact.',
   },
@@ -707,7 +697,7 @@ export const liveIncidentsFixture: LiveIncident[] = [
       ],
     },
     state: 'DECIDED',
-    decision: 'no-action',
+    decision: 'No Action',
     decisionReasoning: 'Light side-by-side contact, both drivers left room.',
   },
 ];
@@ -1297,7 +1287,7 @@ export const buildLiveIncidentsFixture = (count = 400): LiveIncident[] => {
         cars: [],
       },
       state,
-      decision: state === 'DECIDED' ? 'no-action' : undefined,
+      decision: state === 'DECIDED' ? 'No Action' : undefined,
     };
   });
 };

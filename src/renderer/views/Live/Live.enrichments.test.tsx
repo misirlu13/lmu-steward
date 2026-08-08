@@ -7,6 +7,7 @@ import { LiveShell } from './LiveShell';
 import { LiveOverview } from './LiveOverview';
 import { LiveIncidents } from './LiveIncidents';
 import { useApi } from '../../providers/ApiContext';
+import { DEFAULT_STEWARD_ACTIONS } from '../../utils/stewardActions';
 import { useLiveSessionData } from '../../hooks/useLiveSessionData';
 import {
   liveIncidentsFixture,
@@ -60,6 +61,7 @@ const setDecisions = (decisions: Record<string, StewardDecision>) => {
     liveSessionStatus: { state: 'live' },
     stewardDecisions: decisions,
     saveStewardDecision,
+    stewardActions: DEFAULT_STEWARD_ACTIONS,
     subscribeToApiChannel: jest.fn(),
   } as unknown as ReturnType<typeof useApi>);
 };
@@ -81,7 +83,11 @@ const priorDecision = (
     ],
     target: { steamId: drake.steamId, driverName: drake.displayName },
     lapLabel: 'L12',
-    outcome: 'penalty-10s',
+    /*
+      The steward's own label, which is what a record now carries — no lookup
+      turns this into display text, so what is stored here is what is printed.
+    */
+    outcome: '10s Penalty',
     stewardAuthor: 'Steward',
     decidedAt: 1,
     state: 'DECIDED',
@@ -253,7 +259,7 @@ describe('prior calls in the dossier', () => {
 
   // A finding about the incident as a whole belongs to everyone who was in it.
   it('should show an untargeted finding against every party', () => {
-    setDecisions(priorDecision({ target: undefined, outcome: 'no-action' }));
+    setDecisions(priorDecision({ target: undefined, outcome: 'No Action' }));
     renderLive();
     selectIncident();
 
@@ -307,7 +313,7 @@ describe('watchlist penalties', () => {
 
   // A "no action" is the steward clearing a driver, not penalising them.
   it('should not count an incident-scoped finding as a penalty', () => {
-    setDecisions(priorDecision({ target: undefined, outcome: 'no-action' }));
+    setDecisions(priorDecision({ target: undefined, outcome: 'No Action' }));
     renderLive('/live');
 
     expect(screen.queryByText(/\d+ steward/)).toBeNull();

@@ -1260,12 +1260,17 @@ export interface LiveIncidentContextRecord {
  * "the app decided" is not. See docs/export-and-decisions-design.md.
  */
 
-export type StewardDecisionOutcome =
-  | 'penalty-5s'
-  | 'penalty-10s'
-  | 'drive-through'
-  | 'no-action'
-  | 'note';
+/**
+ * What a call says, in the league's own words.
+ *
+ * A free string, not an enum, because the penalty tariff is configured rather
+ * than shipped — see `src/renderer/utils/stewardActions.ts`. The steward's own
+ * label *is* the value, so a decision carries a durable human-readable string
+ * and an export needs no lookup table to be read years later. Renaming or
+ * deleting an action cannot orphan the decisions made under it, and records
+ * written under an earlier vocabulary keep the text they were made with.
+ */
+export type StewardDecisionOutcome = string;
 
 /**
  * Not every penalty stems from one incident: a track-limit penalty is earned by

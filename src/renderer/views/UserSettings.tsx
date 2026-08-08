@@ -24,6 +24,13 @@ import { useApi } from '../providers/ApiContext';
 import { getProfileInitials } from '../utils/profileInitials';
 import { DEFAULT_STEWARD_AUTHOR } from '../utils/stewardAuthor';
 import {
+  DEFAULT_STEWARD_ACTIONS,
+  StewardAction,
+  areStewardActionsDefault,
+  toStoredStewardActions,
+} from '../utils/stewardActions';
+import { StewardActionsEditor } from '../components/UserSettings/StewardActionsEditor';
+import {
   LONGEST_COUNTRY_NAME,
   LMU_LAUNCH_COOLDOWN_MS,
   READ_ONLY_VALUE_COLOR_SX,
@@ -134,6 +141,18 @@ export const UserSettingsView: React.FC = () => {
   */
   const [stewardAuthorName, setStewardAuthorName] = useState('');
   /*
+    The tariff as it is being edited, or `null` for "on the shipped set".
+
+    Held raw rather than normalised on every keystroke: normalising would drop a
+    row the moment its label went briefly empty, deleting what the user is in the
+    middle of typing. The reduction to what belongs in the store happens where
+    the value leaves for the store, which is the same place the steward name is
+    trimmed.
+  */
+  const [stewardActionsDraft, setStewardActionsDraft] = useState<
+    StewardAction[] | null
+  >(null);
+  /*
     Shortening the window deletes data, so the change is held here until the
     user has seen what it would remove and confirmed it. Lengthening never
     lands here — it takes nothing away.
@@ -227,6 +246,10 @@ export const UserSettingsView: React.FC = () => {
     experimentalFeaturesEnabled,
     liveCaptureEnabled,
     stewardAuthorName,
+    storedStewardActions: useMemo(
+      () => toStoredStewardActions(stewardActionsDraft),
+      [stewardActionsDraft],
+    ),
     // replayLogMatchThresholdMinutes,
     anonymizeDriverData,
     telemetryCacheEnabled,
@@ -238,6 +261,16 @@ export const UserSettingsView: React.FC = () => {
     lastManualSavedPayload: lastManualSavedPayloadRef.current,
     isAutosaving,
   });
+
+  /*
+    What the editor draws. `null` means the user has never departed from the
+    shipped set, so this is where that becomes a concrete list — nothing below
+    this line needs to know a default exists.
+  */
+  const editedStewardActions = useMemo(
+    () => stewardActionsDraft ?? [...DEFAULT_STEWARD_ACTIONS],
+    [stewardActionsDraft],
+  );
 
   const isReplaySyncDefaultsApplied = useMemo(() => {
     return (
@@ -354,6 +387,14 @@ export const UserSettingsView: React.FC = () => {
         typeof response?.data?.stewardAuthorName === 'string'
           ? response.data.stewardAuthorName.trim()
           : '';
+      /*
+        Reduced on the way in by exactly the function that reduces it on the way
+        out, so the baseline below and the first payload this view computes are
+        the same string. Skip that and the view autosaves once on every load.
+      */
+      const resolvedStewardActions = toStoredStewardActions(
+        response?.data?.stewardActions,
+      );
       const resolvedAnonymizeDriverData = Boolean(
         response?.data?.anonymizeDriverData ?? false,
       );
@@ -385,6 +426,7 @@ export const UserSettingsView: React.FC = () => {
           : (response.data.liveCaptureRetentionDays as number | null),
       );
       setStewardAuthorName(resolvedStewardAuthorName);
+      setStewardActionsDraft(resolvedStewardActions);
       setAnonymizeDriverData(resolvedAnonymizeDriverData);
       setTelemetryCacheEnabled(resolvedTelemetryCacheEnabled);
       setClearCacheOnExit(resolvedClearCacheOnExit);
@@ -402,6 +444,7 @@ export const UserSettingsView: React.FC = () => {
         experimentalFeaturesEnabled: resolvedExperimentalFeaturesEnabled,
         liveCaptureEnabled: resolvedLiveCaptureEnabled,
         stewardAuthorName: resolvedStewardAuthorName,
+        stewardActions: resolvedStewardActions,
         // replayLogMatchThresholdMinutes: resolvedReplayLogMatchThresholdMinutes,
         anonymizeDriverData: resolvedAnonymizeDriverData,
         telemetryCacheEnabled: resolvedTelemetryCacheEnabled,
@@ -1830,6 +1873,20 @@ export const UserSettingsView: React.FC = () => {
                   />
                 </Stack>
               </Box>
+
+              {/*
+                Beside the steward's name and outside the capture box, for the
+                same reason: the replay dossier offers these same buttons against
+                an already-captured session, so dimming them with the capture
+                switch would grey out the tariff for someone adjudicating.
+              */}
+              <StewardActionsEditor
+                actions={editedStewardActions}
+                isAtDefaults={areStewardActionsDefault(editedStewardActions)}
+                onChange={setStewardActionsDraft}
+                onRevert={() => setStewardActionsDraft(null)}
+                disabled={isLoading || isSaving || isLaunching}
+              />
 
               {/*
                 Rendered whether the toggle is on or off — someone deciding

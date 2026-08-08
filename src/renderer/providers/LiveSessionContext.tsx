@@ -26,6 +26,10 @@ import {
 import { LiveTrackMapResult, useLiveTrackMap } from '../hooks/useLiveTrackMap';
 import { useLiveSessionSegments } from '../hooks/useLiveSessionSegments';
 import {
+  isDriverScopedOutcome,
+  outcomeForShortcut,
+} from '../utils/stewardActions';
+import {
   DEFAULT_LIVE_INCIDENT_FILTERS,
   LiveDecisionOutcome,
   LiveDriverRef,
@@ -38,23 +42,14 @@ import {
   LiveSessionState,
   LiveStanding,
   buildLiveIncidentFilterOptions,
-  isDriverScopedOutcome,
   liveIncidentsFixture,
   livePressureFixture,
   liveSessionFixture,
   liveStandingsFixture,
 } from '../components/Live/liveFixtures';
 
-const shortcutToOutcome: Record<string, LiveDecisionOutcome> = {
-  '1': 'penalty-5s',
-  '2': 'penalty-10s',
-  '3': 'drive-through',
-  '4': 'no-action',
-  '5': 'note',
-};
-
 /**
- * Where `1`–`5` and `F` mean "call this incident".
+ * Where the number keys and `F` mean "call this incident".
  *
  * Scoped rather than global because the live shell now has sections that are
  * not about adjudicating: a steward reading a timing screen must be able to
@@ -271,7 +266,7 @@ const buildPriorCallsByDriver = (
       incidentId: decision.incidentId,
       lapLabel: decision.lapLabel,
       state: decision.state,
-      outcome: decision.outcome as LiveDecisionOutcome | undefined,
+      outcome: decision.outcome,
       wasTarget: Boolean(targetSteam),
       decidedAt: decision.decidedAt,
     };
@@ -296,10 +291,16 @@ const buildPriorCallsByDriver = (
 /**
  * Penalties the steward has assigned, per driver.
  *
- * Only driver-scoped outcomes count — "no action" and "note" are findings, not
- * penalties, and a watchlist that counted them would flag the drivers who were
- * cleared. Derived from the history rather than counted separately, so the
+ * Only calls against a driver count — a finding about the incident as a whole is
+ * not a penalty, and a watchlist that counted them would flag the drivers who
+ * were cleared. Derived from the history rather than counted separately, so the
  * watchlist and the dossier cannot disagree about what has already been called.
+ *
+ * The test is the record's own `target`, which is what `wasTarget` reports: a
+ * decision only names a driver when the action it was made under was
+ * driver-scoped. Asking the *configured* tariff instead would make a past call
+ * change meaning when the action behind it is renamed or deleted, and would stop
+ * counting decisions made under an earlier vocabulary altogether.
  */
 const countPenaltiesByDriver = (
   priorCalls: Map<string, LivePriorCall[]>,
@@ -311,8 +312,7 @@ const countPenaltiesByDriver = (
       (call) =>
         call.wasTarget &&
         call.state === 'DECIDED' &&
-        call.outcome !== undefined &&
-        isDriverScopedOutcome(call.outcome),
+        call.outcome !== undefined,
     ).length;
     if (penalties > 0) {
       byDriver.set(steamId, penalties);
@@ -510,6 +510,7 @@ export const LiveSessionProvider: React.FC<{ children: React.ReactNode }> = ({
     stewardDecisions,
     saveStewardDecision,
     stewardAuthor,
+    stewardActions,
   } = useApi();
 
   /*
@@ -861,6 +862,7 @@ export const LiveSessionProvider: React.FC<{ children: React.ReactNode }> = ({
     decisionIdentity,
     sessionKey,
     stewardAuthor,
+    stewardActions,
     activeSessionKey,
     selectedIncidentId,
     effectiveTargetSteamId,
@@ -874,6 +876,7 @@ export const LiveSessionProvider: React.FC<{ children: React.ReactNode }> = ({
     decisionIdentity,
     sessionKey,
     stewardAuthor,
+    stewardActions,
     activeSessionKey,
     selectedIncidentId,
     effectiveTargetSteamId,
@@ -983,6 +986,7 @@ export const LiveSessionProvider: React.FC<{ children: React.ReactNode }> = ({
         decisionIdentity: heldIdentity,
         sessionKey: heldKey,
         stewardAuthor: heldAuthor,
+        stewardActions: heldActions,
         effectiveTargetSteamId: heldTarget,
         reasoningDraft: heldReasoning,
       } = latest.current;
@@ -991,13 +995,25 @@ export const LiveSessionProvider: React.FC<{ children: React.ReactNode }> = ({
         return;
       }
 
-      const target = incident.drivers.find(
-        (driver) => driver.steamId === heldTarget,
-      );
+      /*
+        Whether this call names a driver is the action's own property, and the
+        record follows it rather than following whoever happens to be selected.
+
+        A finding about the incident as a whole is written with no target even
+        when a driver is highlighted — `types.ts` has always said so, and it is
+        what makes `target` the durable answer to "was this a call against
+        someone" once the tariff behind it has moved on. Writing the selection
+        onto a "No Action" would also mark that driver at fault in the replay
+        dossier, which is the app deciding fault.
+      */
+      const needsTarget = isDriverScopedOutcome(heldActions, outcome);
+      const target = needsTarget
+        ? incident.drivers.find((driver) => driver.steamId === heldTarget)
+        : undefined;
 
       // A penalty without a target is not a call. The dossier disables these
       // buttons, and this refuses the keyboard path for the same reason.
-      if (isDriverScopedOutcome(outcome) && !target) {
+      if (needsTarget && !target) {
         return;
       }
 
@@ -1139,7 +1155,15 @@ export const LiveSessionProvider: React.FC<{ children: React.ReactNode }> = ({
         setTargetSteamId(parties[next].steamId);
         return;
       }
-      const outcome = shortcutToOutcome[event.key];
+      /*
+        Derived from the configured order, from the same rule that prints the key
+        on each button — so a keystroke and the button beside it cannot come to
+        mean different things.
+      */
+      const outcome = outcomeForShortcut(
+        latest.current.stewardActions,
+        event.key,
+      );
       if (outcome) {
         onDecide(selected, outcome);
       }

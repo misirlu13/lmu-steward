@@ -24,6 +24,11 @@ import {
   DEFAULT_STEWARD_AUTHOR,
   resolveStewardAuthor,
 } from '../utils/stewardAuthor';
+import {
+  DEFAULT_STEWARD_ACTIONS,
+  StewardAction,
+  resolveStewardActions,
+} from '../utils/stewardActions';
 
 interface ReplayResponse {
   status: string;
@@ -39,6 +44,7 @@ interface UserSettingsResponse {
     persistDashboardFiltersEnabled?: boolean;
     dashboardView?: PersistedDashboardView | null;
     stewardAuthorName?: string;
+    stewardActions?: unknown;
   };
 }
 
@@ -278,6 +284,13 @@ interface ApiContextType {
    * the live shell and the replay dossier cannot disagree about who is calling.
    */
   stewardAuthor: string;
+  /**
+   * The configured penalty tariff, already resolved — never empty. Both dossiers
+   * draw their buttons from this and both decide paths guard against it, so a
+   * call made live and the same call revised post-session are offered one
+   * vocabulary rather than two.
+   */
+  stewardActions: StewardAction[];
   persistDashboardFiltersEnabled: boolean;
   persistedDashboardView: PersistedDashboardView | null;
   lastReplaySyncAt: number | null;
@@ -340,6 +353,7 @@ const ApiContext = createContext<ApiContextType>({
   experimentalFeaturesEnabled: false,
   liveCaptureEnabled: false,
   stewardAuthor: DEFAULT_STEWARD_AUTHOR,
+  stewardActions: [...DEFAULT_STEWARD_ACTIONS],
   persistDashboardFiltersEnabled: false,
   persistedDashboardView: null,
   lastReplaySyncAt: null,
@@ -403,6 +417,9 @@ export const ApiProvider: React.FC<{ children: React.ReactNode }> = ({
   const [liveCaptureSettingEnabled, setLiveCaptureSettingEnabled] =
     useState(false);
   const [stewardAuthor, setStewardAuthor] = useState(DEFAULT_STEWARD_AUTHOR);
+  const [stewardActions, setStewardActions] = useState<StewardAction[]>(() => [
+    ...DEFAULT_STEWARD_ACTIONS,
+  ]);
   const [persistDashboardFiltersEnabled, setPersistDashboardFiltersEnabled] =
     useState(false);
   const [persistedDashboardView, setPersistedDashboardView] =
@@ -529,6 +546,18 @@ export const ApiProvider: React.FC<{ children: React.ReactNode }> = ({
     */
     if (payload?.data && 'stewardAuthorName' in payload.data) {
       setStewardAuthor(resolveStewardAuthor(payload.data.stewardAuthorName));
+    }
+
+    /*
+      Same reasoning, and the more important case of the two. The tariff drives
+      the dossier's buttons, the number-key shortcuts and the "does this need a
+      target driver" guard on both decide paths; resolved here, all of those read
+      one list. A missing, empty or unusable setting resolves to the shipped
+      defaults — which is also how "revert to default" works, since it stores
+      nothing rather than a copy.
+    */
+    if (payload?.data && 'stewardActions' in payload.data) {
+      setStewardActions(resolveStewardActions(payload.data.stewardActions));
     }
 
     if (typeof payload?.data?.persistDashboardFiltersEnabled === 'boolean') {
@@ -1337,6 +1366,7 @@ export const ApiProvider: React.FC<{ children: React.ReactNode }> = ({
       liveCaptureEnabled:
         experimentalFeaturesEnabled && liveCaptureSettingEnabled,
       stewardAuthor,
+      stewardActions,
       persistDashboardFiltersEnabled,
       persistedDashboardView,
       lastReplaySyncAt,
@@ -1391,6 +1421,7 @@ export const ApiProvider: React.FC<{ children: React.ReactNode }> = ({
       experimentalFeaturesEnabled,
       liveCaptureSettingEnabled,
       stewardAuthor,
+      stewardActions,
       persistDashboardFiltersEnabled,
       persistedDashboardView,
       lastReplaySyncAt,

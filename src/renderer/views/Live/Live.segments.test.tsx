@@ -1,12 +1,13 @@
 import React from 'react';
 import '@testing-library/jest-dom';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
-import { act, fireEvent, render, screen } from '@testing-library/react';
+import { act, fireEvent, render, screen, within } from '@testing-library/react';
 import { CONSTANTS } from '@constants';
 import { LiveShell } from './LiveShell';
 import { LiveOverview } from './LiveOverview';
 import { LiveIncidents } from './LiveIncidents';
 import { useApi } from '../../providers/ApiContext';
+import { DEFAULT_STEWARD_ACTIONS } from '../../utils/stewardActions';
 import {
   buildIncidents,
   useLiveSessionData,
@@ -187,6 +188,7 @@ beforeEach(() => {
         liveSessionStatus: { state: 'live' },
         stewardDecisions,
         saveStewardDecision,
+        stewardActions: DEFAULT_STEWARD_ACTIONS,
         subscribeToApiChannel: jest.fn(
           (channel: string, callback: (payload: unknown) => void) => {
             subscribers[channel] = callback;
@@ -418,10 +420,15 @@ describe('live session segments', () => {
     stewardDecisions = {
       d1: {
         id: 'd1',
-        incidentId: `${PRACTICE_KEY}#p1`,
+        /*
+          A different practice incident from the one selected below. The dossier
+          excludes the incident's own record from its history — citing itself as
+          precedent — so a call on `#p1` would show nothing while `#p1` is open.
+        */
+        incidentId: `${PRACTICE_KEY}#p2`,
         sessionKey: PRACTICE_KEY,
         state: 'DECIDED',
-        outcome: 'penalty-5s',
+        outcome: '5s Penalty',
         decidedAt: 1,
         involvedParties: [],
         target: {
@@ -437,9 +444,19 @@ describe('live session segments', () => {
     fireEvent.click(screen.getByText('Practice 1'));
     deliverPracticeRecord();
 
-    // The dossier's history follows the record...
+    /*
+      The dossier's history follows the record...
+
+      Scoped to the history row on purpose. Unscoped, `/5s Penalty/` also matches
+      the tariff button of the same name, which is drawn whether or not the record
+      was read at all — so the assertion passed without proving anything.
+    */
     fireEvent.click(screen.getAllByText(/Practice Driver/)[0]);
-    expect(screen.getByText(/5s Penalty/)).toBeInTheDocument();
+    expect(
+      within(screen.getByTestId('prior-calls-76561198000000001')).getByText(
+        /5s Penalty/,
+      ),
+    ).toBeInTheDocument();
 
     // ...the watchlist beside the live field does not.
     expect(screen.queryByText('1 steward')).not.toBeInTheDocument();

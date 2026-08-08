@@ -57,6 +57,20 @@ export const DEFAULT_USER_SETTINGS: UserSettings = {
    * made a call last week.
    */
   stewardAuthorName: '',
+  /**
+   * The league's own penalty tariff — the action buttons the dossier offers.
+   *
+   * `null` means "use the shipped defaults", and is the only thing stored until
+   * the user departs from them. That is what makes "revert to default" a
+   * deletion rather than a copy: writing the five defaults out would freeze them
+   * into this install, and a later change to the shipped set would never reach
+   * anyone who had ever pressed revert.
+   *
+   * The shape and the defaults live in `src/renderer/utils/stewardActions.ts`,
+   * which is the single definition every reader goes through. Main stores the
+   * value and does not interpret it.
+   */
+  stewardActions: null,
 };
 
 /** The windows offered, longest-lived last. `null` is "never delete". */
@@ -123,6 +137,38 @@ export const getLmuReplayDirectoryPathValidationError = (
 
 // Removed getReplayLogMatchThresholdValidationError
 
+/**
+ * Keeps the store from taking a `stewardActions` value nothing could read back.
+ *
+ * Structural only, deliberately. Whether a tariff is *usable* — labels present,
+ * labels unique, at least one action — is decided in one place, the renderer's
+ * `stewardActions.ts`, which both the editor and every reader go through; a
+ * second copy of those rules here is exactly the drift this setting exists to
+ * remove. What main can check without duplicating anything is that the thing is
+ * either absent or a list of entries with labels.
+ */
+export const getStewardActionsValidationError = (
+  candidate: unknown,
+): string | null => {
+  if (candidate === null || candidate === undefined) {
+    return null;
+  }
+
+  if (!Array.isArray(candidate)) {
+    return 'Steward actions must be a list.';
+  }
+
+  const isEntry = (entry: unknown): boolean =>
+    typeof entry === 'object' &&
+    entry !== null &&
+    !Array.isArray(entry) &&
+    typeof (entry as { label?: unknown }).label === 'string';
+
+  return candidate.every(isEntry)
+    ? null
+    : 'Every steward action needs a label.';
+};
+
 const validateUserSettingsUpdates = (updates: UserSettings): string | null => {
   if (typeof updates?.lmuExecutablePath === 'string') {
     const executablePathValidationError = getLmuExecutablePathValidationError(
@@ -144,6 +190,16 @@ const validateUserSettingsUpdates = (updates: UserSettings): string | null => {
   }
 
   // Removed replayLogMatchThresholdMs validation
+
+  if (Object.prototype.hasOwnProperty.call(updates ?? {}, 'stewardActions')) {
+    const stewardActionsValidationError = getStewardActionsValidationError(
+      updates.stewardActions,
+    );
+
+    if (stewardActionsValidationError) {
+      return stewardActionsValidationError;
+    }
+  }
 
   return null;
 };

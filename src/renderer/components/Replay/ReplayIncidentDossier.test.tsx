@@ -10,6 +10,7 @@ import {
 import { ReplayIncidentDossier } from './ReplayIncidentDossier';
 import { ReplayIncidentEvent } from './replayTimelineTypes';
 import { useApi } from '../../providers/ApiContext';
+import { DEFAULT_STEWARD_ACTIONS } from '../../utils/stewardActions';
 import { useLiveIncidentContext } from '../../hooks/useLiveIncidentContext';
 
 jest.mock('../../providers/ApiContext', () => ({ useApi: jest.fn() }));
@@ -108,6 +109,7 @@ const renderDossier = (
   useApiMock.mockReturnValue({
     stewardDecisions: overrides.decisions ?? {},
     saveStewardDecision,
+    stewardActions: DEFAULT_STEWARD_ACTIONS,
   } as unknown as ReturnType<typeof useApi>);
 
   render(
@@ -167,6 +169,7 @@ describe('ReplayIncidentDossier', () => {
     useApiMock.mockReturnValue({
       stewardDecisions: {},
       saveStewardDecision: jest.fn(),
+      stewardActions: DEFAULT_STEWARD_ACTIONS,
     } as unknown as ReturnType<typeof useApi>);
 
     const { container } = render(
@@ -215,8 +218,29 @@ describe('ReplayIncidentDossier', () => {
 
     expect(saved.status).toBe('final');
     expect(saved.replayHash).toBe('hash-p1-7');
-    expect(saved.outcome).toBe('penalty-10s');
+    // The label is the value: what the button said is what the record carries
+    // and what an export prints, with no lookup table in between.
+    expect(saved.outcome).toBe('10s Penalty');
     expect(saved.state).toBe('DECIDED');
+  });
+
+  /*
+    A finding about the incident as a whole records no driver, even with one
+    selected. `types.ts` has always said so, and it is what keeps `target` the
+    durable answer to "was this a call against someone" once the tariff behind it
+    has been renamed — plus writing the selection on would mark that driver at
+    fault for a call that cleared them.
+  */
+  it('records no target for an action that is not driver-scoped', () => {
+    const { saveStewardDecision } = renderDossier();
+
+    fireEvent.click(screen.getByText('Antares Au'));
+    fireEvent.click(screen.getByText('No Action'));
+
+    const saved = saveStewardDecision.mock.calls[0][0] as StewardDecision;
+
+    expect(saved.outcome).toBe('No Action');
+    expect(saved.target).toBeUndefined();
   });
 
   // A penalty nobody is assigned is not a call anyone can act on.

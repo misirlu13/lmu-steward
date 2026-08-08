@@ -7,6 +7,7 @@ import { LiveShell } from './LiveShell';
 import { LiveOverview } from './LiveOverview';
 import { LiveIncidents } from './LiveIncidents';
 import { useApi } from '../../providers/ApiContext';
+import { DEFAULT_STEWARD_ACTIONS } from '../../utils/stewardActions';
 import { useLiveSessionData } from '../../hooks/useLiveSessionData';
 import { liveIncidentsFixture } from '../../components/Live/liveFixtures';
 
@@ -51,6 +52,7 @@ const setDecisions = (decisions: Record<string, StewardDecision>) => {
     liveSessionStatus: { state: 'live' },
     stewardDecisions: decisions,
     saveStewardDecision,
+    stewardActions: DEFAULT_STEWARD_ACTIONS,
     subscribeToApiChannel: jest.fn(),
   } as unknown as ReturnType<typeof useApi>);
 };
