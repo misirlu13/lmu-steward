@@ -21,6 +21,7 @@ describe('useUserSettingsDerivedState', () => {
     persistDashboardFiltersEnabled: false,
     experimentalFeaturesEnabled: false,
     liveCaptureEnabled: false,
+    stewardAuthorName: '',
     // removed replayLogMatchThresholdMinutes
     anonymizeDriverData: false,
     telemetryCacheEnabled: true,
@@ -64,6 +65,7 @@ describe('useUserSettingsDerivedState', () => {
       persistDashboardFiltersEnabled: false,
       experimentalFeaturesEnabled: false,
       liveCaptureEnabled: false,
+      stewardAuthorName: '',
       anonymizeDriverData: false,
       telemetryCacheEnabled: true,
       clearCacheOnExit: false,
@@ -78,6 +80,31 @@ describe('useUserSettingsDerivedState', () => {
     expect(result.current.hasManualUnsavedChanges).toBe(true);
     expect(result.current.manualSaveDisabled).toBe(false);
     expect(result.current.areSystemPathsAtDefaults).toBe(true);
+  });
+
+  /*
+    Trimmed here rather than in the view, so the field can hold what the steward
+    is mid-way through typing while the store only ever sees a settled value. A
+    name that is only whitespace has to reach the store as '', or it counts as
+    set and a decision gets an author that prints as nothing.
+  */
+  it('trims the steward name on its way into the autosave payload', () => {
+    const { result } = renderHook(() =>
+      useUserSettingsDerivedState({
+        ...baseArgs,
+        stewardAuthorName: '  Bradley  ',
+      }),
+    );
+
+    expect(result.current.autosavePayload.stewardAuthorName).toBe('Bradley');
+  });
+
+  it('sends a whitespace-only steward name as unset', () => {
+    const { result } = renderHook(() =>
+      useUserSettingsDerivedState({ ...baseArgs, stewardAuthorName: '   ' }),
+    );
+
+    expect(result.current.autosavePayload.stewardAuthorName).toBe('');
   });
 
   it('disables sync and manual save when disconnected and invalid', () => {

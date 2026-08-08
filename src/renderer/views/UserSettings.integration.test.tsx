@@ -175,6 +175,7 @@ describe('UserSettingsView integration', () => {
         persistDashboardFiltersEnabled: false,
         experimentalFeaturesEnabled: false,
         liveCaptureEnabled: false,
+        stewardAuthorName: '',
         anonymizeDriverData: false,
         telemetryCacheEnabled: true,
         clearCacheOnExit: false,
@@ -284,6 +285,7 @@ describe('UserSettingsView integration', () => {
         persistDashboardFiltersEnabled: false,
         experimentalFeaturesEnabled: false,
         liveCaptureEnabled: false,
+        stewardAuthorName: '',
         anonymizeDriverData: false,
         telemetryCacheEnabled: true,
         clearCacheOnExit: false,
@@ -351,5 +353,70 @@ describe('UserSettingsView integration', () => {
     ).getByRole('switch');
 
     expect((toggle as HTMLInputElement).checked).toBe(true);
+  });
+
+  describe('the steward name recorded on decisions', () => {
+    const hydrate = (stewardAuthorName?: string) =>
+      emitIpc(CONSTANTS.API.GET_USER_SETTINGS, {
+        status: 'success',
+        data: {
+          lmuExecutablePath:
+            'C:/Program Files (x86)/Steam/steamapps/common/Le Mans Ultimate/Le Mans Ultimate.exe',
+          lmuReplayDirectoryPath:
+            'C:/Program Files (x86)/Steam/steamapps/common/Le Mans Ultimate/UserData/Replays',
+          stewardAuthorName,
+        },
+      });
+
+    const nameField = () => screen.getByLabelText('Steward name');
+
+    it('hydrates from stored settings and autosaves an edit', () => {
+      renderView();
+      hydrate('Bradley');
+
+      expect((nameField() as HTMLInputElement).value).toBe('Bradley');
+
+      fireEvent.change(nameField(), { target: { value: 'Race Control' } });
+
+      act(() => {
+        jest.advanceTimersByTime(800);
+      });
+
+      expect(sendMessageMock).toHaveBeenCalledWith(
+        CONSTANTS.API.POST_USER_SETTINGS,
+        expect.objectContaining({ stewardAuthorName: 'Race Control' }),
+      );
+    });
+
+    /*
+      Shows the fallback rather than pre-filling it, so a steward can tell "I
+      have not set this" from "I have set it to Steward" — and so clearing the
+      box does not read as having typed the generic name on purpose.
+    */
+    it('shows the generic author as a placeholder when unset', () => {
+      renderView();
+      hydrate(undefined);
+
+      expect((nameField() as HTMLInputElement).value).toBe('');
+      expect(nameField().getAttribute('placeholder')).toBe('Steward');
+    });
+
+    // Stored trimmed, so a stray space is not a name. The steward would get an
+    // author on their record that prints as nothing.
+    it('trims whitespace on the way to the store', () => {
+      renderView();
+      hydrate('');
+
+      fireEvent.change(nameField(), { target: { value: '  Bradley  ' } });
+
+      act(() => {
+        jest.advanceTimersByTime(800);
+      });
+
+      expect(sendMessageMock).toHaveBeenCalledWith(
+        CONSTANTS.API.POST_USER_SETTINGS,
+        expect.objectContaining({ stewardAuthorName: 'Bradley' }),
+      );
+    });
   });
 });

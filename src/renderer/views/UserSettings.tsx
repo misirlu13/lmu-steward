@@ -22,6 +22,7 @@ import { RetentionShorteningDialog } from '../components/UserSettings/RetentionS
 import { sendMessage } from '../utils/postMessage';
 import { useApi } from '../providers/ApiContext';
 import { getProfileInitials } from '../utils/profileInitials';
+import { DEFAULT_STEWARD_AUTHOR } from '../utils/stewardAuthor';
 import {
   LONGEST_COUNTRY_NAME,
   LMU_LAUNCH_COOLDOWN_MS,
@@ -128,6 +129,11 @@ export const UserSettingsView: React.FC = () => {
     number | null
   >(30);
   /*
+    Held untrimmed so the field does not fight the cursor mid-word; the trim
+    happens where the value leaves for the store.
+  */
+  const [stewardAuthorName, setStewardAuthorName] = useState('');
+  /*
     Shortening the window deletes data, so the change is held here until the
     user has seen what it would remove and confirmed it. Lengthening never
     lands here — it takes nothing away.
@@ -220,6 +226,7 @@ export const UserSettingsView: React.FC = () => {
     persistDashboardFiltersEnabled,
     experimentalFeaturesEnabled,
     liveCaptureEnabled,
+    stewardAuthorName,
     // replayLogMatchThresholdMinutes,
     anonymizeDriverData,
     telemetryCacheEnabled,
@@ -343,6 +350,10 @@ export const UserSettingsView: React.FC = () => {
       const resolvedLiveCaptureEnabled = Boolean(
         response?.data?.liveCaptureEnabled ?? false,
       );
+      const resolvedStewardAuthorName =
+        typeof response?.data?.stewardAuthorName === 'string'
+          ? response.data.stewardAuthorName.trim()
+          : '';
       const resolvedAnonymizeDriverData = Boolean(
         response?.data?.anonymizeDriverData ?? false,
       );
@@ -373,6 +384,7 @@ export const UserSettingsView: React.FC = () => {
           ? 30
           : (response.data.liveCaptureRetentionDays as number | null),
       );
+      setStewardAuthorName(resolvedStewardAuthorName);
       setAnonymizeDriverData(resolvedAnonymizeDriverData);
       setTelemetryCacheEnabled(resolvedTelemetryCacheEnabled);
       setClearCacheOnExit(resolvedClearCacheOnExit);
@@ -389,6 +401,7 @@ export const UserSettingsView: React.FC = () => {
         persistDashboardFiltersEnabled: resolvedPersistDashboardFiltersEnabled,
         experimentalFeaturesEnabled: resolvedExperimentalFeaturesEnabled,
         liveCaptureEnabled: resolvedLiveCaptureEnabled,
+        stewardAuthorName: resolvedStewardAuthorName,
         // replayLogMatchThresholdMinutes: resolvedReplayLogMatchThresholdMinutes,
         anonymizeDriverData: resolvedAnonymizeDriverData,
         telemetryCacheEnabled: resolvedTelemetryCacheEnabled,
@@ -527,6 +540,14 @@ export const UserSettingsView: React.FC = () => {
         if (typeof response?.data?.liveCaptureEnabled === 'boolean') {
           setLiveCaptureEnabled(response.data.liveCaptureEnabled);
         }
+
+        /*
+          `stewardAuthorName` is deliberately not echoed back into state here.
+          Every other autosaved field is a switch or a select, where the reply
+          cannot arrive mid-change; this one is a text field on an 800 ms
+          debounce, so writing the saved value back would delete whatever the
+          steward typed while the round trip was in flight.
+        */
 
         if (typeof response?.data?.anonymizeDriverData === 'boolean') {
           setAnonymizeDriverData(response.data.anonymizeDriverData);
@@ -1762,6 +1783,51 @@ export const UserSettingsView: React.FC = () => {
                     <MenuItem value="90">90 days</MenuItem>
                     <MenuItem value="never">Never delete</MenuItem>
                   </TextField>
+                </Stack>
+              </Box>
+
+              {/*
+                Beside capture rather than inside it, and not dimmed with it. The
+                replay dossier adjudicates a capture that already exists, so a
+                steward can still be making calls — and needing to be named on
+                them — with the capture switch off.
+              */}
+              <Box
+                sx={{
+                  border: '1px solid',
+                  borderColor: 'divider',
+                  borderRadius: 1,
+                  p: 2,
+                }}
+              >
+                <Stack
+                  direction="row"
+                  justifyContent="space-between"
+                  alignItems="center"
+                >
+                  <Box sx={{ pr: 2 }}>
+                    <Typography variant="subtitle2" fontWeight={600}>
+                      Steward Name
+                    </Typography>
+                    <Typography variant="caption" color="text.secondary">
+                      Recorded on every decision you make from now on, and
+                      carried into CSV, Markdown and JSON exports, so a call can
+                      be attributed on appeal. Decisions already made keep the
+                      name they were made under. Left blank, new decisions are
+                      recorded as &quot;{DEFAULT_STEWARD_AUTHOR}&quot;.
+                    </Typography>
+                  </Box>
+                  <TextField
+                    size="small"
+                    sx={{ minWidth: 220 }}
+                    value={stewardAuthorName}
+                    placeholder={DEFAULT_STEWARD_AUTHOR}
+                    inputProps={{ maxLength: 60, 'aria-label': 'Steward name' }}
+                    onChange={(changeEvent) =>
+                      setStewardAuthorName(changeEvent.target.value)
+                    }
+                    disabled={isLoading || isSaving || isLaunching}
+                  />
                 </Stack>
               </Box>
 

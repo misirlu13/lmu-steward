@@ -21,9 +21,6 @@ import { buildStewardDecisionId } from '../../utils/stewardDecisionId';
 import { useApi } from '../../providers/ApiContext';
 import { ReplayIncidentEvent } from './replayTimelineTypes';
 
-/** Matches live stewarding until the app knows who is signed in. */
-const STEWARD_AUTHOR = 'Steward';
-
 interface Props {
   event: ReplayIncidentEvent | undefined;
   liveData: LiveDataForReplay | null;
@@ -46,7 +43,7 @@ export const ReplayIncidentDossier: React.FC<Props> = ({
   liveData,
   replayHash,
 }) => {
-  const { stewardDecisions, saveStewardDecision } = useApi();
+  const { stewardDecisions, saveStewardDecision, stewardAuthor } = useApi();
   const [targetSteamId, setTargetSteamId] = useState<string | undefined>();
 
   const liveIncidentId = event?.liveIncidentId;
@@ -252,7 +249,13 @@ export const ReplayIncidentDossier: React.FC<Props> = ({
       classification: source.classification,
       outcome,
       reasoning: source.decisionReasoning,
-      stewardAuthor: STEWARD_AUTHOR,
+      /*
+        The same resolved name the live shell writes with, off `useApi()`.
+        Reviewing a call here rewrites its author to whoever is reviewing, which
+        is correct — the revision this produces is their act, not the original
+        steward's. Decisions nobody reopens keep the author they were made with.
+      */
+      stewardAuthor,
       decidedAt: Date.now(),
       state,
       /*
@@ -263,7 +266,7 @@ export const ReplayIncidentDossier: React.FC<Props> = ({
       status: 'final',
       revisions: [],
     }),
-    [liveData, replayHash],
+    [liveData, replayHash, stewardAuthor],
   );
 
   const onFlag = useCallback(() => {

@@ -24,6 +24,7 @@ interface UseUserSettingsDerivedStateArgs {
   persistDashboardFiltersEnabled: boolean;
   experimentalFeaturesEnabled: boolean;
   liveCaptureEnabled: boolean;
+  stewardAuthorName: string;
   anonymizeDriverData: boolean;
   telemetryCacheEnabled: boolean;
   clearCacheOnExit: boolean;
@@ -53,6 +54,7 @@ export const useUserSettingsDerivedState = ({
   persistDashboardFiltersEnabled,
   experimentalFeaturesEnabled,
   liveCaptureEnabled,
+  stewardAuthorName,
   anonymizeDriverData,
   telemetryCacheEnabled,
   clearCacheOnExit,
@@ -122,6 +124,12 @@ export const useUserSettingsDerivedState = ({
       persistDashboardFiltersEnabled,
       experimentalFeaturesEnabled,
       liveCaptureEnabled,
+      /*
+        Trimmed on the way to the store so " " and "" are the same stored value
+        — otherwise a stray space is a name, and the record gets an author that
+        prints as nothing.
+      */
+      stewardAuthorName: stewardAuthorName.trim(),
       anonymizeDriverData,
       telemetryCacheEnabled,
       clearCacheOnExit,
@@ -134,6 +142,7 @@ export const useUserSettingsDerivedState = ({
       persistDashboardFiltersEnabled,
       experimentalFeaturesEnabled,
       liveCaptureEnabled,
+      stewardAuthorName,
       anonymizeDriverData,
       telemetryCacheEnabled,
       clearCacheOnExit,

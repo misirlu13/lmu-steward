@@ -37,6 +37,7 @@ describe('ApiContext integration', () => {
   const TestConsumer = () => {
     const {
       isConnected,
+      stewardAuthor,
       quickViewEnabled,
       isReplaySyncInProgress,
       replaySyncStatus,
@@ -74,6 +75,7 @@ describe('ApiContext integration', () => {
       <>
         <div data-testid="connected">{String(isConnected)}</div>
         <div data-testid="quick-view">{String(quickViewEnabled)}</div>
+        <div data-testid="steward-author">{stewardAuthor}</div>
         <div data-testid="syncing">{String(isReplaySyncInProgress)}</div>
         <div data-testid="sync-progress">
           {String(replaySyncStatus.percentage)}
@@ -255,6 +257,82 @@ describe('ApiContext integration', () => {
       expect(screen.getByTestId('api-status-response').textContent).toBe(
         'true',
       );
+    });
+  });
+
+  /*
+    The steward's name reaches decision records from two call sites — the live
+    shell and the replay dossier — and it is resolved here so it can only be one
+    value. These cover the resolution point rather than either call site.
+  */
+  describe('the steward author new decisions are written under', () => {
+    it('should carry the name from settings', async () => {
+      render(
+        <ApiProvider>
+          <TestConsumer />
+        </ApiProvider>,
+      );
+
+      act(() => {
+        handlers[CONSTANTS.API.GET_USER_SETTINGS]?.({
+          status: 'success',
+          data: { stewardAuthorName: '  Bradley  ' },
+        });
+      });
+
+      await waitFor(() => {
+        expect(screen.getByTestId('steward-author').textContent).toBe(
+          'Bradley',
+        );
+      });
+    });
+
+    // Before settings arrive, and after they arrive blank, which is the shipped
+    // default. Never an empty string on either path.
+    it('should fall back to a generic author rather than a blank one', async () => {
+      render(
+        <ApiProvider>
+          <TestConsumer />
+        </ApiProvider>,
+      );
+
+      expect(screen.getByTestId('steward-author').textContent).toBe('Steward');
+
+      act(() => {
+        handlers[CONSTANTS.API.GET_USER_SETTINGS]?.({
+          status: 'success',
+          data: { stewardAuthorName: '' },
+        });
+      });
+
+      await waitFor(() => {
+        expect(screen.getByTestId('steward-author').textContent).toBe(
+          'Steward',
+        );
+      });
+    });
+
+    // Settings are read once at startup; every later change comes back on the
+    // write reply. Without this the name only takes effect after a restart.
+    it('should update from the settings write reply, without a reload', async () => {
+      render(
+        <ApiProvider>
+          <TestConsumer />
+        </ApiProvider>,
+      );
+
+      act(() => {
+        handlers[CONSTANTS.API.POST_USER_SETTINGS]?.({
+          status: 'success',
+          data: { stewardAuthorName: 'Race Control' },
+        });
+      });
+
+      await waitFor(() => {
+        expect(screen.getByTestId('steward-author').textContent).toBe(
+          'Race Control',
+        );
+      });
     });
   });
 

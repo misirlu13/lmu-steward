@@ -45,12 +45,6 @@ import {
   liveStandingsFixture,
 } from '../components/Live/liveFixtures';
 
-/**
- * Present from day one even in single-steward use. Multi-steward panels are the
- * most likely future request, and adding the field later means a migration.
- */
-const STEWARD_AUTHOR = 'Steward';
-
 const shortcutToOutcome: Record<string, LiveDecisionOutcome> = {
   '1': 'penalty-5s',
   '2': 'penalty-10s',
@@ -94,6 +88,7 @@ const buildDecision = (
   incident: LiveIncident,
   identity: DecisionSessionIdentity,
   sessionKey: string,
+  stewardAuthor: string,
   state: StewardDecisionState,
   outcome?: LiveDecisionOutcome,
   target?: LiveDriverRef,
@@ -132,7 +127,12 @@ const buildDecision = (
     export can tell "no reasoning given" from "reasoning given as blank".
   */
   reasoning: reasoning?.trim() || undefined,
-  stewardAuthor: STEWARD_AUTHOR,
+  /*
+    Passed in, never read from settings here. `ApiContext` resolves the one
+    value the replay dossier also writes with, so the two cannot disagree — and
+    it is already non-blank by the time it arrives.
+  */
+  stewardAuthor,
   decidedAt: Date.now(),
   state,
   // Provisional until the session syncs and the call can be reviewed against
@@ -509,6 +509,7 @@ export const LiveSessionProvider: React.FC<{ children: React.ReactNode }> = ({
     liveSessionStatus,
     stewardDecisions,
     saveStewardDecision,
+    stewardAuthor,
   } = useApi();
 
   /*
@@ -859,6 +860,7 @@ export const LiveSessionProvider: React.FC<{ children: React.ReactNode }> = ({
     incidents,
     decisionIdentity,
     sessionKey,
+    stewardAuthor,
     activeSessionKey,
     selectedIncidentId,
     effectiveTargetSteamId,
@@ -871,6 +873,7 @@ export const LiveSessionProvider: React.FC<{ children: React.ReactNode }> = ({
     incidents,
     decisionIdentity,
     sessionKey,
+    stewardAuthor,
     activeSessionKey,
     selectedIncidentId,
     effectiveTargetSteamId,
@@ -902,6 +905,7 @@ export const LiveSessionProvider: React.FC<{ children: React.ReactNode }> = ({
         incidents: held,
         decisionIdentity: heldIdentity,
         sessionKey: heldKey,
+        stewardAuthor: heldAuthor,
         reasoningDraft: heldReasoning,
       } = latest.current;
       const incident = held.find((entry) => entry.id === incidentId);
@@ -920,6 +924,7 @@ export const LiveSessionProvider: React.FC<{ children: React.ReactNode }> = ({
           incident,
           heldIdentity,
           heldKey,
+          heldAuthor,
           'FLAGGED',
           undefined,
           undefined,
@@ -946,6 +951,7 @@ export const LiveSessionProvider: React.FC<{ children: React.ReactNode }> = ({
         incidents: held,
         decisionIdentity: heldIdentity,
         sessionKey: heldKey,
+        stewardAuthor: heldAuthor,
         reasoningDraft: heldReasoning,
       } = latest.current;
       const incident = held.find((entry) => entry.id === incidentId);
@@ -958,6 +964,7 @@ export const LiveSessionProvider: React.FC<{ children: React.ReactNode }> = ({
           incident,
           heldIdentity,
           heldKey,
+          heldAuthor,
           'DEFERRED',
           undefined,
           undefined,
@@ -975,6 +982,7 @@ export const LiveSessionProvider: React.FC<{ children: React.ReactNode }> = ({
         incidents: held,
         decisionIdentity: heldIdentity,
         sessionKey: heldKey,
+        stewardAuthor: heldAuthor,
         effectiveTargetSteamId: heldTarget,
         reasoningDraft: heldReasoning,
       } = latest.current;
@@ -998,6 +1006,7 @@ export const LiveSessionProvider: React.FC<{ children: React.ReactNode }> = ({
           incident,
           heldIdentity,
           heldKey,
+          heldAuthor,
           'DECIDED',
           outcome,
           target,

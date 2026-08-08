@@ -1337,6 +1337,12 @@ export interface StewardDecision {
    */
   outcome?: StewardDecisionOutcome;
   reasoning?: string;
+  /**
+   * Who made this call, from the steward name setting, resolved to a generic
+   * author when that is unset. Never blank: this is what the record is defended
+   * by under appeal. Denormalised and frozen at write time — changing the
+   * setting never rewrites a past call.
+   */
   stewardAuthor: string;
   decidedAt: number;
   state: StewardDecisionState;

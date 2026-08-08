@@ -46,6 +46,17 @@ export const DEFAULT_USER_SETTINGS: UserSettings = {
    * Steward decisions are never swept, at any setting.
    */
   liveCaptureRetentionDays: 30,
+  /**
+   * Who new steward decisions are recorded as. Empty means "not set", which
+   * the renderer resolves to a generic author rather than writing a blank one —
+   * a decision with no author is undefendable on appeal, which is the entire
+   * reason the field is on the record.
+   *
+   * Only ever applied to calls made from here on. Past decisions keep the
+   * author they were written with; a name typed today says nothing about who
+   * made a call last week.
+   */
+  stewardAuthorName: '',
 };
 
 /** The windows offered, longest-lived last. `null` is "never delete". */

@@ -20,6 +20,10 @@ import {
   ReplaySyncStatus,
 } from '@types';
 import { initializeMessageBus, sendMessage } from '../utils/postMessage';
+import {
+  DEFAULT_STEWARD_AUTHOR,
+  resolveStewardAuthor,
+} from '../utils/stewardAuthor';
 
 interface ReplayResponse {
   status: string;
@@ -34,6 +38,7 @@ interface UserSettingsResponse {
     liveCaptureEnabled?: boolean;
     persistDashboardFiltersEnabled?: boolean;
     dashboardView?: PersistedDashboardView | null;
+    stewardAuthorName?: string;
   };
 }
 
@@ -267,6 +272,12 @@ interface ApiContextType {
   experimentalFeaturesEnabled: boolean;
   /** True only when experimental features AND the live capture switch are on. */
   liveCaptureEnabled: boolean;
+  /**
+   * The name new steward decisions are written under, already resolved — never
+   * blank. Supplied from here rather than read from settings at each dossier so
+   * the live shell and the replay dossier cannot disagree about who is calling.
+   */
+  stewardAuthor: string;
   persistDashboardFiltersEnabled: boolean;
   persistedDashboardView: PersistedDashboardView | null;
   lastReplaySyncAt: number | null;
@@ -328,6 +339,7 @@ const ApiContext = createContext<ApiContextType>({
   quickViewEnabled: false,
   experimentalFeaturesEnabled: false,
   liveCaptureEnabled: false,
+  stewardAuthor: DEFAULT_STEWARD_AUTHOR,
   persistDashboardFiltersEnabled: false,
   persistedDashboardView: null,
   lastReplaySyncAt: null,
@@ -390,6 +402,7 @@ export const ApiProvider: React.FC<{ children: React.ReactNode }> = ({
     useState(false);
   const [liveCaptureSettingEnabled, setLiveCaptureSettingEnabled] =
     useState(false);
+  const [stewardAuthor, setStewardAuthor] = useState(DEFAULT_STEWARD_AUTHOR);
   const [persistDashboardFiltersEnabled, setPersistDashboardFiltersEnabled] =
     useState(false);
   const [persistedDashboardView, setPersistedDashboardView] =
@@ -506,6 +519,16 @@ export const ApiProvider: React.FC<{ children: React.ReactNode }> = ({
 
     if (typeof payload?.data?.quickViewEnabled === 'boolean') {
       setQuickViewEnabled(payload.data.quickViewEnabled);
+    }
+
+    /*
+      Resolved on arrival rather than at each call site, so a decision made from
+      the live shell and one made from the replay dossier are written under the
+      same name. A cleared setting comes back as '' and resolves to the generic
+      author — never an empty one.
+    */
+    if (payload?.data && 'stewardAuthorName' in payload.data) {
+      setStewardAuthor(resolveStewardAuthor(payload.data.stewardAuthorName));
     }
 
     if (typeof payload?.data?.persistDashboardFiltersEnabled === 'boolean') {
@@ -1313,6 +1336,7 @@ export const ApiProvider: React.FC<{ children: React.ReactNode }> = ({
       experimentalFeaturesEnabled,
       liveCaptureEnabled:
         experimentalFeaturesEnabled && liveCaptureSettingEnabled,
+      stewardAuthor,
       persistDashboardFiltersEnabled,
       persistedDashboardView,
       lastReplaySyncAt,
@@ -1366,6 +1390,7 @@ export const ApiProvider: React.FC<{ children: React.ReactNode }> = ({
       quickViewEnabled,
       experimentalFeaturesEnabled,
       liveCaptureSettingEnabled,
+      stewardAuthor,
       persistDashboardFiltersEnabled,
       persistedDashboardView,
       lastReplaySyncAt,
