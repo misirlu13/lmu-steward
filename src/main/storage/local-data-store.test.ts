@@ -302,6 +302,59 @@ describe('main/storage local data store', () => {
     }
   });
 
+  it('does not restore a replay deleted from SQLite when the legacy store has not changed since the last merge', async () => {
+    const tempDir = mkdtempSync(path.join(os.tmpdir(), 'lmu-steward-storage-'));
+
+    try {
+      // An old legacy file holding two replays, left over from before SQLite.
+      const legacyMainPath = path.join(tempDir, 'lmu-steward-store.json');
+      writeFileSync(
+        legacyMainPath,
+        JSON.stringify({
+          replays: {
+            abc123: {
+              hash: 'abc123',
+              replayName: 'Sebring R1',
+              timestamp: 1000,
+            },
+            def456: { hash: 'def456', replayName: 'Monza R2', timestamp: 2000 },
+          },
+        }),
+      );
+      const longAgo = new Date('2020-01-01T00:00:00Z');
+      utimesSync(legacyMainPath, longAgo, longAgo);
+
+      const firstRun = await loadStorageOnSqliteBackend(tempDir);
+      expect(
+        Object.keys(
+          firstRun.getMainPersistentStore().get('replays') as object,
+        ).sort(),
+      ).toEqual(['abc123', 'def456']);
+
+      /*
+        The user deletes one of them. Writing the collection back drops the row
+        outright, so afterwards nothing in SQLite records that def456 was ever
+        merged — a per-key stamp comparison alone cannot tell "deleted" apart
+        from "never seen", and would take the legacy copy as the newer one.
+      */
+      firstRun.getMainPersistentStore().set('replays', {
+        abc123: { hash: 'abc123', replayName: 'Sebring R1', timestamp: 1000 },
+      });
+      firstRun.resetLocalDataStoreForTests();
+
+      // Restart with the legacy file untouched since that merge.
+      const secondRun = await loadStorageOnSqliteBackend(tempDir);
+
+      expect(secondRun.getMainPersistentStore().get('replays')).toEqual({
+        abc123: { hash: 'abc123', replayName: 'Sebring R1', timestamp: 1000 },
+      });
+    } finally {
+      const storage = await import('./local-data-store.js');
+      storage.resetLocalDataStoreForTests();
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
   it('applies a clear requested during a legacy fallback session to SQLite on the next start', async () => {
     const tempDir = mkdtempSync(path.join(os.tmpdir(), 'lmu-steward-storage-'));
 
