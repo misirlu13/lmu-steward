@@ -492,11 +492,17 @@ export const LiveIncidentDossier: React.FC<LiveIncidentDossierProps> = ({
           borderColor: 'divider',
         }}
       >
+        {/*
+          No incident id here. It was the store's primary key —
+          `live|{track}|{session}|{startedAt}#{sha1 of etSeconds|raw}` — and a
+          steward could do nothing with it: no export column carries it, nothing
+          in the app takes one as input, and the session half restated the
+          header two rows above. What identifies an incident to a human is the
+          time and lap on the right of this row and the drivers named below it.
+          The key stays load-bearing in the store, where it belongs.
+        */}
         <Typography variant="subtitle2" fontWeight={700}>
           Incident Dossier
-        </Typography>
-        <Typography variant="caption" color="text.secondary">
-          {incident.id}
         </Typography>
         <Box sx={{ flex: 1 }} />
         {/*

@@ -167,6 +167,14 @@ describe('live shell navigation', () => {
     fireEvent.click(screen.getByText(contact.timestampLabel));
 
     expect(screen.getByText('Incident Dossier')).toBeInTheDocument();
-    expect(screen.getByText(contact.id)).toBeInTheDocument();
+    /*
+      Identified by its parties rather than by its id, which the header no
+      longer prints — a store primary key was nothing a steward could use. The
+      assertion still has to name *which* incident opened, or the test would
+      pass on any dossier at all.
+    */
+    expect(
+      screen.getByTestId(`dossier-driver-${contact.drivers[0].steamId}`),
+    ).toBeInTheDocument();
   });
 });

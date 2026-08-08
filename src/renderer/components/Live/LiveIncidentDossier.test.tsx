@@ -143,6 +143,26 @@ describe('LiveIncidentDossier', () => {
   });
 });
 
+/*
+  The store's primary key is not stewarding information. It read
+  `live|{track}|{session}|{startedAt}#{digest}`, and nothing a steward can reach
+  accepts or emits it — no export column carries it and no control takes one as
+  input — while its session half restated the view header. Asserted rather than
+  merely deleted because a raw id in a header is exactly the kind of debug
+  affordance that creeps back in.
+*/
+describe('LiveIncidentDossier header', () => {
+  it('should identify the incident by time, lap and drivers, not by its key', () => {
+    renderDossier(withEvidence);
+
+    expect(screen.queryByText(withEvidence.id)).not.toBeInTheDocument();
+    // Paired with a positive assertion so the test cannot pass on a blank render.
+    expect(
+      screen.getByTestId(`dossier-driver-${withEvidence.drivers[0].steamId}`),
+    ).toBeInTheDocument();
+  });
+});
+
 describe('LiveIncidentDossier rewatch', () => {
   it('should hand back the incident, leaving the sequence to main', () => {
     const onRewatch = jest.fn();
