@@ -74,11 +74,17 @@ export const LiveCameraControls: React.FC<LiveCameraControlsProps> = ({
   const [cameraError, setCameraError] = useState<string | undefined>();
 
   /*
-    The camera-angle endpoint is `/rest/replay/CameraController/setCamera` —
-    named for the replay, and never yet exercised against a live session. If it
-    turns out to be replay-only, the buttons would otherwise do nothing at all
-    with no explanation, which is the worst of the available outcomes. The
-    failure is caught and shown instead.
+    `/rest/replay/CameraController/setCamera` is named for the replay but is
+    **not replay-only** — verified against a live 38-car practice session at
+    Circuit of the Americas on 2026-08-08, with `/rest/replay/isActive` false
+    throughout. All three groups move the live camera.
+
+    Keep this subscription anyway, but know what it can and cannot catch. The
+    endpoint answers 200 to any well-formed body — a bogus `cameraGroup`, a
+    `direction` of 99 and `{}` all come back 200 — so the game never reports
+    refusing a command we could actually send. The only failure that reaches
+    here is the fetch itself throwing, i.e. LMU gone or not listening, which is
+    a transport fault rather than a refusal.
   */
   useEffect(() => {
     const unsubscribe = subscribeToApiChannel(
