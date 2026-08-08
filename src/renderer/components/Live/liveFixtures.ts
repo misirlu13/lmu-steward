@@ -52,6 +52,40 @@ export const liveClassificationLabel: Record<
   'loss-of-control': 'Loss of Control',
 };
 
+/**
+ * What to call one segment of a weekend.
+ *
+ * From the raw `mSession` enum rather than from `sessionType`, because
+ * `sessionType` collapses to three values and cannot tell Practice 1 from
+ * Practice 4 — which is exactly the distinction a picker exists to draw. The
+ * mapping is LMU's own: 0 test day, 1–4 practice, 5–8 qualifying, 9 warmup,
+ * 10–13 race.
+ *
+ * A single race is "Race", not "Race 1". LMU numbers the race slots for split
+ * grids and the overwhelming majority of sessions are slot 10, so the number
+ * would be noise on every weekend that does not have two.
+ */
+export const liveSegmentLabel = (session: number): string => {
+  if (session >= 1 && session <= 4) {
+    return `Practice ${session}`;
+  }
+  if (session >= 5 && session <= 8) {
+    return `Qualifying ${session - 4}`;
+  }
+  if (session === 9) {
+    return 'Warmup';
+  }
+  if (session >= 10 && session <= 13) {
+    return session === 10 ? 'Race' : `Race ${session - 9}`;
+  }
+  /*
+    0 is genuinely test day, and it is also what a sidecar too old to report
+    `mSession` leaves behind. The picker prints each segment's start time
+    underneath, which is what separates two of these if it ever happens.
+  */
+  return 'Test Day';
+};
+
 export type LiveDecisionOutcome =
   | 'penalty-5s'
   | 'penalty-10s'

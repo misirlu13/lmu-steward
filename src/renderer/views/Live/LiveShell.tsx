@@ -12,7 +12,10 @@ import {
   LiveSessionProvider,
   useLiveSession,
 } from '../../providers/LiveSessionContext';
-import { LiveSessionPhase } from '../../components/Live/liveFixtures';
+import {
+  LiveSessionPhase,
+  liveSegmentLabel,
+} from '../../components/Live/liveFixtures';
 
 const phaseLabel: Record<LiveSessionPhase, string> = {
   green: 'Green Flag',
@@ -37,8 +40,11 @@ const LiveShellBody: React.FC = () => {
     liveIndicator,
     useFixtures,
     unreviewedCount,
+    liveUnreviewedCount,
     flaggedCount,
     deferredCount,
+    isReviewingRecord,
+    selectedSegment,
     onCycleFocus,
   } = useLiveSession();
   const { phase } = session;
@@ -103,6 +109,15 @@ const LiveShellBody: React.FC = () => {
         }
         subtitle={
           <Typography variant="caption" color="text.secondary">
+            {/*
+              Named only when the counts are not the running session's. The
+              subtitle and the rail badge deliberately disagree while a record is
+              open — the badge keeps counting the live session — and this is what
+              says which of the two numbers is which.
+            */}
+            {isReviewingRecord && selectedSegment
+              ? `${liveSegmentLabel(selectedSegment.session)} (record) · `
+              : ''}
             {unreviewedCount} unreviewed · {flaggedCount} flagged for review
             {/*
               Only once there are any. A steward who has deferred nothing does
@@ -155,8 +170,13 @@ const LiveShellBody: React.FC = () => {
           deferred and decided ones are all things the steward has already
           touched; a badge that kept counting them would never clear, and a
           badge that never clears is one nobody looks at.
+
+          The *running* session's count, not the selected segment's. It is the
+          app's only persistent "there is work waiting" signal, and a steward who
+          opened practice must not have it go quiet while the race fills up
+          behind them.
         */}
-        <LiveNavRail badges={{ '/live/incidents': unreviewedCount }} />
+        <LiveNavRail badges={{ '/live/incidents': liveUnreviewedCount }} />
 
         {/*
           The section owns its own internal layout; the shell only decides how

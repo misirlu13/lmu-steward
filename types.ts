@@ -1162,6 +1162,43 @@ export interface LiveSessionSummary {
 }
 
 /**
+ * One race weekend's segments, and optionally the record of one of them.
+ *
+ * A weekend is a chain of separately-keyed sessions at one track — practice,
+ * qualifying, the race — and the live view shows one of them at a time. The
+ * segment list and one segment's incidents ride on the same reply because they
+ * are always read together: choosing a segment is what asks for its record, and
+ * the list is what says the choice is still valid.
+ *
+ * Context traces are deliberately absent, for the same reason they are absent
+ * from `LiveDataForReplay`: they are ~100 KB each and the dossier fetches the
+ * one it is showing.
+ */
+export interface LiveSessionSegments {
+  /**
+   * The segment the group was built around — the running session, where the
+   * caller named one and it has been persisted yet.
+   */
+  anchorSessionKey: string;
+  /** Chronological, oldest first: the order the weekend actually ran. */
+  segments: LiveSessionSummary[];
+  /**
+   * Which segment `incidents` and `drivers` belong to. Absent when none was
+   * asked for, which is every refresh of the list on its own — a record already
+   * held does not change, so re-sending it would churn the renderer's incident
+   * identities for nothing.
+   */
+  recordFor?: string;
+  incidents: LiveIncidentRecord[];
+  /**
+   * That segment's field as it was last seen. Incidents name drivers by slot
+   * alone, so without this a past segment's incidents have no car number and no
+   * class.
+   */
+  drivers: LiveCaptureDriver[];
+}
+
+/**
  * A linked captured session, in the shape the replay view merges from.
  *
  * Context traces are deliberately absent. They are ~100 KB each and a session

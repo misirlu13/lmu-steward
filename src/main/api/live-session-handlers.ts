@@ -4,6 +4,7 @@ import {
   LiveDataForReplay,
   LiveRetentionPreview,
   LiveSessionLink,
+  LiveSessionSegments,
   LocalDataSummary,
 } from '@types';
 import {
@@ -12,6 +13,7 @@ import {
   findLiveSessionForReplay,
   linkLiveSessionToReplay,
   listLiveIncidentTimesBySession,
+  listLiveSessionSegments,
   listLiveSessionSummaries,
   readLiveIncidentContext,
   readLiveIncidents,
@@ -57,6 +59,66 @@ export const getLiveSessions = async (event: Electron.IpcMainEvent) => {
         error instanceof Error
           ? error.message
           : 'Unable to read captured sessions',
+    });
+  }
+};
+
+export interface LiveSessionSegmentsRequest {
+  /** The running session's key. Anchors the group. */
+  sessionKey?: string;
+  /** A segment whose persisted incidents the caller wants back with the list. */
+  recordFor?: string;
+}
+
+/**
+ * The weekend around the running session, and one segment's record on request.
+ *
+ * Deliberately does *not* run the replay-matching pass that `getLiveSessions`
+ * does. That pass walks the replay directory, and this channel is refreshed by
+ * the live view while a race is being stewarded; the link state already on each
+ * summary is enough for a picker to show a dot with.
+ *
+ * A record is served for any key that exists, not only for one in the group.
+ * The renderer decides what it is willing to show — and a request for a segment
+ * that has just been deleted should come back empty rather than as an error the
+ * live view has to render.
+ */
+export const getLiveSessionSegments = async (
+  event: Electron.IpcMainEvent,
+  request?: LiveSessionSegmentsRequest,
+) => {
+  try {
+    const { anchorSessionKey, segments } = listLiveSessionSegments(
+      typeof request?.sessionKey === 'string' ? request.sessionKey : undefined,
+    );
+
+    const recordFor =
+      typeof request?.recordFor === 'string' ? request.recordFor.trim() : '';
+    const record = recordFor ? readLiveSession(recordFor) : null;
+
+    event.reply(CONSTANTS.API.GET_LIVE_SESSION_SEGMENTS, {
+      status: 'success',
+      data: {
+        anchorSessionKey,
+        segments,
+        recordFor: record ? recordFor : undefined,
+        incidents: record ? readLiveIncidentsForSession(recordFor) : [],
+        /*
+          The segment's own field, not the running session's. A practice
+          incident names its drivers by slot, and slots are reused — resolving
+          them against whoever is on track now would put the wrong car number
+          and the wrong class against a driver from two sessions ago.
+        */
+        drivers: record?.drivers ?? [],
+      } satisfies LiveSessionSegments,
+    });
+  } catch (error: unknown) {
+    event.reply(CONSTANTS.API.GET_LIVE_SESSION_SEGMENTS, {
+      status: 'error',
+      message:
+        error instanceof Error
+          ? error.message
+          : 'Unable to read this weekend’s sessions.',
     });
   }
 };

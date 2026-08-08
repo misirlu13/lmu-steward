@@ -795,6 +795,11 @@ export const ApiProvider: React.FC<{ children: React.ReactNode }> = ({
       [CONSTANTS.API.GET_LIVE_SESSIONS]: createHandler(
         CONSTANTS.API.GET_LIVE_SESSIONS,
       ),
+      // And again for the weekend's segment list, owned by
+      // `useLiveSessionSegments`. Same rule, same silence if it is missing.
+      [CONSTANTS.API.GET_LIVE_SESSION_SEGMENTS]: createHandler(
+        CONSTANTS.API.GET_LIVE_SESSION_SEGMENTS,
+      ),
       [CONSTANTS.API.POST_DELETE_LIVE_SESSION]: createHandler(
         CONSTANTS.API.POST_DELETE_LIVE_SESSION,
       ),

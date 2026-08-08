@@ -6,10 +6,12 @@ import { CarClassBadge } from '../../components/CarClassBadge/CarClassBadge';
 import { AiBadge } from '../../components/Common/AiBadge';
 import { StatDisplay } from '../../components/Common/StatDisplay';
 import { LiveFieldState } from '../../components/Live/LiveFieldState';
+import { LiveSessionSegmentPicker } from '../../components/Live/LiveSessionSegmentPicker';
 import { useLiveSession } from '../../providers/LiveSessionContext';
 import {
   LiveIncident,
   liveClassificationLabel,
+  liveSegmentLabel,
 } from '../../components/Live/liveFixtures';
 
 /** Enough to see what the session is asking of you, not enough to work from. */
@@ -96,6 +98,12 @@ export const LiveOverview: React.FC = () => {
     standings,
     battles,
     incidents,
+    segments,
+    activeSessionKey,
+    sessionKey,
+    isReviewingRecord,
+    selectedSegment,
+    segmentRecordLoading,
     liveIndicator,
     unreviewedCount,
     flaggedCount,
@@ -103,6 +111,7 @@ export const LiveOverview: React.FC = () => {
     decidedCount,
     stewardPenaltiesByDriver,
     onSelectIncident,
+    onSelectSegment,
     onFocusCar,
   } = useLiveSession();
 
@@ -142,6 +151,21 @@ export const LiveOverview: React.FC = () => {
       }}
     >
       <Stack spacing={2} sx={{ minHeight: 0 }}>
+        {/*
+          Here as well as on Incidents, because the counters directly below it
+          follow the selection — Overview would otherwise show practice's
+          unreviewed count with nothing on the page saying so. The field column
+          to the right stays live, which is what the picker's own notice says.
+        */}
+        <LiveSessionSegmentPicker
+          segments={segments}
+          activeSessionKey={activeSessionKey}
+          selectedSessionKey={sessionKey}
+          isReviewingRecord={isReviewingRecord}
+          loading={segmentRecordLoading}
+          onSelect={onSelectSegment}
+        />
+
         <Paper
           variant="outlined"
           sx={{ borderColor: 'divider', borderRadius: 2, py: 2 }}
@@ -206,8 +230,18 @@ export const LiveOverview: React.FC = () => {
                 </Typography>
               </StatDisplay>
             ) : null}
+            {/*
+              Names the session the counters beside it describe. That is the
+              running one unless the steward has opened a record, and then it
+              has to say so — a strip reading RACE above practice's incident
+              counts is the one misreading this whole step exists to prevent.
+            */}
             <StatDisplay label="Session" minWidth={140}>
-              <Typography variant="h5">{session.sessionType}</Typography>
+              <Typography variant="h5">
+                {isReviewingRecord && selectedSegment
+                  ? liveSegmentLabel(selectedSegment.session)
+                  : session.sessionType}
+              </Typography>
             </StatDisplay>
           </Stack>
         </Paper>

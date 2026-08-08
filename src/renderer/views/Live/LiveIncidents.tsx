@@ -1,6 +1,10 @@
 import { useMemo } from 'react';
 import { Box } from '@mui/material';
 import { LiveIncidentFilters } from '../../components/Live/LiveIncidentFilters';
+import {
+  LiveSessionSegmentPicker,
+  hasSegmentChoice,
+} from '../../components/Live/LiveSessionSegmentPicker';
 import { LiveTriageQueue } from '../../components/Live/LiveTriageQueue';
 import { LiveIncidentDossier } from '../../components/Live/LiveIncidentDossier';
 import { matchesLiveIncidentFilters } from '../../components/Live/liveFixtures';
@@ -19,6 +23,11 @@ import { useLiveSession } from '../../providers/LiveSessionContext';
 export const LiveIncidents: React.FC = () => {
   const {
     incidents,
+    segments,
+    activeSessionKey,
+    sessionKey,
+    isReviewingRecord,
+    segmentRecordLoading,
     selectedIncident,
     selectedIncidentId,
     stateFilter,
@@ -29,6 +38,7 @@ export const LiveIncidents: React.FC = () => {
     targetSteamId,
     onChangeReasoning,
     onSelectIncident,
+    onSelectSegment,
     onChangeStateFilter,
     onChangeIncidentFilters,
     onResetIncidentFilters,
@@ -65,12 +75,35 @@ export const LiveIncidents: React.FC = () => {
         // Row one is the filter bar at whatever height it needs; everything
         // after it splits the remaining height on a wide screen and flows on a
         // narrow one.
-        gridTemplateRows: { xs: 'auto', lg: 'auto minmax(0, 1fr)' },
+        gridTemplateRows: {
+          xs: 'auto',
+          lg: hasSegmentChoice(segments)
+            ? 'auto auto minmax(0, 1fr)'
+            : 'auto minmax(0, 1fr)',
+        },
         gridAutoRows: { xs: 'minmax(360px, auto)', lg: 'minmax(0, 1fr)' },
         height: { xs: 'auto', lg: '100%' },
         boxSizing: 'border-box',
       }}
     >
+      {/*
+        Above the filters, because it scopes them: the quick filters narrow a
+        session's incidents and this chooses the session. It draws nothing at
+        all when the weekend has only run one, which is most of the time.
+      */}
+      {hasSegmentChoice(segments) ? (
+        <Box sx={{ gridColumn: '1 / -1' }}>
+          <LiveSessionSegmentPicker
+            segments={segments}
+            activeSessionKey={activeSessionKey}
+            selectedSessionKey={sessionKey}
+            isReviewingRecord={isReviewingRecord}
+            loading={segmentRecordLoading}
+            onSelect={onSelectSegment}
+          />
+        </Box>
+      ) : null}
+
       <Box sx={{ gridColumn: '1 / -1' }}>
         <LiveIncidentFilters
           filters={incidentFilters}
@@ -99,7 +132,13 @@ export const LiveIncidents: React.FC = () => {
         reasoning={reasoningDraft}
         onChangeReasoning={onChangeReasoning}
         onSelectTarget={onSelectTarget}
-        onFocusCar={onFocusCar}
+        /*
+          No camera against a record: the slot ids in a finished session's
+          incidents address whoever holds those slots *now*, so the button would
+          swing the camera to the wrong driver and look like it worked. The
+          dossier hides it rather than disabling it.
+        */
+        onFocusCar={isReviewingRecord ? undefined : onFocusCar}
         onFlag={onFlag}
         onDefer={onDefer}
         onDecide={onDecide}

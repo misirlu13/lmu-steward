@@ -313,7 +313,17 @@ const CarMeasurements: React.FC<CarMeasurementsProps> = ({ incident }) => {
 
 interface LiveIncidentDossierProps {
   incident?: LiveIncident;
-  onFocusCar: (slotId: number | undefined) => void;
+  /**
+   * Point the game's camera at a car.
+   *
+   * Optional, and absent means the button is not drawn. Two callers pass
+   * nothing: the replay-side dossier, which has its own seek, and the live view
+   * when the steward is reading a *finished* segment — there the camera would
+   * swing to whoever holds that slot in the session running now, which is very
+   * often a different driver and never the one in the incident. Hidden rather
+   * than disabled, on the same reasoning as `onDefer` below.
+   */
+  onFocusCar?: (slotId: number | undefined) => void;
   onFlag: (incidentId: string) => void;
   /**
    * Records "this one is for post-session review", not "I ran out of time".
@@ -543,16 +553,18 @@ export const LiveIncidentDossier: React.FC<LiveIncidentDossierProps> = ({
                     sx={{ height: 20, fontSize: 10 }}
                   />
                 ) : null}
-                <Button
-                  size="small"
-                  startIcon={<CenterFocusStrongIcon />}
-                  onClick={(clickEvent) => {
-                    clickEvent.stopPropagation();
-                    onFocusCar(driver.slotId);
-                  }}
-                >
-                  Focus
-                </Button>
+                {onFocusCar ? (
+                  <Button
+                    size="small"
+                    startIcon={<CenterFocusStrongIcon />}
+                    onClick={(clickEvent) => {
+                      clickEvent.stopPropagation();
+                      onFocusCar(driver.slotId);
+                    }}
+                  >
+                    Focus
+                  </Button>
+                ) : null}
               </Stack>
             );
           })}

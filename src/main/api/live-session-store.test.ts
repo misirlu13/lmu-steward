@@ -1,9 +1,14 @@
-import { LiveCaptureIncident, LiveIncidentContext } from '@types';
+import {
+  LiveCaptureIncident,
+  LiveIncidentContext,
+  LiveSessionSummary,
+} from '@types';
 import {
   LIVE_SESSION_START_QUANTUM_MS,
   LiveSessionCandidate,
   buildLiveIncidentRecord,
   deriveLiveSessionKey,
+  groupLiveSessionSegments,
   resolveLiveSessionKey,
   startedAtFromLiveSessionKey,
 } from './live-session-store';
@@ -250,5 +255,144 @@ describe('resolveLiveSessionKey', () => {
     const key = resolveLiveSessionKey('Daytona', 10, 0, [], 1_800_000_030_000);
 
     expect(key).toBe(deriveLiveSessionKey('Daytona', 10, 0, 1_800_000_030_000));
+  });
+});
+
+describe('groupLiveSessionSegments', () => {
+  const MINUTE = 60_000;
+
+  const summary = (
+    overrides: Partial<LiveSessionSummary> & { sessionKey: string },
+  ): LiveSessionSummary =>
+    ({
+      trackName: 'Laguna Seca',
+      sessionType: 'PRACTICE',
+      session: 1,
+      startedAt: NOW,
+      lastSeenAt: NOW + 30 * MINUTE,
+      driverCount: 38,
+      incidentCount: 0,
+      evidenceCount: 0,
+      linkState: 'unlinked',
+      ...overrides,
+    }) as LiveSessionSummary;
+
+  /** A practice → qualifying → race sitting, with the usual short breaks. */
+  const weekend = () => [
+    summary({
+      sessionKey: 'p1',
+      session: 1,
+      startedAt: NOW,
+      lastSeenAt: NOW + 60 * MINUTE,
+    }),
+    summary({
+      sessionKey: 'q1',
+      session: 5,
+      sessionType: 'QUALIFY',
+      startedAt: NOW + 70 * MINUTE,
+      lastSeenAt: NOW + 85 * MINUTE,
+    }),
+    summary({
+      sessionKey: 'r',
+      session: 10,
+      sessionType: 'RACE',
+      startedAt: NOW + 110 * MINUTE,
+      lastSeenAt: NOW + 230 * MINUTE,
+    }),
+  ];
+
+  it('chains a practice, qualifying and race sitting into one weekend', () => {
+    expect(
+      groupLiveSessionSegments(weekend(), 'r').map((s) => s.sessionKey),
+    ).toEqual(['p1', 'q1', 'r']);
+  });
+
+  it('answers the same group from any segment in it', () => {
+    const sessions = weekend();
+
+    expect(groupLiveSessionSegments(sessions, 'p1')).toEqual(
+      groupLiveSessionSegments(sessions, 'r'),
+    );
+  });
+
+  /*
+    The span from practice to the race is longer than the gap threshold, so a
+    "within N hours of the anchor" rule would drop the earliest segment. Chaining
+    is what holds a long weekend together.
+  */
+  it('holds together a weekend longer than the gap threshold', () => {
+    const sessions = weekend();
+
+    expect(
+      groupLiveSessionSegments(sessions, 'r').map((s) => s.sessionKey),
+    ).toContain('p1');
+  });
+
+  /*
+    The case the plan calls out: a league running the same track twice in a
+    night must not merge. The separator is the dead time between them, not the
+    track and not the session number.
+  */
+  it('starts a new group after a long break at the same track', () => {
+    const sessions = [
+      ...weekend(),
+      summary({
+        sessionKey: 'evening-p1',
+        session: 1,
+        startedAt: NOW + 230 * MINUTE + 120 * MINUTE,
+        lastSeenAt: NOW + 400 * MINUTE,
+      }),
+    ];
+
+    expect(
+      groupLiveSessionSegments(sessions, 'r').map((s) => s.sessionKey),
+    ).not.toContain('evening-p1');
+    expect(
+      groupLiveSessionSegments(sessions, 'evening-p1').map((s) => s.sessionKey),
+    ).toEqual(['evening-p1']);
+  });
+
+  it('never groups two tracks together', () => {
+    const sessions = [
+      ...weekend(),
+      summary({
+        sessionKey: 'other-track',
+        trackName: 'Bahrain',
+        startedAt: NOW + 115 * MINUTE,
+        lastSeenAt: NOW + 150 * MINUTE,
+      }),
+    ];
+
+    expect(
+      groupLiveSessionSegments(sessions, 'r').map((s) => s.sessionKey),
+    ).not.toContain('other-track');
+  });
+
+  /*
+    A restarted race is the same event. Breaking the group on a repeated session
+    number would make a steward's practice incidents disappear from the picker
+    the moment race control pressed restart.
+  */
+  it('keeps a restarted race in the weekend it restarted from', () => {
+    const sessions = [
+      ...weekend(),
+      summary({
+        sessionKey: 'r-restart',
+        session: 10,
+        sessionType: 'RACE',
+        startedAt: NOW + 235 * MINUTE,
+        lastSeenAt: NOW + 350 * MINUTE,
+      }),
+    ];
+
+    expect(
+      groupLiveSessionSegments(sessions, 'r-restart').map((s) => s.sessionKey),
+    ).toEqual(['p1', 'q1', 'r', 'r-restart']);
+  });
+
+  it('returns nothing for an anchor that is not on disk yet', () => {
+    expect(groupLiveSessionSegments(weekend(), 'not-persisted-yet')).toEqual(
+      [],
+    );
   });
 });

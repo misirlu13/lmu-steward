@@ -31,6 +31,7 @@ const {
   findLiveSessionForReplay,
   linkLiveSessionToReplay,
   listLiveIncidentTimesBySession,
+  listLiveSessionSegments,
   persistLiveIncident,
   persistLiveIncidentContext,
   unlinkLiveSession,
@@ -158,8 +159,9 @@ describe('link state', () => {
   const written = () =>
     storeSet.mock.calls
       .filter(([key]: [string]) => key === 'liveSessions')
-      .map(([, value]: [string, Record<string, unknown>]) =>
-        Object.values(value)[0],
+      .map(
+        ([, value]: [string, Record<string, unknown>]) =>
+          Object.values(value)[0],
       )
       .pop() as LiveSessionRecord;
 
@@ -244,9 +246,9 @@ describe('link state', () => {
   it('finds the session by identity key when the hash has moved', () => {
     store.sessions = { a: session('a', { link }) };
 
-    expect(findLiveSessionForReplay('other-hash', 'identity-1')?.sessionKey).toBe(
-      'a',
-    );
+    expect(
+      findLiveSessionForReplay('other-hash', 'identity-1')?.sessionKey,
+    ).toBe('a');
   });
 
   it('finds nothing for an unlinked replay', () => {
@@ -312,5 +314,70 @@ describe('writes without a session', () => {
       'liveIncidents',
       expect.objectContaining({ '#abc': expect.anything() }),
     );
+  });
+});
+
+describe('listLiveSessionSegments', () => {
+  const MINUTE = 60_000;
+  const NOW = 1_800_000_000_000;
+
+  const at = (
+    key: string,
+    startedAt: number,
+    lengthMinutes: number,
+    trackName = 'Laguna Seca',
+  ) =>
+    session(key, {
+      trackName,
+      startedAt,
+      lastSeenAt: startedAt + lengthMinutes * MINUTE,
+    });
+
+  beforeEach(() => {
+    store.sessions = {
+      p1: at('p1', NOW, 60),
+      q1: at('q1', NOW + 70 * MINUTE, 15),
+      race: at('race', NOW + 110 * MINUTE, 120),
+      elsewhere: at('elsewhere', NOW + 115 * MINUTE, 60, 'Bahrain'),
+    };
+  });
+
+  it('answers with the weekend around the session it was given', () => {
+    const { anchorSessionKey, segments } = listLiveSessionSegments('race');
+
+    expect(anchorSessionKey).toBe('race');
+    expect(segments.map((s: { sessionKey: string }) => s.sessionKey)).toEqual([
+      'p1',
+      'q1',
+      'race',
+    ]);
+  });
+
+  /*
+    The state between the game loading a session and capture writing its first
+    row. Answering it with the newest record on disk would put another
+    weekend's practice in front of the steward under a live heading.
+  */
+  it('answers empty for a running session that has not been persisted yet', () => {
+    const { segments } = listLiveSessionSegments('not-written-yet');
+
+    expect(segments).toEqual([]);
+  });
+
+  // With the game closed there is no anchor to be given, and the last thing
+  // captured is the only sensible thing to open on.
+  it('anchors on the most recent capture when no session was named', () => {
+    const { anchorSessionKey } = listLiveSessionSegments();
+
+    expect(anchorSessionKey).toBe('elsewhere');
+  });
+
+  it('answers empty when nothing has ever been captured', () => {
+    store.sessions = {};
+
+    expect(listLiveSessionSegments('race')).toEqual({
+      anchorSessionKey: 'race',
+      segments: [],
+    });
   });
 });

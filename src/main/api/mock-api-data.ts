@@ -200,6 +200,221 @@ const liveCarPositionsResponse = {
   data: extractLiveCarPositions(standingsMockData),
 };
 
+/*
+  A whole mock weekend, so the segment picker has something to pick.
+
+  Dev mode takes the running session from the renderer's own fixtures, and
+  those describe exactly one session — which is precisely the arrangement a
+  segment picker cannot be looked at in. These are the two segments that ran
+  *before* it, with their own persisted incidents, so selecting one exercises
+  the read-only path rather than only the live one.
+
+  Self-contained rather than reusing `liveFixtures.ts`: that file is renderer
+  code, and main importing it to serve a mock would put a renderer module in the
+  main bundle for the sake of dev mode.
+*/
+const MOCK_SEGMENT_TRACK = 'Bahrain International Circuit';
+
+/** The key the renderer derives for the mock live session. See `LiveSessionContext`. */
+const MOCK_ACTIVE_SEGMENT_KEY = `${MOCK_SEGMENT_TRACK}|RACE`;
+
+const MOCK_WEEKEND_START = Date.parse('2026-08-07T12:00:00Z');
+const MOCK_HOUR_MS = 60 * 60 * 1000;
+
+const mockSegmentDrivers = [
+  {
+    slotId: 0,
+    driverName: 'Bradley Drake',
+    vehicleName: '#7 Hyper',
+    class: 'Hyper',
+  },
+  {
+    slotId: 1,
+    driverName: 'Luc Moreau',
+    vehicleName: '#51 Hyper',
+    class: 'Hyper',
+  },
+  {
+    slotId: 2,
+    driverName: 'Elena Vasquez',
+    vehicleName: '#22 LMP2',
+    class: 'LMP2',
+  },
+  {
+    slotId: 3,
+    driverName: 'Sam Okonkwo',
+    vehicleName: '#34 LMP2',
+    class: 'LMP2',
+  },
+  {
+    slotId: 4,
+    driverName: 'Nils Lindqvist',
+    vehicleName: '#92 LMGT3',
+    class: 'LMGT3',
+  },
+  {
+    slotId: 5,
+    driverName: 'Gia Ferrara',
+    vehicleName: '#77 LMGT3',
+    class: 'LMGT3',
+  },
+].map((driver, index) => ({
+  steamId: `7656119800000000${index + 1}`,
+  driverName: driver.driverName,
+  vehicleName: driver.vehicleName,
+  vehicleClass: driver.class,
+  place: index + 1,
+  lapsCompleted: 18,
+  lastLapTime: 96.4 + index * 0.3,
+  bestLapTime: 95.8 + index * 0.25,
+  timeBehindLeader: index * 1.4,
+  lapsBehindLeader: 0,
+  penalties: 0,
+  inPits: false,
+  control: 0,
+  flag: 0,
+  pitStops: 0,
+  finishStatus: 0,
+  slotId: driver.slotId,
+}));
+
+interface MockSegmentSpec {
+  sessionKey: string;
+  session: number;
+  sessionType: 'PRACTICE' | 'QUALIFY' | 'RACE';
+  startedAt: number;
+  lastSeenAt: number;
+  incidentCount: number;
+  linkState: 'linked' | 'proposed' | 'unlinked';
+}
+
+const MOCK_SEGMENT_SPECS: MockSegmentSpec[] = [
+  {
+    sessionKey: `live|${MOCK_SEGMENT_TRACK}|1|${MOCK_WEEKEND_START}`,
+    session: 1,
+    sessionType: 'PRACTICE',
+    startedAt: MOCK_WEEKEND_START,
+    lastSeenAt: MOCK_WEEKEND_START + MOCK_HOUR_MS,
+    incidentCount: 6,
+    linkState: 'linked',
+  },
+  {
+    sessionKey: `live|${MOCK_SEGMENT_TRACK}|5|${MOCK_WEEKEND_START + MOCK_HOUR_MS * 1.5}`,
+    session: 5,
+    sessionType: 'QUALIFY',
+    startedAt: MOCK_WEEKEND_START + MOCK_HOUR_MS * 1.5,
+    lastSeenAt: MOCK_WEEKEND_START + MOCK_HOUR_MS * 1.75,
+    incidentCount: 3,
+    linkState: 'proposed',
+  },
+  {
+    sessionKey: MOCK_ACTIVE_SEGMENT_KEY,
+    session: 10,
+    sessionType: 'RACE',
+    startedAt: MOCK_WEEKEND_START + MOCK_HOUR_MS * 2.5,
+    lastSeenAt: MOCK_WEEKEND_START + MOCK_HOUR_MS * 4,
+    incidentCount: 12,
+    linkState: 'unlinked',
+  },
+];
+
+const mockSegmentSummaries = MOCK_SEGMENT_SPECS.map((spec) => ({
+  sessionKey: spec.sessionKey,
+  trackName: MOCK_SEGMENT_TRACK,
+  sessionType: spec.sessionType,
+  session: spec.session,
+  startedAt: spec.startedAt,
+  lastSeenAt: spec.lastSeenAt,
+  driverCount: mockSegmentDrivers.length,
+  incidentCount: spec.incidentCount,
+  evidenceCount: Math.floor(spec.incidentCount / 2),
+  linkState: spec.linkState,
+}));
+
+/** Persisted-incident records for one mock segment, in the store's own shape. */
+const mockSegmentIncidents = (spec: MockSegmentSpec) =>
+  Array.from({ length: spec.incidentCount }, (_, index) => {
+    const etSeconds = 180 + index * 137.5;
+    const first = mockSegmentDrivers[index % mockSegmentDrivers.length];
+    const second =
+      mockSegmentDrivers[(index * 3 + 1) % mockSegmentDrivers.length];
+    const isContact = index % 3 !== 0 && first !== second;
+
+    return {
+      id: `${spec.sessionKey}#${String(index + 1).padStart(4, '0')}`,
+      sessionKey: spec.sessionKey,
+      occurredAt: spec.startedAt + etSeconds * 1000,
+      hasContext: isContact,
+      incident: {
+        id: `live-1-${index + 1}`,
+        seq: index + 1,
+        etSeconds,
+        lap: 1 + Math.floor(index / 2),
+        kind: isContact ? 'incident' : 'track-limits',
+        objectStruck: isContact ? 'another vehicle' : undefined,
+        magnitude: isContact ? 250 + index * 130 : undefined,
+        warningPoints: isContact ? undefined : 23.75,
+        currentPoints: isContact ? undefined : 23.75 * (1 + index),
+        raw: isContact
+          ? `${second.driverName}(${second.slotId}) reported contact with ${first.driverName}(${first.slotId})`
+          : `${first.driverName} exceeded track limits`,
+        parties: isContact
+          ? [
+              { slotId: first.slotId, displayName: first.driverName },
+              { slotId: second.slotId, displayName: second.driverName },
+            ]
+          : [{ slotId: first.slotId, displayName: first.driverName }],
+        anchorErrorSeconds: isContact ? 0.02 * (index % 5) : undefined,
+        evidence: isContact
+          ? {
+              closingSpeedKph: 14 + index * 3,
+              aheadSlotId: first.slotId,
+              offTrackSlotIds: [],
+              isTrafficIncident: first.vehicleClass !== second.vehicleClass,
+              trackPositionLabel: `Sector ${1 + (index % 3)} · ${900 + index * 40} m`,
+              cars: [
+                {
+                  slotId: first.slotId,
+                  speedKph: 180 + index,
+                  offTrack: false,
+                },
+                {
+                  slotId: second.slotId,
+                  speedKph: 188 + index,
+                  offTrack: false,
+                },
+              ],
+            }
+          : undefined,
+      },
+    };
+  });
+
+const mockLiveSessionSegments = (requestData: unknown) => {
+  const request = (requestData ?? {}) as {
+    sessionKey?: unknown;
+    recordFor?: unknown;
+  };
+  const recordFor = String(request.recordFor ?? '');
+  const spec = MOCK_SEGMENT_SPECS.find(
+    (candidate) => candidate.sessionKey === recordFor,
+  );
+
+  return {
+    status: 'success',
+    data: {
+      anchorSessionKey:
+        typeof request.sessionKey === 'string' && request.sessionKey
+          ? request.sessionKey
+          : MOCK_ACTIVE_SEGMENT_KEY,
+      segments: mockSegmentSummaries,
+      recordFor: spec ? spec.sessionKey : undefined,
+      incidents: spec ? mockSegmentIncidents(spec) : [],
+      drivers: spec ? mockSegmentDrivers : [],
+    },
+  };
+};
+
 const MOCK_REPLAY_LOADING_DURATION_MS = 6500;
 let mockReplayLoadingStartedAtMs: number | null = null;
 
@@ -292,6 +507,7 @@ export const mockApiData: Partial<Record<ApiChannel, MockApiResolver>> = {
       useRendererFixtures: true,
     },
   }),
+  [CONSTANTS.API.GET_LIVE_SESSION_SEGMENTS]: mockLiveSessionSegments,
   [CONSTANTS.API.GET_REPLAYS]: () => ({
     status: 'success',
     data: decorateMockReplays(),

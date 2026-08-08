@@ -285,6 +285,122 @@ export const listLiveSessionSummaries = (): LiveSessionSummary[] => {
 };
 
 /**
+ * How long a track can sit uncaptured before the next session there is a
+ * different event rather than the next segment of this one.
+ *
+ * **Measured between segments, not from an anchor.** "Same track, started within
+ * a few hours" cannot separate the two things it has to: a practice → qualifying
+ * → race sitting spans two to three hours, and a league running the same track
+ * twice in a night starts the second event two to three hours after the first.
+ * The spans are the same; the *gaps* are not. Inside one sitting the game is
+ * back in a session within minutes of leaving the last one, and between two
+ * events there is a real break.
+ *
+ * So the group chains: two segments belong together when the second started
+ * within this long of the first being last seen. 90 minutes is wide enough for
+ * the longest realistic pause a weekend contains — the wait between qualifying
+ * and a formation lap — and far shorter than the break between two events.
+ *
+ * A restarted race deliberately chains rather than starting a new group. It is
+ * the same event, and a steward whose practice incidents vanished from the
+ * picker because race control pressed restart would have lost them for no
+ * reason.
+ */
+export const LIVE_SEGMENT_IDLE_GAP_MS = 90 * 60 * 1000;
+
+/**
+ * Dead time between one segment and the next, never negative.
+ *
+ * `lastSeenAt` is the last status tick the session got, so it is the honest end
+ * of it. Floored at `startedAt` because a session row is written before its
+ * first heartbeat and the two can arrive in either order.
+ */
+const idleGapBetween = (
+  earlier: LiveSessionSummary,
+  later: LiveSessionSummary,
+): number =>
+  Math.max(
+    0,
+    later.startedAt - Math.max(earlier.lastSeenAt, earlier.startedAt),
+  );
+
+/**
+ * The weekend one segment belongs to: every session at the same track that
+ * chains to it, in the order they ran.
+ *
+ * Walks outwards from the anchor rather than filtering by distance from it, so
+ * a five-segment weekend holds together even though its first and last segments
+ * are further apart than the gap threshold.
+ */
+export const groupLiveSessionSegments = (
+  summaries: LiveSessionSummary[],
+  anchorSessionKey: string,
+): LiveSessionSummary[] => {
+  const anchor = summaries.find(
+    (summary) => summary.sessionKey === anchorSessionKey,
+  );
+  if (!anchor) {
+    return [];
+  }
+
+  const atTrack = summaries
+    .filter((summary) => summary.trackName === anchor.trackName)
+    .sort((a, b) => a.startedAt - b.startedAt);
+
+  const at = atTrack.findIndex(
+    (summary) => summary.sessionKey === anchorSessionKey,
+  );
+
+  let first = at;
+  while (
+    first > 0 &&
+    idleGapBetween(atTrack[first - 1], atTrack[first]) <=
+      LIVE_SEGMENT_IDLE_GAP_MS
+  ) {
+    first -= 1;
+  }
+
+  let last = at;
+  while (
+    last < atTrack.length - 1 &&
+    idleGapBetween(atTrack[last], atTrack[last + 1]) <= LIVE_SEGMENT_IDLE_GAP_MS
+  ) {
+    last += 1;
+  }
+
+  return atTrack.slice(first, last + 1);
+};
+
+/**
+ * The segment group for a running session, or for the most recent capture when
+ * there is no running session to anchor on.
+ *
+ * An anchor that was named but is not on disk yields an *empty* group rather
+ * than falling back to the newest record. That state is real and brief — the
+ * session row is written on the first status tick that can — and answering it
+ * with a different weekend's segments would put the wrong track's practice in
+ * front of a steward, marked as though it were this one's.
+ */
+export const listLiveSessionSegments = (
+  anchorSessionKey?: string,
+): { anchorSessionKey: string; segments: LiveSessionSummary[] } => {
+  const requested = anchorSessionKey?.trim();
+  const summaries = listLiveSessionSummaries();
+  const anchor = requested
+    ? summaries.find((summary) => summary.sessionKey === requested)
+    : summaries[0];
+
+  if (!anchor) {
+    return { anchorSessionKey: requested ?? '', segments: [] };
+  }
+
+  return {
+    anchorSessionKey: anchor.sessionKey,
+    segments: groupLiveSessionSegments(summaries, anchor.sessionKey),
+  };
+};
+
+/**
  * Every captured incident's elapsed time, grouped by session.
  *
  * Read once per matching pass rather than per session: the incident rows are

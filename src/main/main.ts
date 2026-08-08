@@ -35,8 +35,10 @@ import {
   getLiveRetentionPreview,
   getLiveSessionMatches,
   getLiveSessions,
+  getLiveSessionSegments,
   getLocalDataSummary,
   LinkLiveSessionRequest,
+  LiveSessionSegmentsRequest,
   postDeleteLiveSession,
   postDismissLiveSessionMatch,
   postLinkLiveSession,
@@ -280,6 +282,8 @@ const CHANNEL_CALLBACK_HANDLERS: Partial<
   [CONSTANTS.API.POST_DELETE_IMPORTED_REPLAYS]:
     withEventAndData<DeleteImportedReplaysRequest>(postDeleteImportedReplays),
   [CONSTANTS.API.GET_LIVE_SESSIONS]: withEventOnly(getLiveSessions),
+  [CONSTANTS.API.GET_LIVE_SESSION_SEGMENTS]:
+    withEventAndData<LiveSessionSegmentsRequest>(getLiveSessionSegments),
   [CONSTANTS.API.POST_DELETE_LIVE_SESSION]: withEventAndData<string>(
     postDeleteLiveSession,
   ),

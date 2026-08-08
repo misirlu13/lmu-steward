@@ -9,7 +9,12 @@ import React, {
 } from 'react';
 import { useLocation } from 'react-router-dom';
 import { CONSTANTS } from '@constants';
-import { StewardDecision, StewardDecisionState } from '@types';
+import {
+  LiveSessionSummary,
+  SessionType,
+  StewardDecision,
+  StewardDecisionState,
+} from '@types';
 import { sendMessage } from '../utils/postMessage';
 import { buildStewardDecisionId } from '../utils/stewardDecisionId';
 import { useApi } from './ApiContext';
@@ -19,6 +24,7 @@ import {
   useLiveSessionData,
 } from '../hooks/useLiveSessionData';
 import { LiveTrackMapResult, useLiveTrackMap } from '../hooks/useLiveTrackMap';
+import { useLiveSessionSegments } from '../hooks/useLiveSessionSegments';
 import {
   DEFAULT_LIVE_INCIDENT_FILTERS,
   LiveDecisionOutcome,
@@ -66,13 +72,27 @@ const SHORTCUT_ROUTES = new Set(['/live', '/live/incidents']);
 const EDITABLE_TAGS = new Set(['INPUT', 'TEXTAREA', 'SELECT']);
 
 /**
+ * Which session a call is being made *about*, which is not always the one the
+ * game is running.
+ *
+ * A steward reviewing practice during the race is adjudicating practice, and
+ * the record has to say so — the denormalised track and type are what a decision
+ * is read back by once its evidence has aged out.
+ */
+interface DecisionSessionIdentity {
+  trackName: string;
+  sessionType: SessionType;
+  serverName?: string;
+}
+
+/**
  * Builds the durable record. Session, driver, time and classification are
  * denormalised onto it deliberately: live incident ids do not survive a
  * sidecar restart, so the decision has to stand on its own.
  */
 const buildDecision = (
   incident: LiveIncident,
-  session: LiveSessionState,
+  identity: DecisionSessionIdentity,
   sessionKey: string,
   state: StewardDecisionState,
   outcome?: LiveDecisionOutcome,
@@ -83,10 +103,10 @@ const buildDecision = (
   basis: 'incident',
   incidentId: incident.id,
   sessionKey,
-  sessionTrack: session.trackName,
-  sessionType: session.sessionType,
+  sessionTrack: identity.trackName,
+  sessionType: identity.sessionType,
   sessionDate: Date.now(),
-  serverName: session.serverName || undefined,
+  serverName: identity.serverName || undefined,
   target: target
     ? {
         steamId: target.steamId,
@@ -121,10 +141,226 @@ const buildDecision = (
   revisions: [],
 });
 
+/**
+ * Every decision that belongs to one session, indexed by the incident it is
+ * about.
+ *
+ * Parameterised on the key rather than closing over "the current session",
+ * because there are now two sessions in play at once: the one the steward is
+ * reading and the one the game is running. The nav badge has to keep counting
+ * the second while the queue shows the first.
+ */
+const buildDecisionIndex = (
+  decisions: Record<string, StewardDecision>,
+  sessionKey: string,
+): Map<string, StewardDecision[]> => {
+  const byIncident = new Map<string, StewardDecision[]>();
+
+  Object.values(decisions).forEach((decision) => {
+    if (!decision.incidentId || decision.sessionKey !== sessionKey) {
+      return;
+    }
+    const existing = byIncident.get(decision.incidentId);
+    if (existing) {
+      existing.push(decision);
+    } else {
+      byIncident.set(decision.incidentId, [decision]);
+    }
+  });
+
+  return byIncident;
+};
+
+/**
+ * Deliberately returns the incidents it was given, untouched, where no decision
+ * applies — so a quiet poll tick leaves both the array and every entry on it
+ * with the identity the build cache gave them.
+ */
+const applyDecisions = (
+  incidents: LiveIncident[],
+  byIncident: Map<string, StewardDecision[]>,
+): LiveIncident[] =>
+  incidents.map((incident) => {
+    const forIncident = byIncident.get(incident.id);
+    if (!forIncident?.length) {
+      return incident;
+    }
+
+    const decided = forIncident.find((entry) => entry.state === 'DECIDED');
+    if (decided) {
+      return {
+        ...incident,
+        state: 'DECIDED' as const,
+        decision: decided.outcome,
+        decisionReasoning: decided.reasoning,
+        atFaultSteamId: decided.target?.steamId,
+      };
+    }
+
+    /*
+      Ranked, because an incident can carry more than one record: a per-driver
+      call is keyed on its target, an incident-scoped one is not. A decision
+      settles it, a deferral is a deliberate hand-off to post-session, and a
+      flag is the weakest claim of the three.
+    */
+    if (forIncident.some((entry) => entry.state === 'DEFERRED')) {
+      return { ...incident, state: 'DEFERRED' as const };
+    }
+
+    return { ...incident, state: 'FLAGGED' as const };
+  });
+
+/**
+ * How many incidents would come out of `applyDecisions` still in `NEW`.
+ *
+ * Counted rather than merged, because the one caller that needs this separately
+ * from the rendered list wants only the number — and merging four hundred
+ * incidents once a second to produce an integer would allocate four hundred
+ * objects nothing ever renders.
+ *
+ * **It must agree with `applyDecisions` exactly, and "has no decision record" is
+ * not the same test.** A decision record always moves an incident out of `NEW`,
+ * but an incident with no record keeps whatever state it arrived carrying — which
+ * live is always `NEW` and in the dev fixtures is deliberately not. Counting on
+ * the record alone made the rail badge read 7 against a queue showing 3.
+ */
+const countUnreviewed = (
+  incidents: LiveIncident[],
+  byIncident: Map<string, StewardDecision[]>,
+): number =>
+  incidents.reduce((total, incident) => {
+    if (byIncident.get(incident.id)?.length) {
+      return total;
+    }
+    return incident.state === 'NEW' ? total + 1 : total;
+  }, 0);
+
+/**
+ * A driver's history in one session, from the same store the incident states
+ * come from.
+ *
+ * Indexed on the target where there is one, and on every involved party where
+ * there is not: a penalty against one driver of a two-car contact is a call
+ * about that driver only, while a "no action" is a finding about the incident
+ * and belongs to everyone who was in it.
+ *
+ * Parameterised on the key for the same reason `buildDecisionIndex` is — the
+ * dossier wants the history of the session being *read* and the watchlist wants
+ * the one being *driven*, and those stopped being the same session.
+ */
+const buildPriorCallsByDriver = (
+  decisions: Record<string, StewardDecision>,
+  sessionKey: string,
+): Map<string, LivePriorCall[]> => {
+  const byDriver = new Map<string, LivePriorCall[]>();
+
+  Object.values(decisions).forEach((decision) => {
+    if (decision.sessionKey !== sessionKey) {
+      return;
+    }
+
+    const targetSteam = decision.target?.steamId;
+    const keys = targetSteam
+      ? [targetSteam]
+      : decision.involvedParties
+          .map((party) => party.steamId)
+          .filter((id): id is string => Boolean(id));
+
+    const call: LivePriorCall = {
+      decisionId: decision.id,
+      incidentId: decision.incidentId,
+      lapLabel: decision.lapLabel,
+      state: decision.state,
+      outcome: decision.outcome as LiveDecisionOutcome | undefined,
+      wasTarget: Boolean(targetSteam),
+      decidedAt: decision.decidedAt,
+    };
+
+    keys.forEach((key) => {
+      const existing = byDriver.get(key);
+      if (existing) {
+        existing.push(call);
+      } else {
+        byDriver.set(key, [call]);
+      }
+    });
+  });
+
+  // Newest first: the most recent call is the one that sets the precedent the
+  // steward is about to either follow or depart from.
+  byDriver.forEach((calls) => calls.sort((a, b) => b.decidedAt - a.decidedAt));
+
+  return byDriver;
+};
+
+/**
+ * Penalties the steward has assigned, per driver.
+ *
+ * Only driver-scoped outcomes count — "no action" and "note" are findings, not
+ * penalties, and a watchlist that counted them would flag the drivers who were
+ * cleared. Derived from the history rather than counted separately, so the
+ * watchlist and the dossier cannot disagree about what has already been called.
+ */
+const countPenaltiesByDriver = (
+  priorCalls: Map<string, LivePriorCall[]>,
+): Map<string, number> => {
+  const byDriver = new Map<string, number>();
+
+  priorCalls.forEach((calls, steamId) => {
+    const penalties = calls.filter(
+      (call) =>
+        call.wasTarget &&
+        call.state === 'DECIDED' &&
+        call.outcome !== undefined &&
+        isDriverScopedOutcome(call.outcome),
+    ).length;
+    if (penalties > 0) {
+      byDriver.set(steamId, penalties);
+    }
+  });
+
+  return byDriver;
+};
+
+/** Identity-stable stand-in for a record that has been asked for and has not landed. */
+const NO_INCIDENTS: LiveIncident[] = [];
+
 export interface LiveSessionContextValue {
   /* Session-wide data, polled once for the whole shell. */
   session: LiveSessionState;
+  /**
+   * The session everything on this context is *about*.
+   *
+   * Usually the running one. While the steward is reading a past segment it is
+   * that segment's key instead, which is what keeps a call made against
+   * practice attached to practice.
+   */
   sessionKey: string;
+  /** The running session's key, whatever is being read. */
+  activeSessionKey: string;
+  /**
+   * The segments of this weekend at this track, oldest first.
+   *
+   * Empty until the running session has been persisted, and short — a weekend
+   * is three to six sessions. Fewer than two and there is nothing to pick
+   * between, which is what the picker checks before drawing itself.
+   */
+  segments: LiveSessionSummary[];
+  /** The summary row for `sessionKey`, when the group knows about it. */
+  selectedSegment?: LiveSessionSummary;
+  /**
+   * True when the queue, the dossier and the counts are showing a session that
+   * has finished rather than the one being captured.
+   *
+   * **Only the incident side follows the selection.** The field, the timing
+   * screen, the track map, the pressure monitor and the camera bar all stay on
+   * the running session, because that is what they are: a picture of the cars
+   * on track now. A steward reading practice's incidents during the race is
+   * still stewarding the race.
+   */
+  isReviewingRecord: boolean;
+  /** A past segment has been chosen and its incidents are still being read. */
+  segmentRecordLoading: boolean;
   standings: LiveStanding[];
   battles: LivePressureBattle[];
   incidents: LiveIncident[];
@@ -142,6 +378,18 @@ export interface LiveSessionContextValue {
   flaggedCount: number;
   deferredCount: number;
   decidedCount: number;
+  /**
+   * Unreviewed incidents in the *running* session, whichever segment is being
+   * read.
+   *
+   * The one count that deliberately does not follow the selection. Every other
+   * number here describes what is on screen; this one is the rail badge, which
+   * is the app's only persistent "there is work waiting" signal — and a badge
+   * that went quiet because the steward opened practice would hide a race
+   * filling up with incidents behind them. Identical to `unreviewedCount`
+   * whenever the running session is the one being read, which is almost always.
+   */
+  liveUnreviewedCount: number;
 
   /* Selection. Held here so it survives navigating between live sections. */
   selectedIncidentId?: string;
@@ -224,6 +472,14 @@ export interface LiveSessionContextValue {
     See LiveSessionContext.stability.test.tsx.
   */
   onSelectIncident: (incidentId: string) => void;
+  /**
+   * Open a segment of this weekend.
+   *
+   * Choosing the running one returns to following it, rather than pinning it —
+   * so a steward who clicks "Race" while the race is on is still moved to
+   * qualifying automatically if the game goes back to qualifying.
+   */
+  onSelectSegment: (sessionKey: string) => void;
   onSelectTarget: (steamId: string) => void;
   onChangeStateFilter: (next: LiveIncidentState | 'ALL') => void;
   onChangeClassFilter: (next: string) => void;
@@ -283,6 +539,18 @@ export const LiveSessionProvider: React.FC<{ children: React.ReactNode }> = ({
   const [selectedIncidentId, setSelectedIncidentId] = useState<
     string | undefined
   >();
+  /**
+   * A segment the steward has deliberately opened, or undefined for "follow the
+   * running session".
+   *
+   * Undefined rather than "the active key" so the transition from practice to
+   * qualifying carries a steward who was watching live along with it, while
+   * leaving one who had opened a record where they put themselves. Storing the
+   * active key would make those two states indistinguishable.
+   */
+  const [pinnedSegmentKey, setPinnedSegmentKey] = useState<
+    string | undefined
+  >();
   // Which driver a penalty would be assigned to. A penalty against a two-car
   // incident with no target is a call nobody can act on.
   const [targetSteamId, setTargetSteamId] = useState<string | undefined>();
@@ -313,7 +581,9 @@ export const LiveSessionProvider: React.FC<{ children: React.ReactNode }> = ({
     [],
   );
 
-  const sourceIncidents = useFixtures ? liveIncidentsFixture : liveIncidents;
+  const liveSourceIncidents = useFixtures
+    ? liveIncidentsFixture
+    : liveIncidents;
   const standings = useFixtures ? liveStandingsFixture : liveStandings;
   // Memoised for its identity, not its cost: `battles` defaults to a literal
   // when capture sends none, and a fresh `[]` every render would churn the
@@ -372,146 +642,110 @@ export const LiveSessionProvider: React.FC<{ children: React.ReactNode }> = ({
     against the replay afterwards. Falls back to the old shape only when capture
     has not supplied one, which is dev-mode fixtures.
   */
-  const sessionKey =
+  const activeSessionKey =
     liveSessionKey || `${session.trackName}|${session.sessionType}`;
+
+  /*
+    Gated on there being a session to group around. With the game closed the
+    session state falls back to the fixture, so an ungated fetch would ask for
+    the segments of whatever track the fixture names — and get either nothing or
+    somebody else's weekend.
+  */
+  const {
+    segments,
+    record: segmentRecord,
+    loading: segmentRecordLoading,
+  } = useLiveSessionSegments(
+    activeSessionKey,
+    pinnedSegmentKey,
+    useFixtures || liveIndicator.state === 'live',
+  );
+
+  /*
+    Pinning the running session is not reviewing a record — it is the ordinary
+    case, and it is also what the picker collapses a click on the live segment
+    into.
+  */
+  const isReviewingRecord =
+    pinnedSegmentKey !== undefined && pinnedSegmentKey !== activeSessionKey;
+  const sessionKey = isReviewingRecord ? pinnedSegmentKey : activeSessionKey;
+  const selectedSegment = segments.find(
+    (segment) => segment.sessionKey === sessionKey,
+  );
+
+  /*
+    A pin has to be given up when the segment behind it goes away — the steward
+    moved to another track, or deleted the capture. Guarded on the list being
+    non-empty, because "not loaded yet" and "no longer there" look identical
+    from here and dropping the pin on the first render would undo the selection
+    before its record ever arrived.
+  */
+  useEffect(() => {
+    if (pinnedSegmentKey === undefined || segments.length === 0) {
+      return;
+    }
+    if (!segments.some((segment) => segment.sessionKey === pinnedSegmentKey)) {
+      setPinnedSegmentKey(undefined);
+    }
+  }, [pinnedSegmentKey, segments]);
+
+  /*
+    The queue's source. A record is a fixed list read once from disk, so the
+    1 Hz poll cannot overwrite it a second after the steward opened it: the poll
+    writes `liveIncidents`, and while a record is open nothing reads that.
+
+    `NO_INCIDENTS` rather than the live list while a record is loading. Showing
+    the running session's incidents under a "Practice 1" heading for the half a
+    second the read takes would be a lie, and briefly showing an empty queue is
+    not.
+  */
+  const sourceIncidents = isReviewingRecord
+    ? segmentRecord?.sessionKey === sessionKey
+      ? segmentRecord.incidents
+      : NO_INCIDENTS
+    : liveSourceIncidents;
 
   // Decisions are persisted records, not view state, so a call survives a
   // reload, a navigation away, and the incident list being replaced every poll.
-  const decisionsByIncident = useMemo(() => {
-    const byIncident = new Map<string, StewardDecision[]>();
-
-    Object.values(stewardDecisions).forEach((decision) => {
-      if (!decision.incidentId || decision.sessionKey !== sessionKey) {
-        return;
-      }
-      const existing = byIncident.get(decision.incidentId);
-      if (existing) {
-        existing.push(decision);
-      } else {
-        byIncident.set(decision.incidentId, [decision]);
-      }
-    });
-
-    return byIncident;
-  }, [sessionKey, stewardDecisions]);
+  const decisionsByIncident = useMemo(
+    () => buildDecisionIndex(stewardDecisions, sessionKey),
+    [sessionKey, stewardDecisions],
+  );
 
   /*
-    A driver's history in this session, from the same store the incident states
-    come from.
-
-    Indexed on the target where there is one, and on every involved party where
-    there is not: a penalty against one driver of a two-car contact is a call
-    about that driver only, while a "no action" is a finding about the incident
-    and belongs to everyone who was in it. Depends on nothing that changes on a
-    poll tick, so the map — and every list in it — keeps its identity between
-    decisions.
+    The dossier's history, for the session being read. Depends on nothing that
+    changes on a poll tick, so the map — and every list in it — keeps its
+    identity between decisions.
   */
-  const priorCallsByDriver = useMemo(() => {
-    const byDriver = new Map<string, LivePriorCall[]>();
-
-    Object.values(stewardDecisions).forEach((decision) => {
-      if (decision.sessionKey !== sessionKey) {
-        return;
-      }
-
-      const targetSteam = decision.target?.steamId;
-      const keys = targetSteam
-        ? [targetSteam]
-        : decision.involvedParties
-            .map((party) => party.steamId)
-            .filter((id): id is string => Boolean(id));
-
-      const call: LivePriorCall = {
-        decisionId: decision.id,
-        incidentId: decision.incidentId,
-        lapLabel: decision.lapLabel,
-        state: decision.state,
-        outcome: decision.outcome as LiveDecisionOutcome | undefined,
-        wasTarget: Boolean(targetSteam),
-        decidedAt: decision.decidedAt,
-      };
-
-      keys.forEach((key) => {
-        const existing = byDriver.get(key);
-        if (existing) {
-          existing.push(call);
-        } else {
-          byDriver.set(key, [call]);
-        }
-      });
-    });
-
-    // Newest first: the most recent call is the one that sets the precedent the
-    // steward is about to either follow or depart from.
-    byDriver.forEach((calls) =>
-      calls.sort((a, b) => b.decidedAt - a.decidedAt),
-    );
-
-    return byDriver;
-  }, [sessionKey, stewardDecisions]);
+  const priorCallsByDriver = useMemo(
+    () => buildPriorCallsByDriver(stewardDecisions, sessionKey),
+    [sessionKey, stewardDecisions],
+  );
 
   /*
-    Derived from the history rather than counted separately, so the watchlist
-    and the dossier cannot disagree about what the steward has already called.
-    Only driver-scoped outcomes count — "no action" and "note" are findings, not
-    penalties, and a watchlist that counted them would flag the drivers who were
-    cleared.
+    The watchlist's penalty column, for the session being *driven*.
+
+    Deliberately not the selected segment's, and this was wrong first time
+    round: the watchlist is a live panel — its rows are the cars on track, its
+    incident and track-limit tallies come from the running session — so taking
+    one column of it from a record put "1 steward" against a driver whose live
+    row said nothing had happened. Seen against a real Laguna practice.
+
+    Reuses the map above whenever the two sessions are the same, which is almost
+    always.
   */
-  const stewardPenaltiesByDriver = useMemo(() => {
-    const byDriver = new Map<string, number>();
-
-    priorCallsByDriver.forEach((calls, steamId) => {
-      const penalties = calls.filter(
-        (call) =>
-          call.wasTarget &&
-          call.state === 'DECIDED' &&
-          call.outcome !== undefined &&
-          isDriverScopedOutcome(call.outcome),
-      ).length;
-      if (penalties > 0) {
-        byDriver.set(steamId, penalties);
-      }
-    });
-
-    return byDriver;
-  }, [priorCallsByDriver]);
-
-  /*
-    Deliberately returns the incidents it was given, untouched, where no
-    decision applies — so a quiet poll tick leaves both the array and every
-    entry on it with the identity the build cache gave them.
-  */
-  const incidents = useMemo<LiveIncident[]>(
+  const stewardPenaltiesByDriver = useMemo(
     () =>
-      sourceIncidents.map((incident) => {
-        const forIncident = decisionsByIncident.get(incident.id);
-        if (!forIncident?.length) {
-          return incident;
-        }
+      countPenaltiesByDriver(
+        isReviewingRecord
+          ? buildPriorCallsByDriver(stewardDecisions, activeSessionKey)
+          : priorCallsByDriver,
+      ),
+    [activeSessionKey, isReviewingRecord, priorCallsByDriver, stewardDecisions],
+  );
 
-        const decided = forIncident.find((entry) => entry.state === 'DECIDED');
-        if (decided) {
-          return {
-            ...incident,
-            state: 'DECIDED' as const,
-            decision: decided.outcome,
-            decisionReasoning: decided.reasoning,
-            atFaultSteamId: decided.target?.steamId,
-          };
-        }
-
-        /*
-          Ranked, because an incident can carry more than one record: a
-          per-driver call is keyed on its target, an incident-scoped one is not.
-          A decision settles it, a deferral is a deliberate hand-off to
-          post-session, and a flag is the weakest claim of the three.
-        */
-        if (forIncident.some((entry) => entry.state === 'DEFERRED')) {
-          return { ...incident, state: 'DEFERRED' as const };
-        }
-
-        return { ...incident, state: 'FLAGGED' as const };
-      }),
+  const incidents = useMemo<LiveIncident[]>(
+    () => applyDecisions(sourceIncidents, decisionsByIncident),
     [decisionsByIncident, sourceIncidents],
   );
 
@@ -552,6 +786,27 @@ export const LiveSessionProvider: React.FC<{ children: React.ReactNode }> = ({
   );
 
   /*
+    The rail badge's number, which is the running session's even while a record
+    is open. Costs a second index and a scan only in that state; the ordinary
+    case reuses what has already been computed.
+  */
+  const liveUnreviewedCount = useMemo(() => {
+    if (!isReviewingRecord) {
+      return counts.unreviewed;
+    }
+    return countUnreviewed(
+      liveSourceIncidents,
+      buildDecisionIndex(stewardDecisions, activeSessionKey),
+    );
+  }, [
+    activeSessionKey,
+    counts.unreviewed,
+    isReviewingRecord,
+    liveSourceIncidents,
+    stewardDecisions,
+  ]);
+
+  /*
     Over every incident, not the filtered ones. Options that narrow themselves
     as filters are applied leave the steward unable to switch from one driver to
     another without clearing first. Recomputed only when the incident list
@@ -561,6 +816,32 @@ export const LiveSessionProvider: React.FC<{ children: React.ReactNode }> = ({
   const incidentFilterOptions = useMemo(
     () => buildLiveIncidentFilterOptions(incidents),
     [incidents],
+  );
+
+  /*
+    What a call written right now is a call *about*.
+
+    Taken from the segment being read, not from the running session. Without
+    this, resolving a deferred practice incident during the race would write a
+    record saying the incident happened in the race — and the denormalised type
+    is what a decision is read back by once the capture behind it has expired.
+
+    `serverName` is deliberately dropped for a record: it is not stored on the
+    session row, and the running session's server is not this segment's.
+  */
+  const decisionIdentity = useMemo<DecisionSessionIdentity>(
+    () =>
+      isReviewingRecord
+        ? {
+            trackName: selectedSegment?.trackName ?? session.trackName,
+            sessionType: selectedSegment?.sessionType ?? session.sessionType,
+          }
+        : {
+            trackName: session.trackName,
+            sessionType: session.sessionType,
+            serverName: session.serverName || undefined,
+          },
+    [isReviewingRecord, selectedSegment, session],
   );
 
   /*
@@ -576,8 +857,9 @@ export const LiveSessionProvider: React.FC<{ children: React.ReactNode }> = ({
   */
   const latest = useRef({
     incidents,
-    session,
+    decisionIdentity,
     sessionKey,
+    activeSessionKey,
     selectedIncidentId,
     effectiveTargetSteamId,
     reasoningDraft,
@@ -587,8 +869,9 @@ export const LiveSessionProvider: React.FC<{ children: React.ReactNode }> = ({
   });
   latest.current = {
     incidents,
-    session,
+    decisionIdentity,
     sessionKey,
+    activeSessionKey,
     selectedIncidentId,
     effectiveTargetSteamId,
     reasoningDraft,
@@ -597,11 +880,27 @@ export const LiveSessionProvider: React.FC<{ children: React.ReactNode }> = ({
     focusedSlotId,
   };
 
+  /*
+    Clicking the running session returns to following it rather than pinning it,
+    so the picker has one control and not two — "Race" and "back to live" are
+    the same button when the race is the live session.
+
+    The selection is dropped with it: an incident id from practice means nothing
+    in the race's queue, and leaving it set would show the steward a dossier for
+    an incident that is no longer in the list beside it.
+  */
+  const onSelectSegment = useCallback((key: string) => {
+    setPinnedSegmentKey(
+      key === latest.current.activeSessionKey ? undefined : key,
+    );
+    setSelectedIncidentId(undefined);
+  }, []);
+
   const onFlag = useCallback(
     (incidentId: string) => {
       const {
         incidents: held,
-        session: heldSession,
+        decisionIdentity: heldIdentity,
         sessionKey: heldKey,
         reasoningDraft: heldReasoning,
       } = latest.current;
@@ -619,7 +918,7 @@ export const LiveSessionProvider: React.FC<{ children: React.ReactNode }> = ({
       saveStewardDecision(
         buildDecision(
           incident,
-          heldSession,
+          heldIdentity,
           heldKey,
           'FLAGGED',
           undefined,
@@ -645,7 +944,7 @@ export const LiveSessionProvider: React.FC<{ children: React.ReactNode }> = ({
     (incidentId: string) => {
       const {
         incidents: held,
-        session: heldSession,
+        decisionIdentity: heldIdentity,
         sessionKey: heldKey,
         reasoningDraft: heldReasoning,
       } = latest.current;
@@ -657,7 +956,7 @@ export const LiveSessionProvider: React.FC<{ children: React.ReactNode }> = ({
       saveStewardDecision(
         buildDecision(
           incident,
-          heldSession,
+          heldIdentity,
           heldKey,
           'DEFERRED',
           undefined,
@@ -674,7 +973,7 @@ export const LiveSessionProvider: React.FC<{ children: React.ReactNode }> = ({
     (incidentId: string, outcome: LiveDecisionOutcome) => {
       const {
         incidents: held,
-        session: heldSession,
+        decisionIdentity: heldIdentity,
         sessionKey: heldKey,
         effectiveTargetSteamId: heldTarget,
         reasoningDraft: heldReasoning,
@@ -697,7 +996,7 @@ export const LiveSessionProvider: React.FC<{ children: React.ReactNode }> = ({
       saveStewardDecision(
         buildDecision(
           incident,
-          heldSession,
+          heldIdentity,
           heldKey,
           'DECIDED',
           outcome,
@@ -845,6 +1144,11 @@ export const LiveSessionProvider: React.FC<{ children: React.ReactNode }> = ({
     () => ({
       session,
       sessionKey,
+      activeSessionKey,
+      segments,
+      selectedSegment,
+      isReviewingRecord,
+      segmentRecordLoading,
       standings,
       battles,
       incidents,
@@ -854,6 +1158,7 @@ export const LiveSessionProvider: React.FC<{ children: React.ReactNode }> = ({
       flaggedCount: counts.flagged,
       deferredCount: counts.deferred,
       decidedCount: counts.decided,
+      liveUnreviewedCount,
       selectedIncidentId,
       selectedIncident,
       targetSteamId: effectiveTargetSteamId,
@@ -868,6 +1173,7 @@ export const LiveSessionProvider: React.FC<{ children: React.ReactNode }> = ({
       reasoningDraft,
       focusedSlotId,
       onSelectIncident: setSelectedIncidentId,
+      onSelectSegment,
       onSelectTarget: setTargetSteamId,
       onChangeStateFilter: setStateFilter,
       onChangeClassFilter: setClassFilter,
@@ -881,6 +1187,7 @@ export const LiveSessionProvider: React.FC<{ children: React.ReactNode }> = ({
       onDecide,
     }),
     [
+      activeSessionKey,
       battles,
       classFilter,
       counts,
@@ -891,17 +1198,23 @@ export const LiveSessionProvider: React.FC<{ children: React.ReactNode }> = ({
       incidentFilterOptions,
       incidentFilters,
       incidents,
+      isReviewingRecord,
       liveIndicator,
+      liveUnreviewedCount,
       onChangeIncidentFilters,
       onDecide,
       onDefer,
       onFlag,
       onFocusCar,
       onResetIncidentFilters,
+      onSelectSegment,
       priorCallsByDriver,
       reasoningDraft,
+      segmentRecordLoading,
+      segments,
       selectedIncident,
       selectedIncidentId,
+      selectedSegment,
       session,
       sessionKey,
       standings,

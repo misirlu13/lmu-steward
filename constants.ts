@@ -118,6 +118,22 @@ export const CONSTANTS = {
     POST_IMPORT_REPLAYS: 'post.import-replays',
     POST_DELETE_IMPORTED_REPLAYS: 'post.delete-imported-replays',
     GET_LIVE_SESSIONS: 'get.live-sessions',
+    /**
+     * The segments of the weekend the live view is showing, and on request the
+     * persisted record of one of them.
+     *
+     * Deliberately not `GET_LIVE_SESSIONS`, which answers with *every* captured
+     * session ever and runs a replay-matching pass over the replay directory as
+     * it does so. That pass is right when a human opens the captured-sessions
+     * list and wrong on a channel the live view refreshes while a race is
+     * running. This one reads two collections off disk and nothing else.
+     *
+     * One channel rather than two — a list channel and a record channel — for a
+     * blunter reason: a channel with no `messageBusHandlers` entry in
+     * `ApiContext` is silently dead, and that has cost three debugging sessions.
+     * Fewer channels, fewer chances.
+     */
+    GET_LIVE_SESSION_SEGMENTS: 'get.live-session-segments',
     POST_DELETE_LIVE_SESSION: 'post.delete-live-session',
     /** Ranked replays a captured session might belong to. Nothing is linked. */
     GET_LIVE_SESSION_MATCHES: 'get.live-session-matches',
