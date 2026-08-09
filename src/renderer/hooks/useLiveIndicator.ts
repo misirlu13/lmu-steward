@@ -42,6 +42,7 @@ export const deriveLiveIndicator = ({
     state: 'standby',
     label: 'Standby',
     detail:
-      liveSessionStatus.detail ?? 'Le Mans Ultimate is running. No live session detected.',
+      liveSessionStatus.detail ??
+      'Le Mans Ultimate is running. No live session detected.',
   };
 };

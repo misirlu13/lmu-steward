@@ -25,7 +25,9 @@ describe('parseStewardEvent', () => {
     });
 
     it('should not classify a two-car collision as solo', () => {
-      expect(isSoloIncident(parseStewardEvent(raw, 'incident', 6235.4, 'i1'))).toBe(false);
+      expect(
+        isSoloIncident(parseStewardEvent(raw, 'incident', 6235.4, 'i1')),
+      ).toBe(false);
     });
   });
 
@@ -38,7 +40,9 @@ describe('parseStewardEvent', () => {
         'i2',
       );
 
-      expect(incident.parties).toEqual([{ displayName: 'Bradley Drake', slotId: 0 }]);
+      expect(incident.parties).toEqual([
+        { displayName: 'Bradley Drake', slotId: 0 },
+      ]);
       expect(incident.objectStruck).toBe('Immovable');
       expect(isSoloIncident(incident)).toBe(true);
     });
@@ -74,7 +78,9 @@ describe('parseStewardEvent', () => {
       );
 
       expect(incident.kind).toBe('track-limits');
-      expect(incident.parties).toEqual([{ displayName: 'S F#7575', slotId: 54 }]);
+      expect(incident.parties).toEqual([
+        { displayName: 'S F#7575', slotId: 54 },
+      ]);
       expect(incident.warningPoints).toBe(0.25);
       expect(incident.currentPoints).toBe(2);
       expect(incident.lap).toBe(8);

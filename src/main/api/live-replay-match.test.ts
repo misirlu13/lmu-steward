@@ -133,9 +133,7 @@ describe('filterReplayTargets', () => {
 
   it('drops a replay of a different session type', () => {
     expect(
-      filterReplayTargets(session(), [
-        target('a', { sessionType: 'QUALIFY' }),
-      ]),
+      filterReplayTargets(session(), [target('a', { sessionType: 'QUALIFY' })]),
     ).toHaveLength(0);
   });
 

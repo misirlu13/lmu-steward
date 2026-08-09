@@ -1,4 +1,8 @@
-import { LiveCaptureIncident, LiveIncidentKind, LiveIncidentParty } from '@types';
+import {
+  LiveCaptureIncident,
+  LiveIncidentKind,
+  LiveIncidentParty,
+} from '@types';
 
 /**
  * Parses the raw result-stream elements LMU publishes into structured incidents.
@@ -43,13 +47,19 @@ const parseParty = (text: string): LiveIncidentParty => {
   return { displayName: match[1].trim(), slotId: Number(match[2]) };
 };
 
-const parseContact = (raw: string, etSeconds: number, id: string): LiveCaptureIncident => {
+const parseContact = (
+  raw: string,
+  etSeconds: number,
+  id: string,
+): LiveCaptureIncident => {
   const body = elementText(raw);
   const parties: LiveIncidentParty[] = [];
   let objectStruck: string | undefined;
   let magnitude: number | undefined;
 
-  const reported = body.match(/^(.*?) reported contact \(([\d.]+)\) with (.+)$/);
+  const reported = body.match(
+    /^(.*?) reported contact \(([\d.]+)\) with (.+)$/,
+  );
   if (reported) {
     parties.push(parseParty(reported[1]));
     magnitude = Number(reported[2]);
@@ -75,7 +85,11 @@ const parseContact = (raw: string, etSeconds: number, id: string): LiveCaptureIn
   };
 };
 
-const parseTrackLimits = (raw: string, etSeconds: number, id: string): LiveCaptureIncident => {
+const parseTrackLimits = (
+  raw: string,
+  etSeconds: number,
+  id: string,
+): LiveCaptureIncident => {
   const driver = attribute(raw, 'Driver');
   const slotId = numericAttribute(raw, 'ID');
 

@@ -318,9 +318,7 @@ export const matchLiveSession = async ({
         (candidate) =>
           topConfidence - candidate.confidence < DEFAULT_CONFIDENCE_MARGIN,
       )
-      .sort(
-        (a, b) => (b.incidentAgreement ?? 0) - (a.incidentAgreement ?? 0),
-      );
+      .sort((a, b) => (b.incidentAgreement ?? 0) - (a.incidentAgreement ?? 0));
 
     /*
       Only when the winner is decisive, and only when there were enough
