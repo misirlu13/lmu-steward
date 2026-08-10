@@ -20,9 +20,14 @@ import { ReplayIncidentEvent } from './ReplayMasterIncidentTimeline';
 import {
   CameraMode,
   cameraModeConfig,
-  useReplayCameraControls,
-} from './hooks/useReplayCameraControls';
-import { useReplayPlaybackControls } from './hooks/useReplayPlaybackControls';
+  useCameraControls,
+} from '../../hooks/useCameraControls';
+import {
+  REPLAY_SPEEDS,
+  replaySpeedLabel,
+  ReplaySpeed,
+  useReplayPlaybackControls,
+} from '../../hooks/useReplayPlaybackControls';
 
 interface ReplayJumpBarProps {
   incidents: ReplayIncidentEvent[];
@@ -46,8 +51,9 @@ export const ReplayJumpBar = ({
     onReverseBySpeed,
     onSpeedChange,
   } = useReplayPlaybackControls();
-  const { cameraMode, onCameraModeChange, onCycleCamera } =
-    useReplayCameraControls(CAMERA_COMMAND_DEBOUNCE_MS);
+  const { cameraMode, onCameraModeChange, onCycleCamera } = useCameraControls(
+    CAMERA_COMMAND_DEBOUNCE_MS,
+  );
   const [incidentSliderIndex, setIncidentSliderIndex] = useState(0);
   const [isIncidentTooltipVisible, setIsIncidentTooltipVisible] =
     useState(false);
@@ -303,15 +309,17 @@ export const ReplayJumpBar = ({
             size="small"
             exclusive
             value={speed}
-            onChange={(_, value: 0.5 | 1 | 2 | null) => {
+            onChange={(_, value: ReplaySpeed | null) => {
               if (value) {
                 onSpeedChange(value);
               }
             }}
           >
-            <ToggleButton value={0.5}>x0.5</ToggleButton>
-            <ToggleButton value={1}>x1.0</ToggleButton>
-            <ToggleButton value={2}>x2.0</ToggleButton>
+            {REPLAY_SPEEDS.map((option) => (
+              <ToggleButton key={option} value={option}>
+                {replaySpeedLabel[option]}
+              </ToggleButton>
+            ))}
           </ToggleButtonGroup>
 
           {hasIncidents ? (

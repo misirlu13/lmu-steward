@@ -1,0 +1,372 @@
+import { useCallback, useMemo, useState } from 'react';
+import { Box } from '@mui/material';
+import { CONSTANTS } from '@constants';
+import {
+  LiveDataForReplay,
+  StewardDecision,
+  StewardDecisionState,
+} from '@types';
+import { LiveIncidentDossier } from '../Live/LiveIncidentDossier';
+import {
+  LiveDecisionOutcome,
+  LiveDriverRef,
+  LiveIncident,
+  LivePriorCall,
+} from '../Live/liveFixtures';
+import { isDriverScopedOutcome } from '../../utils/stewardActions';
+import { buildIncidents } from '../../hooks/useLiveSessionData';
+import { useLiveIncidentContext } from '../../hooks/useLiveIncidentContext';
+import { sendMessage } from '../../utils/postMessage';
+import { buildStewardDecisionId } from '../../utils/stewardDecisionId';
+import { useApi } from '../../providers/ApiContext';
+import { ReplayIncidentEvent } from './replayTimelineTypes';
+
+interface Props {
+  event: ReplayIncidentEvent | undefined;
+  liveData: LiveDataForReplay | null;
+  replayHash: string | undefined;
+}
+
+/**
+ * Live capture's evidence for the incident the steward is looking at.
+ *
+ * The loop the whole design was built around closes here: live mode captures
+ * calls under time pressure, and this is where they are confirmed or revised
+ * with the footage on screen and the telemetry beside it.
+ *
+ * The dossier itself is live mode's, reused unchanged. Only the plumbing
+ * differs — the incident comes off disk rather than out of a poll, and the
+ * decision it produces is final rather than provisional.
+ */
+export const ReplayIncidentDossier: React.FC<Props> = ({
+  event,
+  liveData,
+  replayHash,
+}) => {
+  const {
+    stewardDecisions,
+    saveStewardDecision,
+    stewardAuthor,
+    /*
+      The same resolved tariff the live shell guards with. Read off the context
+      rather than derived here: a call made live and revised in this view must be
+      offered one vocabulary, not two.
+    */
+    stewardActions,
+  } = useApi();
+  const [targetSteamId, setTargetSteamId] = useState<string | undefined>();
+
+  const liveIncidentId = event?.liveIncidentId;
+  const { context } = useLiveIncidentContext(liveIncidentId);
+
+  const record = useMemo(
+    () =>
+      liveIncidentId
+        ? liveData?.incidents.find((entry) => entry.id === liveIncidentId)
+        : undefined,
+    [liveData, liveIncidentId],
+  );
+
+  const incident = useMemo<LiveIncident | undefined>(() => {
+    if (!record || !event) {
+      return undefined;
+    }
+
+    const [built] = buildIncidents(
+      [{ ...record.incident, context }],
+      liveData?.drivers ?? [],
+    );
+
+    if (!built) {
+      return undefined;
+    }
+
+    /*
+      The replay's clock wins for anything displayed. A replay of a session
+      joined late has its own zero point, and the event already carries the
+      normalised label the timeline is showing — reading the raw elapsed time
+      off the capture instead would put a different time on the dossier than on
+      the incident it belongs to.
+    */
+    return {
+      ...built,
+      id: record.id,
+      timestampLabel: event.timestampLabel,
+      lapLabel: event.lapLabel,
+      /*
+        The window is fetched here and handed down inline, so the dossier must
+        not go and fetch it a second time on its own account. False until it
+        has landed; true once it is already in `traces`.
+      */
+      hasTrace: Boolean(context),
+    };
+  }, [context, event, liveData?.drivers, record]);
+
+  const decisionsForIncident = useMemo(
+    () =>
+      // Defended rather than assumed: the collection arrives from a message
+      // reply, so it is absent until the first one lands.
+      Object.values(stewardDecisions ?? {}).filter(
+        (decision) => decision.incidentId === liveIncidentId,
+      ),
+    [liveIncidentId, stewardDecisions],
+  );
+
+  const decidedIncident = useMemo<LiveIncident | undefined>(() => {
+    if (!incident) {
+      return undefined;
+    }
+
+    const decided = decisionsForIncident.find(
+      (entry) => entry.state === 'DECIDED',
+    );
+
+    if (decided) {
+      return {
+        ...incident,
+        state: 'DECIDED' as const,
+        decision: decided.outcome,
+        decisionReasoning: decided.reasoning,
+        atFaultSteamId: decided.target?.steamId,
+      };
+    }
+
+    /*
+      Same ranking as the live provider. A call the steward deliberately parked
+      for this review must not read back as "flagged, never got to it" — this
+      view is the thing it was deferred *to*. Showing the state accurately is
+      all that happens here; nothing routes deferred incidents into the replay
+      view, which is a feature of its own.
+    */
+    if (decisionsForIncident.some((entry) => entry.state === 'DEFERRED')) {
+      return { ...incident, state: 'DEFERRED' as const };
+    }
+
+    return decisionsForIncident.length
+      ? { ...incident, state: 'FLAGGED' as const }
+      : incident;
+  }, [decisionsForIncident, incident]);
+
+  /*
+    The same per-driver history the live dossier shows, built from the same
+    store over the session this replay is linked to.
+
+    Wired here deliberately rather than left live-only. The dossier is one
+    component, so a section that appears during the session and vanishes in the
+    review reads as a bug — and post-session is when a pattern across a driver's
+    session is most worth seeing, since it is all there to be read at once.
+
+    Indexed on the target where there is one, on every involved party where
+    there is not: exactly the rule the provider applies, because a penalty
+    against one driver of a contact is a call about that driver only.
+  */
+  const priorCallsByDriver = useMemo(() => {
+    const byDriver = new Map<string, LivePriorCall[]>();
+    const sessionKey = liveData?.sessionKey;
+    if (!sessionKey) {
+      return byDriver;
+    }
+
+    Object.values(stewardDecisions ?? {}).forEach((decision) => {
+      if (decision.sessionKey !== sessionKey) {
+        return;
+      }
+
+      const targetSteam = decision.target?.steamId;
+      const keys = targetSteam
+        ? [targetSteam]
+        : decision.involvedParties
+            .map((party) => party.steamId)
+            .filter((id): id is string => Boolean(id));
+
+      const call: LivePriorCall = {
+        decisionId: decision.id,
+        incidentId: decision.incidentId,
+        lapLabel: decision.lapLabel,
+        state: decision.state,
+        outcome: decision.outcome,
+        wasTarget: Boolean(targetSteam),
+        decidedAt: decision.decidedAt,
+      };
+
+      keys.forEach((key) => {
+        const existing = byDriver.get(key);
+        if (existing) {
+          existing.push(call);
+        } else {
+          byDriver.set(key, [call]);
+        }
+      });
+    });
+
+    byDriver.forEach((calls) =>
+      calls.sort((a, b) => b.decidedAt - a.decidedAt),
+    );
+
+    return byDriver;
+  }, [liveData?.sessionKey, stewardDecisions]);
+
+  /*
+    A solo incident has one party, so targeting it needs no extra click. A
+    contact has no default, because picking either driver would be the app
+    quietly deciding fault.
+  */
+  const effectiveTargetSteamId =
+    targetSteamId ??
+    (decidedIncident?.drivers.length === 1
+      ? decidedIncident.drivers[0].steamId
+      : undefined);
+
+  const buildDecision = useCallback(
+    (
+      source: LiveIncident,
+      state: StewardDecisionState,
+      outcome?: LiveDecisionOutcome,
+      target?: LiveDriverRef,
+    ): StewardDecision => ({
+      id: buildStewardDecisionId(
+        liveData?.sessionKey ?? '',
+        source.id,
+        target?.steamId,
+      ),
+      basis: 'incident',
+      incidentId: source.id,
+      /*
+        The hash a live call could not have. A decision made during the session
+        has no replay to point at yet; reviewing it here is exactly the moment
+        that becomes knowable.
+      */
+      replayHash,
+      sessionKey: liveData?.sessionKey ?? '',
+      sessionTrack: liveData?.trackName ?? '',
+      sessionType: liveData?.sessionType ?? '',
+      sessionDate: liveData?.startedAt,
+      target: target
+        ? {
+            steamId: target.steamId,
+            slotId: target.slotId,
+            driverName: target.displayName,
+          }
+        : undefined,
+      involvedParties: source.drivers.map((driver) => ({
+        steamId: driver.steamId,
+        slotId: driver.slotId,
+        driverName: driver.displayName,
+      })),
+      lapLabel: source.lapLabel,
+      etSeconds: source.etSeconds,
+      trackPositionLabel: source.evidence.trackPositionLabel,
+      classification: source.classification,
+      outcome,
+      reasoning: source.decisionReasoning,
+      /*
+        The same resolved name the live shell writes with, off `useApi()`.
+        Reviewing a call here rewrites its author to whoever is reviewing, which
+        is correct — the revision this produces is their act, not the original
+        steward's. Decisions nobody reopens keep the author they were made with.
+      */
+      stewardAuthor,
+      decidedAt: Date.now(),
+      state,
+      /*
+        Final, where a live call is provisional. This is the review the live
+        status was waiting for: the footage is on screen and the evidence is
+        beside it, so the call is no longer a snap judgement.
+      */
+      status: 'final',
+      revisions: [],
+    }),
+    [liveData, replayHash, stewardAuthor],
+  );
+
+  const onFlag = useCallback(() => {
+    if (decidedIncident) {
+      saveStewardDecision(buildDecision(decidedIncident, 'FLAGGED'));
+    }
+  }, [buildDecision, decidedIncident, saveStewardDecision]);
+
+  const onDecide = useCallback(
+    (_incidentId: string, outcome: LiveDecisionOutcome) => {
+      if (!decidedIncident) {
+        return;
+      }
+
+      /*
+        Same rule as the live path, from the same list: the action decides
+        whether the record names a driver. A finding about the incident as a
+        whole carries no target even with one selected, which is what keeps
+        `target` the durable answer to "was this against someone" — and stops a
+        "No Action" from marking that driver at fault.
+      */
+      const needsTarget = isDriverScopedOutcome(stewardActions, outcome);
+      const target = needsTarget
+        ? decidedIncident.drivers.find(
+            (driver) => driver.steamId === effectiveTargetSteamId,
+          )
+        : undefined;
+
+      // A penalty without a target is not a call.
+      if (needsTarget && !target) {
+        return;
+      }
+
+      saveStewardDecision(
+        buildDecision(decidedIncident, 'DECIDED', outcome, target),
+      );
+    },
+    [
+      buildDecision,
+      decidedIncident,
+      effectiveTargetSteamId,
+      saveStewardDecision,
+      stewardActions,
+    ],
+  );
+
+  const onFocusCar = useCallback((slotId: number | undefined) => {
+    if (slotId === undefined) {
+      return;
+    }
+
+    sendMessage(CONSTANTS.API.PUT_REPLAY_COMMAND_FOCUS_CAR, String(slotId));
+  }, []);
+
+  // Nothing captured this incident, which is the ordinary case — most incidents
+  // never get a trace, and most replays have no captured session at all.
+  if (!liveIncidentId || !liveData) {
+    return null;
+  }
+
+  if (!decidedIncident) {
+    return null;
+  }
+
+  /*
+    Deliberately no loading state. The evidence rides the incident row and is
+    already here, so the dossier renders at once and the trace chart appears
+    underneath when its ~100 KB arrives. A spinner over the whole panel would
+    hide the closing speeds and measurements a steward can already act on.
+  */
+
+  /*
+    No `onChangeReasoning`, so the dossier draws no reasoning field. Reviewing
+    here revises an existing record, and a blank box wired straight into
+    `buildDecision` would wipe the reasoning the live call already carries —
+    which is why `buildDecision` reads `source.decisionReasoning` instead.
+    Prompting for reasoning against the record being revised is its own piece of
+    work, and both design docs describe it as a prompt rather than a field.
+  */
+  return (
+    <Box>
+      <LiveIncidentDossier
+        incident={decidedIncident}
+        onFocusCar={onFocusCar}
+        onFlag={onFlag}
+        onDecide={onDecide}
+        targetSteamId={effectiveTargetSteamId}
+        priorCallsByDriver={priorCallsByDriver}
+        onSelectTarget={setTargetSteamId}
+      />
+    </Box>
+  );
+};

@@ -11,12 +11,24 @@ import { CONSTANTS } from '@constants';
 import {
   GetReplaysRequest,
   ImportedReplayRecord,
+  LiveSessionStatus,
   LMUReplay,
+  StewardDecision,
+  StewardDecisionStore,
   LoadingState,
   PersistedDashboardView,
   ReplaySyncStatus,
 } from '@types';
 import { initializeMessageBus, sendMessage } from '../utils/postMessage';
+import {
+  DEFAULT_STEWARD_AUTHOR,
+  resolveStewardAuthor,
+} from '../utils/stewardAuthor';
+import {
+  DEFAULT_STEWARD_ACTIONS,
+  StewardAction,
+  resolveStewardActions,
+} from '../utils/stewardActions';
 
 interface ReplayResponse {
   status: string;
@@ -28,8 +40,11 @@ interface UserSettingsResponse {
   data?: {
     quickViewEnabled?: boolean;
     experimentalFeaturesEnabled?: boolean;
+    liveCaptureEnabled?: boolean;
     persistDashboardFiltersEnabled?: boolean;
     dashboardView?: PersistedDashboardView | null;
+    stewardAuthorName?: string;
+    stewardActions?: unknown;
   };
 }
 
@@ -54,6 +69,18 @@ export interface ExportReplayPayload {
   session: string;
   timestamp: number;
   logDataFileName: string;
+  /**
+   * Whether captured trace windows travel with the archive. Off unless the
+   * user opted in — traces are per-driver inputs, not a summary.
+   */
+  includeLiveTelemetry?: boolean;
+}
+
+export interface ExportSessionDataPayload {
+  /** Suggested filename only; the main process owns the actual path. */
+  fileName: string;
+  contents: string;
+  format: 'csv' | 'markdown' | 'json';
 }
 
 export interface ExportWeekendPayload {
@@ -245,9 +272,25 @@ const toExportResult = (
 interface ApiContextType {
   isConnected: boolean;
   hasApiStatusResponse: boolean;
+  liveSessionStatus: LiveSessionStatus;
   hasUserSettingsResponse: boolean;
   quickViewEnabled: boolean;
   experimentalFeaturesEnabled: boolean;
+  /** True only when experimental features AND the live capture switch are on. */
+  liveCaptureEnabled: boolean;
+  /**
+   * The name new steward decisions are written under, already resolved — never
+   * blank. Supplied from here rather than read from settings at each dossier so
+   * the live shell and the replay dossier cannot disagree about who is calling.
+   */
+  stewardAuthor: string;
+  /**
+   * The configured penalty tariff, already resolved — never empty. Both dossiers
+   * draw their buttons from this and both decide paths guard against it, so a
+   * call made live and the same call revised post-session are offered one
+   * vocabulary rather than two.
+   */
+  stewardActions: StewardAction[];
   persistDashboardFiltersEnabled: boolean;
   persistedDashboardView: PersistedDashboardView | null;
   lastReplaySyncAt: number | null;
@@ -289,6 +332,9 @@ interface ApiContextType {
   deleteImportedReplays: (hashes: string[]) => void;
   exportReplay: (request: ExportReplayPayload) => void;
   exportWeekend: (request: ExportWeekendPayload) => void;
+  exportSessionData: (request: ExportSessionDataPayload) => void;
+  stewardDecisions: StewardDecisionStore;
+  saveStewardDecision: (decision: StewardDecision) => void;
   exportProgress: ExportProgressState | null;
   exportResult: ExportResultState | null;
   clearExportResult: () => void;
@@ -301,9 +347,13 @@ interface ApiContextType {
 const ApiContext = createContext<ApiContextType>({
   isConnected: false,
   hasApiStatusResponse: false,
+  liveSessionStatus: { state: 'detached' },
   hasUserSettingsResponse: false,
   quickViewEnabled: false,
   experimentalFeaturesEnabled: false,
+  liveCaptureEnabled: false,
+  stewardAuthor: DEFAULT_STEWARD_AUTHOR,
+  stewardActions: [...DEFAULT_STEWARD_ACTIONS],
   persistDashboardFiltersEnabled: false,
   persistedDashboardView: null,
   lastReplaySyncAt: null,
@@ -344,6 +394,9 @@ const ApiContext = createContext<ApiContextType>({
   deleteImportedReplays: () => {},
   exportReplay: () => {},
   exportWeekend: () => {},
+  exportSessionData: () => {},
+  stewardDecisions: {},
+  saveStewardDecision: () => {},
   exportProgress: null,
   exportResult: null,
   clearExportResult: () => {},
@@ -361,6 +414,12 @@ export const ApiProvider: React.FC<{ children: React.ReactNode }> = ({
   const [quickViewEnabled, setQuickViewEnabled] = useState(false);
   const [experimentalFeaturesEnabled, setExperimentalFeaturesEnabled] =
     useState(false);
+  const [liveCaptureSettingEnabled, setLiveCaptureSettingEnabled] =
+    useState(false);
+  const [stewardAuthor, setStewardAuthor] = useState(DEFAULT_STEWARD_AUTHOR);
+  const [stewardActions, setStewardActions] = useState<StewardAction[]>(() => [
+    ...DEFAULT_STEWARD_ACTIONS,
+  ]);
   const [persistDashboardFiltersEnabled, setPersistDashboardFiltersEnabled] =
     useState(false);
   const [persistedDashboardView, setPersistedDashboardView] =
@@ -374,6 +433,11 @@ export const ApiProvider: React.FC<{ children: React.ReactNode }> = ({
     processed: 0,
     total: 0,
   });
+  const [liveSessionStatus, setLiveSessionStatus] = useState<LiveSessionStatus>(
+    {
+      state: 'detached',
+    },
+  );
   const [isReplayActive, setIsReplayActive] = useState<boolean | null>(null);
   const [isReplayCacheResetRequired, setIsReplayCacheResetRequired] =
     useState(false);
@@ -466,8 +530,34 @@ export const ApiProvider: React.FC<{ children: React.ReactNode }> = ({
       setExperimentalFeaturesEnabled(payload.data.experimentalFeaturesEnabled);
     }
 
+    if (typeof payload?.data?.liveCaptureEnabled === 'boolean') {
+      setLiveCaptureSettingEnabled(payload.data.liveCaptureEnabled);
+    }
+
     if (typeof payload?.data?.quickViewEnabled === 'boolean') {
       setQuickViewEnabled(payload.data.quickViewEnabled);
+    }
+
+    /*
+      Resolved on arrival rather than at each call site, so a decision made from
+      the live shell and one made from the replay dossier are written under the
+      same name. A cleared setting comes back as '' and resolves to the generic
+      author — never an empty one.
+    */
+    if (payload?.data && 'stewardAuthorName' in payload.data) {
+      setStewardAuthor(resolveStewardAuthor(payload.data.stewardAuthorName));
+    }
+
+    /*
+      Same reasoning, and the more important case of the two. The tariff drives
+      the dossier's buttons, the number-key shortcuts and the "does this need a
+      target driver" guard on both decide paths; resolved here, all of those read
+      one list. A missing, empty or unusable setting resolves to the shipped
+      defaults — which is also how "revert to default" works, since it stores
+      nothing rather than a copy.
+    */
+    if (payload?.data && 'stewardActions' in payload.data) {
+      setStewardActions(resolveStewardActions(payload.data.stewardActions));
     }
 
     if (typeof payload?.data?.persistDashboardFiltersEnabled === 'boolean') {
@@ -672,6 +762,24 @@ export const ApiProvider: React.FC<{ children: React.ReactNode }> = ({
     sendMessage(CONSTANTS.API.POST_EXPORT_REPLAY, request);
   }, []);
 
+  const [stewardDecisions, setStewardDecisions] =
+    useState<StewardDecisionStore>({});
+
+  const saveStewardDecision = useCallback((decision: StewardDecision) => {
+    // Applied locally first so a call registers instantly under time pressure;
+    // main replies with the authoritative collection.
+    setStewardDecisions((previous) => ({
+      ...previous,
+      [decision.id]: decision,
+    }));
+    sendMessage(CONSTANTS.API.POST_STEWARD_DECISION, decision);
+  }, []);
+
+  const exportSessionData = useCallback((request: ExportSessionDataPayload) => {
+    setExportResult(null);
+    sendMessage(CONSTANTS.API.POST_EXPORT_SESSION_DATA, request);
+  }, []);
+
   const exportWeekend = useCallback((request: ExportWeekendPayload) => {
     if (request.sessions.length === 0) {
       return;
@@ -705,6 +813,69 @@ export const ApiProvider: React.FC<{ children: React.ReactNode }> = ({
     };
 
     const messageBusHandlers = {
+      [CONSTANTS.API.GET_LIVE_SESSION_STATUS]: createHandler(
+        CONSTANTS.API.GET_LIVE_SESSION_STATUS,
+        (data: unknown) => {
+          const payload = data as {
+            status?: string;
+            data?: LiveSessionStatus;
+          };
+
+          const next: LiveSessionStatus =
+            payload?.status === 'success' && payload.data
+              ? payload.data
+              : { state: 'detached' };
+
+          setLiveSessionStatus((previous) =>
+            previous.state === next.state &&
+            previous.trackName === next.trackName &&
+            previous.driverCount === next.driverCount
+              ? previous
+              : next,
+          );
+        },
+      ),
+      // The provider holds no live session state of its own — the Live view
+      // subscribes directly. It still needs an entry here, because the message
+      // bus only dispatches channels present in this map, and without one main
+      // replies into nothing.
+      [CONSTANTS.API.GET_LIVE_SESSION_DATA]: createHandler(
+        CONSTANTS.API.GET_LIVE_SESSION_DATA,
+      ),
+      // Same arrangement for the captured-sessions list: owned by the section
+      // that renders it, but it still needs entries here to be dispatched.
+      [CONSTANTS.API.GET_LIVE_SESSIONS]: createHandler(
+        CONSTANTS.API.GET_LIVE_SESSIONS,
+      ),
+      // And again for the weekend's segment list, owned by
+      // `useLiveSessionSegments`. Same rule, same silence if it is missing.
+      [CONSTANTS.API.GET_LIVE_SESSION_SEGMENTS]: createHandler(
+        CONSTANTS.API.GET_LIVE_SESSION_SEGMENTS,
+      ),
+      [CONSTANTS.API.POST_DELETE_LIVE_SESSION]: createHandler(
+        CONSTANTS.API.POST_DELETE_LIVE_SESSION,
+      ),
+      [CONSTANTS.API.GET_LIVE_SESSION_MATCHES]: createHandler(
+        CONSTANTS.API.GET_LIVE_SESSION_MATCHES,
+      ),
+      [CONSTANTS.API.POST_LINK_LIVE_SESSION]: createHandler(
+        CONSTANTS.API.POST_LINK_LIVE_SESSION,
+      ),
+      [CONSTANTS.API.POST_DISMISS_LIVE_SESSION_MATCH]: createHandler(
+        CONSTANTS.API.POST_DISMISS_LIVE_SESSION_MATCH,
+      ),
+      [CONSTANTS.API.GET_LIVE_DATA_FOR_REPLAY]: createHandler(
+        CONSTANTS.API.GET_LIVE_DATA_FOR_REPLAY,
+      ),
+      [CONSTANTS.API.GET_LIVE_INCIDENT_CONTEXT]: createHandler(
+        CONSTANTS.API.GET_LIVE_INCIDENT_CONTEXT,
+      ),
+      [CONSTANTS.API.GET_LIVE_RETENTION_PREVIEW]: createHandler(
+        CONSTANTS.API.GET_LIVE_RETENTION_PREVIEW,
+      ),
+      [CONSTANTS.API.GET_LOCAL_DATA_SUMMARY]: createHandler(
+        CONSTANTS.API.GET_LOCAL_DATA_SUMMARY,
+      ),
       [CONSTANTS.API.GET_API_STATUS]: createHandler(
         CONSTANTS.API.GET_API_STATUS,
         (data: unknown) => {
@@ -748,6 +919,48 @@ export const ApiProvider: React.FC<{ children: React.ReactNode }> = ({
 
           console.error('Failed to fetch track map:', payload?.message || data);
         },
+      ),
+      /*
+        No `onData`, deliberately: the live track map holds its own copy in
+        `useLiveTrackMap` rather than in `currentTrackMap`, which the replay view
+        owns. The entry still has to exist — `subscribeToApiChannel` attaches no
+        IPC listener of its own, it only adds a callback that
+        `runAdditionalCallbacks` invokes, and that runs from inside these
+        handlers. A channel with no entry here swallows every reply in silence.
+      */
+      [CONSTANTS.API.GET_LIVE_TRACK_MAP]: createHandler(
+        CONSTANTS.API.GET_LIVE_TRACK_MAP,
+      ),
+      // Same arrangement again for the 5 Hz position feed: owned entirely by
+      // `useLiveCarPositions`, and dead without this line.
+      [CONSTANTS.API.GET_LIVE_CAR_POSITIONS]: createHandler(
+        CONSTANTS.API.GET_LIVE_CAR_POSITIONS,
+      ),
+      /*
+        Likewise, and this one has never worked: the live camera bar subscribes
+        to this to show "Camera command refused" when the game rejects an angle
+        change, and with no entry the reply never reached it. The warning could
+        not have fired whatever the game did.
+      */
+      [CONSTANTS.API.POST_CAMERA_ANGLE]: createHandler(
+        CONSTANTS.API.POST_CAMERA_ANGLE,
+      ),
+      /*
+        The three channels that ask the game what it is actually doing, all
+        owned by the live camera bar. `GET_IS_REPLAY_ACTIVE` is below with the
+        replay view's state, which is the same fact and stays one value.
+      */
+      [CONSTANTS.API.GET_FOCUSED_CAR]: createHandler(
+        CONSTANTS.API.GET_FOCUSED_CAR,
+      ),
+      [CONSTANTS.API.GET_CAMERA_INFO]: createHandler(
+        CONSTANTS.API.GET_CAMERA_INFO,
+      ),
+      [CONSTANTS.API.POST_REPLAY_REWATCH]: createHandler(
+        CONSTANTS.API.POST_REPLAY_REWATCH,
+      ),
+      [CONSTANTS.API.POST_REPLAY_RETURN_TO_LIVE]: createHandler(
+        CONSTANTS.API.POST_REPLAY_RETURN_TO_LIVE,
       ),
       [CONSTANTS.API.POST_SELECT_IMPORT_FILE]: createHandler(
         CONSTANTS.API.POST_SELECT_IMPORT_FILE,
@@ -893,6 +1106,36 @@ export const ApiProvider: React.FC<{ children: React.ReactNode }> = ({
         CONSTANTS.API.PUSH_EXPORT_PROGRESS,
         (data: unknown) => {
           setExportProgress(data as ExportProgressState);
+        },
+      ),
+      [CONSTANTS.API.GET_STEWARD_DECISIONS]: createHandler(
+        CONSTANTS.API.GET_STEWARD_DECISIONS,
+        (data: unknown) => {
+          const payload = data as {
+            status?: string;
+            data?: StewardDecisionStore;
+          };
+          if (payload?.status === 'success' && payload.data) {
+            setStewardDecisions(payload.data);
+          }
+        },
+      ),
+      [CONSTANTS.API.POST_STEWARD_DECISION]: createHandler(
+        CONSTANTS.API.POST_STEWARD_DECISION,
+        (data: unknown) => {
+          const payload = data as {
+            status?: string;
+            data?: StewardDecisionStore;
+          };
+          if (payload?.status === 'success' && payload.data) {
+            setStewardDecisions(payload.data);
+          }
+        },
+      ),
+      [CONSTANTS.API.POST_EXPORT_SESSION_DATA]: createHandler(
+        CONSTANTS.API.POST_EXPORT_SESSION_DATA,
+        (data: unknown) => {
+          setExportResult(toExportResult(data, 1));
         },
       ),
       [CONSTANTS.API.POST_EXPORT_REPLAY]: createHandler(
@@ -1117,9 +1360,12 @@ export const ApiProvider: React.FC<{ children: React.ReactNode }> = ({
     // Poll for API status updates
     const checkConnection = async () => {
       sendMessage(CONSTANTS.API.GET_API_STATUS);
+      sendMessage(CONSTANTS.API.GET_LIVE_SESSION_STATUS);
     };
     checkConnection();
     sendMessage(CONSTANTS.API.GET_USER_SETTINGS);
+    // Loaded once at startup; every later change comes back on the write reply.
+    sendMessage(CONSTANTS.API.GET_STEWARD_DECISIONS);
     const _id = setInterval(checkConnection, apiStatusInterval);
     return () => {
       clearInterval(_id);
@@ -1130,9 +1376,14 @@ export const ApiProvider: React.FC<{ children: React.ReactNode }> = ({
     () => ({
       isConnected,
       hasApiStatusResponse,
+      liveSessionStatus,
       hasUserSettingsResponse,
       quickViewEnabled,
       experimentalFeaturesEnabled,
+      liveCaptureEnabled:
+        experimentalFeaturesEnabled && liveCaptureSettingEnabled,
+      stewardAuthor,
+      stewardActions,
       persistDashboardFiltersEnabled,
       persistedDashboardView,
       lastReplaySyncAt,
@@ -1170,6 +1421,9 @@ export const ApiProvider: React.FC<{ children: React.ReactNode }> = ({
       deleteImportedReplays,
       exportReplay,
       exportWeekend,
+      exportSessionData,
+      stewardDecisions,
+      saveStewardDecision,
       exportProgress,
       exportResult,
       clearExportResult,
@@ -1178,9 +1432,13 @@ export const ApiProvider: React.FC<{ children: React.ReactNode }> = ({
     [
       isConnected,
       hasApiStatusResponse,
+      liveSessionStatus,
       hasUserSettingsResponse,
       quickViewEnabled,
       experimentalFeaturesEnabled,
+      liveCaptureSettingEnabled,
+      stewardAuthor,
+      stewardActions,
       persistDashboardFiltersEnabled,
       persistedDashboardView,
       lastReplaySyncAt,
@@ -1218,6 +1476,9 @@ export const ApiProvider: React.FC<{ children: React.ReactNode }> = ({
       deleteImportedReplays,
       exportReplay,
       exportWeekend,
+      exportSessionData,
+      stewardDecisions,
+      saveStewardDecision,
       exportProgress,
       exportResult,
       clearExportResult,

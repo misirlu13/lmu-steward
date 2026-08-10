@@ -1,5 +1,6 @@
 import { useMemo } from 'react';
 import { CONSTANTS } from '@constants';
+import { StewardAction } from '../utils/stewardActions';
 import {
   getCountryNameFromCode,
   getFlagEmojiFromCountryCode,
@@ -23,6 +24,13 @@ interface UseUserSettingsDerivedStateArgs {
   syncOnIntervalMinutes: number;
   persistDashboardFiltersEnabled: boolean;
   experimentalFeaturesEnabled: boolean;
+  liveCaptureEnabled: boolean;
+  stewardAuthorName: string;
+  /**
+   * The league's tariff, already reduced to what belongs in the store — `null`
+   * when it is the shipped set. See `toStoredStewardActions`.
+   */
+  storedStewardActions: StewardAction[] | null;
   anonymizeDriverData: boolean;
   telemetryCacheEnabled: boolean;
   clearCacheOnExit: boolean;
@@ -51,6 +59,9 @@ export const useUserSettingsDerivedState = ({
   syncOnIntervalMinutes,
   persistDashboardFiltersEnabled,
   experimentalFeaturesEnabled,
+  liveCaptureEnabled,
+  stewardAuthorName,
+  storedStewardActions,
   anonymizeDriverData,
   telemetryCacheEnabled,
   clearCacheOnExit,
@@ -119,6 +130,20 @@ export const useUserSettingsDerivedState = ({
       syncOnIntervalMinutes,
       persistDashboardFiltersEnabled,
       experimentalFeaturesEnabled,
+      liveCaptureEnabled,
+      /*
+        Trimmed on the way to the store so " " and "" are the same stored value
+        — otherwise a stray space is a name, and the record gets an author that
+        prints as nothing.
+      */
+      stewardAuthorName: stewardAuthorName.trim(),
+      /*
+        Already normalised by the caller, and `null` where the user is on the
+        shipped tariff — storing a copy of the defaults would freeze them into
+        this install, so "revert" and "never customised" have to be the same
+        stored value.
+      */
+      stewardActions: storedStewardActions,
       anonymizeDriverData,
       telemetryCacheEnabled,
       clearCacheOnExit,
@@ -130,6 +155,9 @@ export const useUserSettingsDerivedState = ({
       syncOnIntervalMinutes,
       persistDashboardFiltersEnabled,
       experimentalFeaturesEnabled,
+      liveCaptureEnabled,
+      stewardAuthorName,
+      storedStewardActions,
       anonymizeDriverData,
       telemetryCacheEnabled,
       clearCacheOnExit,

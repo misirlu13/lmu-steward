@@ -15,6 +15,11 @@ import { NavBar } from './components/Navbar/NavBar';
 import theme from './theme';
 import { ReplayView } from './views/Replay';
 import { DriverAnalysisView } from './views/DriverAnalysis';
+import { LiveShell } from './views/Live/LiveShell';
+import { LiveOverview } from './views/Live/LiveOverview';
+import { LiveIncidents } from './views/Live/LiveIncidents';
+import { LiveTiming } from './views/Live/LiveTiming';
+import { CapturedSessionsView } from './views/CapturedSessions';
 import { DriverDashboardView } from './views/DriverDashboard';
 import { UserSettingsView } from './views/UserSettings';
 import { LmuDisconnectedDialog } from './components/Common/LmuDisconnectedDialog';
@@ -67,6 +72,18 @@ const AppRoutesShell = () => {
             path="/replay/:replayHash/driver/:driverId"
             element={<DriverAnalysisView />}
           />
+          {/*
+            The live view is a shell with its own left rail. `/live` stays the
+            default child, so the navbar's sensor icon and every existing link
+            to it still resolve. Later steps add their sections as further
+            children — a section is routed once it has a screen behind it.
+          */}
+          <Route path="/live" element={<LiveShell />}>
+            <Route index element={<LiveOverview />} />
+            <Route path="incidents" element={<LiveIncidents />} />
+            <Route path="timing" element={<LiveTiming />} />
+          </Route>
+          <Route path="/captured-sessions" element={<CapturedSessionsView />} />
           <Route path="/user-settings" element={<UserSettingsView />} />
         </Routes>
       </Container>

@@ -1,5 +1,5 @@
 import { useCallback, useMemo } from 'react';
-import { CONSTANTS } from '@constants';
+import { CONSTANTS, replayJumpTargetSeconds } from '@constants';
 import { LMUReplay } from '@types';
 import {
   ReplayIncidentEvent,
@@ -233,7 +233,7 @@ export const useDriverAnalysisData = ({
         drivers: driversForEvent,
         description,
         etSeconds,
-        jumpToSeconds: Math.max(etSeconds - 5, 0),
+        jumpToSeconds: replayJumpTargetSeconds(etSeconds),
       };
     };
 

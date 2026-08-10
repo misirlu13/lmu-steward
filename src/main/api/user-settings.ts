@@ -1,9 +1,11 @@
 import { CONSTANTS } from '@constants';
 import path from 'path';
+import log from 'electron-log';
 import {
   clearPersistentStorage,
   getMainPersistentStore,
 } from '../storage/local-data-store';
+import { sweepExpiredLiveSessions } from './live-retention';
 
 export type UserSettings = Record<string, unknown>;
 
@@ -26,7 +28,53 @@ export const DEFAULT_USER_SETTINGS: UserSettings = {
    * not be running unfinished features.
    */
   experimentalFeaturesEnabled: false,
+  /**
+   * Runs the live capture sidecar. Separate from the experimental gate, and
+   * off by default, because the sidecar takes a machine-wide lock that wheel
+   * LED and motion software also use — enabling live stewarding should not
+   * silently start touching shared memory.
+   */
+  liveCaptureEnabled: false,
+  /**
+   * How long captured live sessions are kept, in days. Null never expires them.
+   *
+   * Age is the only axis, deliberately. Link state looks like a useful signal
+   * and is not: an unlinked session may link later when a replay is imported
+   * from another machine, and the user who does not keep replays is exactly the
+   * one for whom the capture is the only record of a race.
+   *
+   * Steward decisions are never swept, at any setting.
+   */
+  liveCaptureRetentionDays: 30,
+  /**
+   * Who new steward decisions are recorded as. Empty means "not set", which
+   * the renderer resolves to a generic author rather than writing a blank one —
+   * a decision with no author is undefendable on appeal, which is the entire
+   * reason the field is on the record.
+   *
+   * Only ever applied to calls made from here on. Past decisions keep the
+   * author they were written with; a name typed today says nothing about who
+   * made a call last week.
+   */
+  stewardAuthorName: '',
+  /**
+   * The league's own penalty tariff — the action buttons the dossier offers.
+   *
+   * `null` means "use the shipped defaults", and is the only thing stored until
+   * the user departs from them. That is what makes "revert to default" a
+   * deletion rather than a copy: writing the five defaults out would freeze them
+   * into this install, and a later change to the shipped set would never reach
+   * anyone who had ever pressed revert.
+   *
+   * The shape and the defaults live in `src/renderer/utils/stewardActions.ts`,
+   * which is the single definition every reader goes through. Main stores the
+   * value and does not interpret it.
+   */
+  stewardActions: null,
 };
+
+/** The windows offered, longest-lived last. `null` is "never delete". */
+export const LIVE_RETENTION_OPTIONS: Array<number | null> = [7, 30, 90, null];
 
 // Removed threshold constants
 
@@ -89,6 +137,38 @@ export const getLmuReplayDirectoryPathValidationError = (
 
 // Removed getReplayLogMatchThresholdValidationError
 
+/**
+ * Keeps the store from taking a `stewardActions` value nothing could read back.
+ *
+ * Structural only, deliberately. Whether a tariff is *usable* — labels present,
+ * labels unique, at least one action — is decided in one place, the renderer's
+ * `stewardActions.ts`, which both the editor and every reader go through; a
+ * second copy of those rules here is exactly the drift this setting exists to
+ * remove. What main can check without duplicating anything is that the thing is
+ * either absent or a list of entries with labels.
+ */
+export const getStewardActionsValidationError = (
+  candidate: unknown,
+): string | null => {
+  if (candidate === null || candidate === undefined) {
+    return null;
+  }
+
+  if (!Array.isArray(candidate)) {
+    return 'Steward actions must be a list.';
+  }
+
+  const isEntry = (entry: unknown): boolean =>
+    typeof entry === 'object' &&
+    entry !== null &&
+    !Array.isArray(entry) &&
+    typeof (entry as { label?: unknown }).label === 'string';
+
+  return candidate.every(isEntry)
+    ? null
+    : 'Every steward action needs a label.';
+};
+
 const validateUserSettingsUpdates = (updates: UserSettings): string | null => {
   if (typeof updates?.lmuExecutablePath === 'string') {
     const executablePathValidationError = getLmuExecutablePathValidationError(
@@ -110,6 +190,16 @@ const validateUserSettingsUpdates = (updates: UserSettings): string | null => {
   }
 
   // Removed replayLogMatchThresholdMs validation
+
+  if (Object.prototype.hasOwnProperty.call(updates ?? {}, 'stewardActions')) {
+    const stewardActionsValidationError = getStewardActionsValidationError(
+      updates.stewardActions,
+    );
+
+    if (stewardActionsValidationError) {
+      return stewardActionsValidationError;
+    }
+  }
 
   return null;
 };
@@ -168,6 +258,33 @@ export const postUserSettings = async (
     }
 
     const nextSettings = await writeUserSettings(updates);
+
+    /*
+      A shortened window is the one case where the user has explicitly asked for
+      data to go now, so it is swept immediately rather than waiting for the next
+      app start. The renderer has already confirmed against a summary of exactly
+      what will be removed; this is the write that carries it out.
+
+      Isolated from the reply: expiry failing must not make a settings change
+      look like it failed.
+    */
+    try {
+      if (
+        Object.prototype.hasOwnProperty.call(
+          updates ?? {},
+          'liveCaptureRetentionDays',
+        )
+      ) {
+        sweepExpiredLiveSessions(
+          nextSettings.liveCaptureRetentionDays as number | null,
+        );
+      }
+    } catch (sweepError) {
+      log.warn(
+        'live-retention: sweep after settings change failed',
+        sweepError,
+      );
+    }
 
     event.reply(CONSTANTS.API.POST_USER_SETTINGS, {
       status: 'success',

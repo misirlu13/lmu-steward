@@ -59,6 +59,11 @@ interface DashboardReplayProps {
   onExportSession: (replay: LMUReplay) => void;
   onExportWeekend: (replays: LMUReplay[], weekendLabel: string) => void;
   canExport: boolean;
+  /**
+   * Why opening a replay is unavailable, or null. Loading one takes over the
+   * game, so it has to be off the table while a session is being captured.
+   */
+  viewReplayDisabledReason?: string | null;
 }
 
 interface DashboardReplayTableRow {
@@ -113,6 +118,7 @@ export const DashboardReplay: React.FC<DashboardReplayProps> = ({
   onExportSession,
   onExportWeekend,
   canExport,
+  viewReplayDisabledReason = null,
 }) => {
   const replay = replayGroup[0];
   const isArchivedView = dashboardView === 'archived';
@@ -730,13 +736,24 @@ export const DashboardReplay: React.FC<DashboardReplayProps> = ({
                             />
                           </ToolTip>
                         ) : null}
-                        <Button
-                          onClick={() => onViewReplay(row.hash)}
-                          size="small"
-                          variant="contained"
-                        >
-                          View Replay
-                        </Button>
+                        {/*
+                          The span is what makes the explanation reachable. MUI
+                          fires no mouse events on a disabled control, so a bare
+                          Tooltip on it would never open — and a dead button
+                          with no reason given is worse than no button.
+                        */}
+                        <ToolTip title={viewReplayDisabledReason ?? ''}>
+                          <span>
+                            <Button
+                              onClick={() => onViewReplay(row.hash)}
+                              disabled={Boolean(viewReplayDisabledReason)}
+                              size="small"
+                              variant="contained"
+                            >
+                              View Replay
+                            </Button>
+                          </span>
+                        </ToolTip>
                         <IconButton
                           aria-label={`Actions for ${row.sessionType}`}
                           size="small"

@@ -22,7 +22,6 @@ export interface SVGOptions {
   height?: number;
   padding?: number;
   stroke?: string;
-  pitStroke?: string;
   strokeWidth?: number;
   smooth?: boolean;
   breakThreshold?: number;

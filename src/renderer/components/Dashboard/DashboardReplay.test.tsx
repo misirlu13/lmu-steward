@@ -29,6 +29,7 @@ describe('DashboardReplay archive actions', () => {
       buildReplay('race-hash', 'RACE'),
       buildReplay('qualify-hash', 'QUALIFY'),
     ],
+    viewReplayDisabledReason: string | null = null,
   ) => {
     const onArchive = jest.fn();
     const onRestore = jest.fn();
@@ -48,6 +49,7 @@ describe('DashboardReplay archive actions', () => {
         onExportSession={onExportSession}
         onExportWeekend={onExportWeekend}
         canExport
+        viewReplayDisabledReason={viewReplayDisabledReason}
       />,
     );
 
@@ -132,6 +134,22 @@ describe('DashboardReplay archive actions', () => {
     setup('archived', [buildReplay('race-hash', 'RACE', { archived: true })]);
 
     expect(screen.getByText('View Replay')).toBeInTheDocument();
+    expect(screen.getByText('View Replay').closest('button')).toBeEnabled();
+  });
+
+  /*
+    Loading a replay calls /rest/watch/play, which makes LMU load it. Doing that
+    mid-race ends the session being captured, so the control is dead while one
+    is running rather than quietly destructive.
+  */
+  it('will not open a replay while a session is being captured', () => {
+    setup(
+      'active',
+      [buildReplay('race-hash', 'RACE')],
+      'A live session is running.',
+    );
+
+    expect(screen.getByText('View Replay').closest('button')).toBeDisabled();
   });
 
   /**

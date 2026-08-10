@@ -3,6 +3,7 @@ import {
   extractQualificationEntries,
   extractStandingsEntries,
   extractTrackMapPoints,
+  extractTrackPitLanePoints,
 } from './replaySelectors';
 
 describe('replaySelectors', () => {
@@ -66,6 +67,38 @@ describe('replaySelectors', () => {
         { x: 1, y: 2, z: 3, type: 0 },
         { x: 1, y: 2, z: 3, type: '0' },
       ]);
+    });
+  });
+
+  describe('extractTrackPitLanePoints', () => {
+    /*
+      Type 1 is the pit lane; everything above it arrives as two-point stubs
+      marking individual garage stalls — 110 of them at Laguna Seca — which
+      nothing draws. A point with no type at all is racing line, not pits.
+    */
+    it('takes the pit path and nothing else', () => {
+      const source = {
+        trackMap: [
+          { x: 1, y: 2, z: 3, type: 0 },
+          { x: 4, y: 5, z: 6, type: 1 },
+          { x: 7, y: 8, z: 9, type: '1' },
+          { x: 10, y: 11, z: 12, type: 7 },
+          { x: 13, y: 14, z: 15 },
+          { x: Number.NaN, y: 2, z: 3, type: 1 },
+        ],
+      };
+
+      expect(extractTrackPitLanePoints(source)).toEqual([
+        { x: 4, y: 5, z: 6, type: 1 },
+        { x: 7, y: 8, z: 9, type: '1' },
+      ]);
+    });
+
+    it('has nothing to say about a track map with no pit geometry', () => {
+      expect(
+        extractTrackPitLanePoints([{ x: 1, y: 2, z: 3, type: 0 }]),
+      ).toEqual([]);
+      expect(extractTrackPitLanePoints(null)).toEqual([]);
     });
   });
 

@@ -82,9 +82,9 @@ export const DriverAnalysisView: React.FC = () => {
   const isAiDriver = Boolean(driver.isAiDriver || selectedDriverIsAi);
   const isQuickViewModeActive = quickViewEnabled && isReplayActive !== true;
 
-  const onBackToDashboard = () => {
+  const onBackToDriver = () => {
     sendMessage(CONSTANTS.API.POST_CLOSE_REPLAY);
-    navigate(`/`);
+    navigate('/');
   };
 
   useEffect(() => {
@@ -105,9 +105,9 @@ export const DriverAnalysisView: React.FC = () => {
               variant="caption"
               color="text.secondary"
               sx={{ cursor: 'pointer' }}
-              onClick={onBackToDashboard}
+              onClick={onBackToDriver}
             >
-              Dashboard
+              Driver
             </Typography>
             <Typography variant="caption" color="text.secondary">
               /

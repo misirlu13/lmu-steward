@@ -20,6 +20,9 @@ describe('useUserSettingsDerivedState', () => {
     syncOnIntervalMinutes: 5,
     persistDashboardFiltersEnabled: false,
     experimentalFeaturesEnabled: false,
+    liveCaptureEnabled: false,
+    stewardAuthorName: '',
+    storedStewardActions: null,
     // removed replayLogMatchThresholdMinutes
     anonymizeDriverData: false,
     telemetryCacheEnabled: true,
@@ -62,6 +65,9 @@ describe('useUserSettingsDerivedState', () => {
       syncOnIntervalMinutes: 5,
       persistDashboardFiltersEnabled: false,
       experimentalFeaturesEnabled: false,
+      liveCaptureEnabled: false,
+      stewardAuthorName: '',
+      stewardActions: null,
       anonymizeDriverData: false,
       telemetryCacheEnabled: true,
       clearCacheOnExit: false,
@@ -76,6 +82,56 @@ describe('useUserSettingsDerivedState', () => {
     expect(result.current.hasManualUnsavedChanges).toBe(true);
     expect(result.current.manualSaveDisabled).toBe(false);
     expect(result.current.areSystemPathsAtDefaults).toBe(true);
+  });
+
+  /*
+    Trimmed here rather than in the view, so the field can hold what the steward
+    is mid-way through typing while the store only ever sees a settled value. A
+    name that is only whitespace has to reach the store as '', or it counts as
+    set and a decision gets an author that prints as nothing.
+  */
+  it('trims the steward name on its way into the autosave payload', () => {
+    const { result } = renderHook(() =>
+      useUserSettingsDerivedState({
+        ...baseArgs,
+        stewardAuthorName: '  Bradley  ',
+      }),
+    );
+
+    expect(result.current.autosavePayload.stewardAuthorName).toBe('Bradley');
+  });
+
+  it('sends a whitespace-only steward name as unset', () => {
+    const { result } = renderHook(() =>
+      useUserSettingsDerivedState({ ...baseArgs, stewardAuthorName: '   ' }),
+    );
+
+    expect(result.current.autosavePayload.stewardAuthorName).toBe('');
+  });
+
+  /*
+    `null` is the shipped tariff, and it has to reach the store as `null` rather
+    than as a copy of the five defaults: absent is what makes "revert" a deletion
+    and what lets a later change to the shipped set reach anyone who never
+    customised.
+  */
+  it('sends the shipped tariff as nothing at all', () => {
+    const { result } = renderHook(() => useUserSettingsDerivedState(baseArgs));
+
+    expect(result.current.autosavePayload.stewardActions).toBeNull();
+  });
+
+  it('sends a customised tariff as the list itself', () => {
+    const custom = [{ id: 'a', label: 'DT', driverScoped: true }];
+
+    const { result } = renderHook(() =>
+      useUserSettingsDerivedState({
+        ...baseArgs,
+        storedStewardActions: custom,
+      }),
+    );
+
+    expect(result.current.autosavePayload.stewardActions).toEqual(custom);
   });
 
   it('disables sync and manual save when disconnected and invalid', () => {

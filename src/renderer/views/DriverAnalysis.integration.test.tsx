@@ -198,7 +198,7 @@ describe('DriverAnalysisView integration', () => {
 
     renderView(false, true);
 
-    fireEvent.click(screen.getByText('Dashboard'));
+    fireEvent.click(screen.getByText('Driver'));
 
     expect(sendMessageMock).toHaveBeenCalledWith(
       CONSTANTS.API.POST_CLOSE_REPLAY,

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { CONSTANTS } from '@constants';
 import InfoOutlinedIcon from '@mui/icons-material/InfoOutlined';
@@ -41,8 +41,19 @@ import {
   computeReplayIncidentScorePerDriver,
 } from '../utils/replaySummaryViewModel';
 import { resolveReplayHeaderMetadata } from '../utils/replayMetadata';
+import { buildSessionExport } from '../utils/sessionExportModel';
+import {
+  SessionExportFormat,
+  sessionExportFileName,
+  serializeSessionExport,
+  toSessionMarkdown,
+} from '../utils/sessionExportFormats';
 import { useReplayDerivedData } from '../hooks/useReplayDerivedData';
+import { useLiveDataForReplay } from '../hooks/useLiveDataForReplay';
+import { ReplayIncidentDossier } from '../components/Replay/ReplayIncidentDossier';
+import { ExportTelemetryDialog } from '../components/Replay/ExportTelemetryDialog';
 import { useReplayViewOrchestration } from '../hooks/useReplayViewOrchestration';
+import { useViewReplayDisabledReason } from '../hooks/useReplayGating';
 
 const PARTIAL_REPLAY_DATA_NOTICE =
   'Partial replay data detected. This replay appears to have started after the live session was already in progress, so incident timing may be approximate.';
@@ -64,12 +75,21 @@ export const ReplayView: React.FC = () => {
     replays,
     experimentalFeaturesEnabled,
     exportReplay,
+    exportSessionData,
+    stewardDecisions,
     exportProgress,
     exportResult,
     clearExportResult,
     subscribeToApiChannel,
   } = useApi();
+  const viewReplayDisabledReason = useViewReplayDisabledReason();
   const [isChatOpen, setIsChatOpen] = useState(false);
+  const [isExportTelemetryDialogOpen, setIsExportTelemetryDialogOpen] =
+    useState(false);
+  // Off unless asked for: sharing another driver's inputs is the deliberate
+  // choice, not the default one.
+  const [includeLiveTelemetry, setIncludeLiveTelemetry] = useState(false);
+  const [copyNotice, setCopyNotice] = useState<string | null>(null);
   const navigate = useNavigate();
   const {
     replayForView,
@@ -109,9 +129,9 @@ export const ReplayView: React.FC = () => {
     [replayForView],
   );
 
-  const onBackToDashboard = () => {
+  const onBackToReplays = () => {
     sendMessage(CONSTANTS.API.POST_CLOSE_REPLAY);
-    navigate(`/`);
+    navigate('/replays');
   };
 
   const onViewReplayFromQuickView = () => {
@@ -121,6 +141,8 @@ export const ReplayView: React.FC = () => {
   const onToggleViewChat = () => {
     setIsChatOpen((prev) => !prev);
   };
+
+  const liveDataForReplay = useLiveDataForReplay(replayForView?.hash);
 
   const {
     currentSessionLogData,
@@ -139,6 +161,7 @@ export const ReplayView: React.FC = () => {
     standingsHistoryData,
     currentTrackMap: currentTrackMap ?? null,
     cachedTrackMapData: cachedReplayData?.trackMapData ?? null,
+    liveDataForReplay,
   });
 
   const replaySessionInfo = sessionInfoData as {
@@ -164,6 +187,30 @@ export const ReplayView: React.FC = () => {
     });
   }, [timelineEvents, setSelectedIncidentId]);
 
+  const selectedTimelineEvent = timelineEvents.find(
+    (event) => event.id === selectedIncidentId,
+  );
+
+  const liveTraceCount = (liveDataForReplay?.incidents ?? []).filter(
+    (record) => record.hasContext,
+  ).length;
+
+  const runExport = (withTelemetry: boolean) => {
+    if (!currentReplay?.logDataFileName) {
+      return;
+    }
+
+    exportReplay({
+      hash: currentReplay.hash,
+      replayName: currentReplay.replayName,
+      sceneDesc: currentReplay.metadata.sceneDesc,
+      session: currentReplay.metadata.session,
+      timestamp: currentReplay.timestamp,
+      logDataFileName: currentReplay.logDataFileName,
+      includeLiveTelemetry: withTelemetry,
+    });
+  };
+
   const onJumpToIncident = (event: ReplayIncidentEvent) => {
     setSelectedIncidentId(event.id);
     jumpToIncidentInReplay(event);
@@ -178,6 +225,54 @@ export const ReplayView: React.FC = () => {
       }),
     [lapsCompleted, maximumLaps],
   );
+
+  // Serializes what the view already holds. Nothing is recomputed here, so an
+  // export can never disagree with what the steward was looking at.
+  const buildExport = useCallback(
+    () =>
+      buildSessionExport({
+        replay: replayForView,
+        sessionLogData: currentSessionLogData,
+        rootLogData: replayForView?.logData ?? null,
+        standings,
+        incidents: timelineEvents,
+        lapsCompleted,
+        trackDisplayName: title,
+        decisions: Object.values(stewardDecisions),
+      }),
+    [
+      currentSessionLogData,
+      lapsCompleted,
+      replayForView,
+      standings,
+      stewardDecisions,
+      timelineEvents,
+      title,
+    ],
+  );
+
+  const onExportSessionData = useCallback(
+    (format: SessionExportFormat) => {
+      const data = buildExport();
+      exportSessionData({
+        fileName: sessionExportFileName(data, format),
+        contents: serializeSessionExport(data, format),
+        format,
+      });
+    },
+    [buildExport, exportSessionData],
+  );
+
+  const onCopySessionMarkdown = useCallback(async () => {
+    try {
+      await navigator.clipboard.writeText(toSessionMarkdown(buildExport()));
+      setCopyNotice('Session report copied to clipboard.');
+    } catch {
+      // Clipboard access can be refused outright, and a copy action that
+      // silently does nothing is worse than one that says it failed.
+      setCopyNotice('Could not copy to the clipboard.');
+    }
+  }, [buildExport]);
 
   const durationLabel = useMemo(
     () =>
@@ -246,9 +341,9 @@ export const ReplayView: React.FC = () => {
               variant="caption"
               color="text.secondary"
               sx={{ cursor: 'pointer' }}
-              onClick={onBackToDashboard}
+              onClick={onBackToReplays}
             >
-              Dashboard
+              Replays
             </Typography>
             <Typography variant="caption" color="text.secondary">
               /
@@ -309,13 +404,27 @@ export const ReplayView: React.FC = () => {
             ) : null}
           </Stack>
         }
-        onBack={onBackToDashboard}
+        onBack={onBackToReplays}
         actions={
           <Stack direction="row" spacing={1} alignItems="center">
+            {/*
+              The span is what makes the explanation reachable. MUI fires no
+              mouse events on a disabled control, so a bare Tooltip on it would
+              never open — and a dead button with no reason given is worse than
+              no button.
+            */}
             {isQuickViewModeActiveForReplay ? (
-              <Button variant="contained" onClick={onViewReplayFromQuickView}>
-                View Replay
-              </Button>
+              <Tooltip title={viewReplayDisabledReason ?? ''}>
+                <span>
+                  <Button
+                    variant="contained"
+                    disabled={Boolean(viewReplayDisabledReason)}
+                    onClick={onViewReplayFromQuickView}
+                  >
+                    View Replay
+                  </Button>
+                </span>
+              </Tooltip>
             ) : null}
             <ReplayActions
               onViewChat={onToggleViewChat}
@@ -325,19 +434,29 @@ export const ReplayView: React.FC = () => {
                   ? null
                   : 'This replay has no matched result log, so there is nothing to share alongside it.'
               }
+              sessionDataDisabledReason={
+                standings.length === 0
+                  ? 'This session has no synced standings yet, so there is nothing to export.'
+                  : null
+              }
+              onExportSessionData={onExportSessionData}
+              onCopySessionMarkdown={onCopySessionMarkdown}
               onExport={() => {
                 if (!currentReplay?.logDataFileName) {
                   return;
                 }
 
-                exportReplay({
-                  hash: currentReplay.hash,
-                  replayName: currentReplay.replayName,
-                  sceneDesc: currentReplay.metadata.sceneDesc,
-                  session: currentReplay.metadata.session,
-                  timestamp: currentReplay.timestamp,
-                  logDataFileName: currentReplay.logDataFileName,
-                });
+                /*
+                  A capture with traces makes the export a decision about other
+                  people's telemetry, so it is asked rather than assumed. With
+                  nothing to ask about, the export runs straight through.
+                */
+                if (liveTraceCount > 0) {
+                  setIsExportTelemetryDialogOpen(true);
+                  return;
+                }
+
+                runExport(false);
               }}
             />
           </Stack>
@@ -346,9 +465,15 @@ export const ReplayView: React.FC = () => {
 
       {isQuickViewModeActiveForReplay ? (
         <Box sx={{ mt: -1, mb: 2, px: 0.5 }}>
+          {/*
+            The instruction is only followable when View Replay is available,
+            so when it is not, the reason is appended — otherwise the copy
+            tells a steward to click something the page has just greyed out.
+          */}
           <Typography variant="body2" color="text.secondary">
             Quick View is enabled. Replay playback-dependent data is limited
             until you load the replay in LMU using View Replay.
+            {viewReplayDisabledReason ? ` ${viewReplayDisabledReason}` : ''}
           </Typography>
         </Box>
       ) : null}
@@ -376,6 +501,32 @@ export const ReplayView: React.FC = () => {
           dataCoverageNote={driverCoverageNote}
         />
       </Box>
+
+      {/*
+        Directly under the timeline, so the evidence sits next to the incident
+        it belongs to and the footage the Jump button just sought to. Renders
+        nothing at all unless this replay has a linked capture that recorded
+        this particular incident.
+      */}
+      <Box sx={{ mt: 2 }}>
+        <ReplayIncidentDossier
+          event={selectedTimelineEvent}
+          liveData={liveDataForReplay}
+          replayHash={replayHash}
+        />
+      </Box>
+
+      <ExportTelemetryDialog
+        open={isExportTelemetryDialogOpen}
+        traceCount={liveTraceCount}
+        includeTelemetry={includeLiveTelemetry}
+        onIncludeTelemetryChange={setIncludeLiveTelemetry}
+        onCancel={() => setIsExportTelemetryDialogOpen(false)}
+        onConfirm={() => {
+          setIsExportTelemetryDialogOpen(false);
+          runExport(includeLiveTelemetry);
+        }}
+      />
 
       <Box
         sx={{
@@ -472,6 +623,7 @@ export const ReplayView: React.FC = () => {
           <Typography variant="body2" color="text.secondary">
             Incident jump controls are unavailable in Quick View mode. Click
             View Replay to load playback and enable replay controls.
+            {viewReplayDisabledReason ? ` ${viewReplayDisabledReason}` : ''}
           </Typography>
         </Paper>
       )}
@@ -481,6 +633,12 @@ export const ReplayView: React.FC = () => {
       {/* A single session can still be 400 MB, so it gets the same feedback
           the dashboard's weekend export does. */}
       <ExportProgressDialog progress={exportProgress} />
+      <Snackbar
+        open={Boolean(copyNotice)}
+        autoHideDuration={4000}
+        onClose={() => setCopyNotice(null)}
+        message={copyNotice ?? ''}
+      />
       <Snackbar
         open={Boolean(exportResult && !exportResult.canceled)}
         autoHideDuration={exportResult?.status === 'error' ? 12000 : 8000}

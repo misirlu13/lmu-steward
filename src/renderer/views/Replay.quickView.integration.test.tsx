@@ -1,4 +1,5 @@
 import React from 'react';
+import '@testing-library/jest-dom';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { fireEvent, render, screen } from '@testing-library/react';
 import { CONSTANTS } from '@constants';
@@ -106,6 +107,23 @@ describe('ReplayView quick view integration', () => {
     },
   } as const;
 
+  /*
+    Only the fields this view reads. `liveSessionStatus` is one of them: View
+    Replay is gated on it, because loading a replay takes over the game.
+  */
+  const mockApi = (overrides: Record<string, unknown>) => {
+    useApiMock.mockReturnValue({
+      currentReplay: null,
+      currentTrackMap: null,
+      isConnected: true,
+      hasApiStatusResponse: true,
+      liveSessionStatus: { state: 'detached' },
+      replays: { status: 'success', data: [replayRecord] },
+      subscribeToApiChannel: jest.fn(() => () => {}),
+      ...overrides,
+    } as unknown as ReturnType<typeof useApi>);
+  };
+
   beforeEach(() => {
     jest.clearAllMocks();
   });
@@ -122,15 +140,11 @@ describe('ReplayView quick view integration', () => {
   };
 
   it('shows quick view messaging when replay is not yet loaded', () => {
-    useApiMock.mockReturnValue({
-      currentReplay: null,
-      currentTrackMap: null,
+    mockApi({
       loadingState: { loading: false, percentage: 0 },
       isReplayActive: false,
       quickViewEnabled: true,
-      replays: { status: 'success', data: [replayRecord] },
-      subscribeToApiChannel: jest.fn(() => () => {}),
-    } as unknown as ReturnType<typeof useApi>);
+    });
 
     renderReplay();
 
@@ -145,15 +159,12 @@ describe('ReplayView quick view integration', () => {
   });
 
   it('keeps full replay mode active when replay is already active for this route', () => {
-    useApiMock.mockReturnValue({
+    mockApi({
       currentReplay: replayRecord,
-      currentTrackMap: null,
       loadingState: { loading: false, percentage: -1 },
       isReplayActive: true,
       quickViewEnabled: true,
-      replays: { status: 'success', data: [replayRecord] },
-      subscribeToApiChannel: jest.fn(() => () => {}),
-    } as unknown as ReturnType<typeof useApi>);
+    });
 
     renderReplay();
 
@@ -168,22 +179,49 @@ describe('ReplayView quick view integration', () => {
   });
 
   it('returns to dashboard when dashboard breadcrumb is clicked', () => {
-    useApiMock.mockReturnValue({
+    mockApi({
       currentReplay: replayRecord,
-      currentTrackMap: null,
       loadingState: { loading: false, percentage: -1 },
       isReplayActive: true,
       quickViewEnabled: true,
-      replays: { status: 'success', data: [replayRecord] },
-      subscribeToApiChannel: jest.fn(() => () => {}),
-    } as unknown as ReturnType<typeof useApi>);
+    });
 
     renderReplay();
 
-    fireEvent.click(screen.getByText('Dashboard'));
+    fireEvent.click(screen.getByText('Replays'));
 
     expect(sendMessageMock).toHaveBeenCalledWith(
       CONSTANTS.API.POST_CLOSE_REPLAY,
     );
+  });
+
+  /*
+    Quick View's whole purpose is that the replay is not loaded yet, so this is
+    the one place a steward can ask for it mid-race. Loading it calls
+    /rest/watch/play, which takes over the running session.
+  */
+  it('will not load the replay from Quick View while a session is live', () => {
+    mockApi({
+      loadingState: { loading: false, percentage: 0 },
+      isReplayActive: false,
+      quickViewEnabled: true,
+      liveSessionStatus: { state: 'live', trackName: 'Sebring' },
+    });
+
+    renderReplay();
+
+    expect(screen.getByText('View Replay').closest('button')).toBeDisabled();
+  });
+
+  it('offers the Quick View load when no session is running', () => {
+    mockApi({
+      loadingState: { loading: false, percentage: 0 },
+      isReplayActive: false,
+      quickViewEnabled: true,
+    });
+
+    renderReplay();
+
+    expect(screen.getByText('View Replay').closest('button')).toBeEnabled();
   });
 });

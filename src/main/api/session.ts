@@ -106,63 +106,52 @@ export const getStandingsHistory = async (event: Electron.IpcMainEvent) => {
 /**
  * GET
  * /rest/watch/trackMap
- * Gets the track map data for the active replay
+ *
+ * Gets the track map geometry for whatever session the game has loaded.
+ *
+ * **Not replay-only, despite the endpoint's name.** Verified against a live
+ * 37-car practice session at Laguna Seca with no replay loaded and none ever
+ * loaded in that app run: 200 OK, 107 KB, a flat array of `{ type, x, y, z }`
+ * in the same world space as the standings rows' `posX`/`posZ`.
  */
-
-export const getTrackMap = async (event: Electron.IpcMainEvent) => {
+const fetchTrackMap = async (
+  event: Electron.IpcMainEvent,
+  replyChannel: string,
+) => {
   try {
     const response = await fetch(
       `${CONSTANTS.LMU_API_BASE_URL}/rest/watch/trackMap`,
     );
     if (!response.ok) {
-      event.reply(CONSTANTS.API.GET_TRACK_MAP, {
+      event.reply(replyChannel, {
         status: 'error',
         message: `API responded with status ${response.status}`,
       });
       return;
     }
     const data = await response.json();
-    event.reply(CONSTANTS.API.GET_TRACK_MAP, { status: 'success', data });
+    event.reply(replyChannel, { status: 'success', data });
   } catch (error: unknown) {
-    event.reply(CONSTANTS.API.GET_TRACK_MAP, {
+    event.reply(replyChannel, {
       status: 'error',
       message: toErrorMessage(error),
     });
   }
 };
+
+export const getTrackMap = async (event: Electron.IpcMainEvent) =>
+  fetchTrackMap(event, CONSTANTS.API.GET_TRACK_MAP);
 
 /**
- * Not sure confirmed this will work
+ * The same geometry for the live view, on its own reply channel.
  *
- * GET
- * /rest/race/track/{id}/thumbnail
- * Gets the track thumbnail for the specified track ID
+ * One endpoint, two channels, because the two consumers own separate state:
+ * `GET_TRACK_MAP` lands in `ApiContext.currentTrackMap`, which the replay view
+ * reads, and having the live map write it would swap a replay's geometry out
+ * from under it. See the channel's comment in constants.ts.
  */
-
-export const getTrackThumbnail = async (
-  event: Electron.IpcMainEvent,
-  trackId: number,
-) => {
-  try {
-    const response = await fetch(
-      `${CONSTANTS.LMU_API_BASE_URL}/rest/race/track/${trackId}/thumbnail`,
-    );
-    if (!response.ok) {
-      event.reply(CONSTANTS.API.GET_TRACK_THUMBNAIL, {
-        status: 'error',
-        message: `API responded with status ${response.status}`,
-      });
-      return;
-    }
-    const data = await response.json();
-    event.reply(CONSTANTS.API.GET_TRACK_THUMBNAIL, data);
-  } catch (error: unknown) {
-    event.reply(CONSTANTS.API.GET_TRACK_THUMBNAIL, {
-      status: 'error',
-      message: toErrorMessage(error),
-    });
-  }
-};
+export const getLiveTrackMap = async (event: Electron.IpcMainEvent) =>
+  fetchTrackMap(event, CONSTANTS.API.GET_LIVE_TRACK_MAP);
 
 /*
 

@@ -15,11 +15,21 @@ import {
 } from '@mui/material';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { CONSTANTS } from '@constants';
+import { LiveRetentionPreview, LocalDataSummary } from '@types';
 import { useNavigate } from 'react-router-dom';
 import { ViewHeader } from '../components/Common/ViewHeader';
+import { RetentionShorteningDialog } from '../components/UserSettings/RetentionShorteningDialog';
 import { sendMessage } from '../utils/postMessage';
 import { useApi } from '../providers/ApiContext';
 import { getProfileInitials } from '../utils/profileInitials';
+import { DEFAULT_STEWARD_AUTHOR } from '../utils/stewardAuthor';
+import {
+  DEFAULT_STEWARD_ACTIONS,
+  StewardAction,
+  areStewardActionsDefault,
+  toStoredStewardActions,
+} from '../utils/stewardActions';
+import { StewardActionsEditor } from '../components/UserSettings/StewardActionsEditor';
 import {
   LONGEST_COUNTRY_NAME,
   LMU_LAUNCH_COOLDOWN_MS,
@@ -61,6 +71,7 @@ interface ApiResponse {
     replayLogMatchThresholdMs?: number;
     persistDashboardFiltersEnabled?: boolean;
     experimentalFeaturesEnabled?: boolean;
+    liveCaptureEnabled?: boolean;
     anonymizeDriverData?: boolean;
     telemetryCacheEnabled?: boolean;
     clearCacheOnExit?: boolean;
@@ -120,6 +131,41 @@ export const UserSettingsView: React.FC = () => {
     useState(false);
   const [experimentalFeaturesEnabled, setExperimentalFeaturesEnabled] =
     useState(false);
+  const [liveCaptureEnabled, setLiveCaptureEnabled] = useState(false);
+  const [liveCaptureRetentionDays, setLiveCaptureRetentionDays] = useState<
+    number | null
+  >(30);
+  /*
+    Held untrimmed so the field does not fight the cursor mid-word; the trim
+    happens where the value leaves for the store.
+  */
+  const [stewardAuthorName, setStewardAuthorName] = useState('');
+  /*
+    The tariff as it is being edited, or `null` for "on the shipped set".
+
+    Held raw rather than normalised on every keystroke: normalising would drop a
+    row the moment its label went briefly empty, deleting what the user is in the
+    middle of typing. The reduction to what belongs in the store happens where
+    the value leaves for the store, which is the same place the steward name is
+    trimmed.
+  */
+  const [stewardActionsDraft, setStewardActionsDraft] = useState<
+    StewardAction[] | null
+  >(null);
+  /*
+    Shortening the window deletes data, so the change is held here until the
+    user has seen what it would remove and confirmed it. Lengthening never
+    lands here — it takes nothing away.
+  */
+  const [pendingRetentionDays, setPendingRetentionDays] = useState<
+    number | null | undefined
+  >(undefined);
+  const [retentionPreview, setRetentionPreview] =
+    useState<LiveRetentionPreview | null>(null);
+  const [isRetentionPreviewLoading, setIsRetentionPreviewLoading] =
+    useState(false);
+  const [localDataSummary, setLocalDataSummary] =
+    useState<LocalDataSummary | null>(null);
   /*
    * Defaults to keeping the files. Clearing a cache should not destroy
    * multi-GB replays as a side effect — the destructive option is the one the
@@ -198,6 +244,12 @@ export const UserSettingsView: React.FC = () => {
     syncOnIntervalMinutes,
     persistDashboardFiltersEnabled,
     experimentalFeaturesEnabled,
+    liveCaptureEnabled,
+    stewardAuthorName,
+    storedStewardActions: useMemo(
+      () => toStoredStewardActions(stewardActionsDraft),
+      [stewardActionsDraft],
+    ),
     // replayLogMatchThresholdMinutes,
     anonymizeDriverData,
     telemetryCacheEnabled,
@@ -209,6 +261,16 @@ export const UserSettingsView: React.FC = () => {
     lastManualSavedPayload: lastManualSavedPayloadRef.current,
     isAutosaving,
   });
+
+  /*
+    What the editor draws. `null` means the user has never departed from the
+    shipped set, so this is where that becomes a concrete list — nothing below
+    this line needs to know a default exists.
+  */
+  const editedStewardActions = useMemo(
+    () => stewardActionsDraft ?? [...DEFAULT_STEWARD_ACTIONS],
+    [stewardActionsDraft],
+  );
 
   const isReplaySyncDefaultsApplied = useMemo(() => {
     return (
@@ -318,6 +380,21 @@ export const UserSettingsView: React.FC = () => {
       const resolvedExperimentalFeaturesEnabled = Boolean(
         response?.data?.experimentalFeaturesEnabled ?? false,
       );
+      const resolvedLiveCaptureEnabled = Boolean(
+        response?.data?.liveCaptureEnabled ?? false,
+      );
+      const resolvedStewardAuthorName =
+        typeof response?.data?.stewardAuthorName === 'string'
+          ? response.data.stewardAuthorName.trim()
+          : '';
+      /*
+        Reduced on the way in by exactly the function that reduces it on the way
+        out, so the baseline below and the first payload this view computes are
+        the same string. Skip that and the view autosaves once on every load.
+      */
+      const resolvedStewardActions = toStoredStewardActions(
+        response?.data?.stewardActions,
+      );
       const resolvedAnonymizeDriverData = Boolean(
         response?.data?.anonymizeDriverData ?? false,
       );
@@ -338,6 +415,18 @@ export const UserSettingsView: React.FC = () => {
 
       setPersistDashboardFiltersEnabled(resolvedPersistDashboardFiltersEnabled);
       setExperimentalFeaturesEnabled(resolvedExperimentalFeaturesEnabled);
+      setLiveCaptureEnabled(resolvedLiveCaptureEnabled);
+      /*
+        Null is a real value here — "never delete" — so it cannot be collapsed
+        into the default with `??`. Only a missing key falls back to 30.
+      */
+      setLiveCaptureRetentionDays(
+        response?.data?.liveCaptureRetentionDays === undefined
+          ? 30
+          : (response.data.liveCaptureRetentionDays as number | null),
+      );
+      setStewardAuthorName(resolvedStewardAuthorName);
+      setStewardActionsDraft(resolvedStewardActions);
       setAnonymizeDriverData(resolvedAnonymizeDriverData);
       setTelemetryCacheEnabled(resolvedTelemetryCacheEnabled);
       setClearCacheOnExit(resolvedClearCacheOnExit);
@@ -353,6 +442,9 @@ export const UserSettingsView: React.FC = () => {
         syncOnIntervalMinutes: resolvedSyncIntervalMinutes,
         persistDashboardFiltersEnabled: resolvedPersistDashboardFiltersEnabled,
         experimentalFeaturesEnabled: resolvedExperimentalFeaturesEnabled,
+        liveCaptureEnabled: resolvedLiveCaptureEnabled,
+        stewardAuthorName: resolvedStewardAuthorName,
+        stewardActions: resolvedStewardActions,
         // replayLogMatchThresholdMinutes: resolvedReplayLogMatchThresholdMinutes,
         anonymizeDriverData: resolvedAnonymizeDriverData,
         telemetryCacheEnabled: resolvedTelemetryCacheEnabled,
@@ -487,6 +579,18 @@ export const UserSettingsView: React.FC = () => {
             response.data.experimentalFeaturesEnabled,
           );
         }
+
+        if (typeof response?.data?.liveCaptureEnabled === 'boolean') {
+          setLiveCaptureEnabled(response.data.liveCaptureEnabled);
+        }
+
+        /*
+          `stewardAuthorName` is deliberately not echoed back into state here.
+          Every other autosaved field is a switch or a select, where the reply
+          cannot arrive mid-change; this one is a text field on an 800 ms
+          debounce, so writing the saved value back would delete whatever the
+          steward typed while the round trip was in flight.
+        */
 
         if (typeof response?.data?.anonymizeDriverData === 'boolean') {
           setAnonymizeDriverData(response.data.anonymizeDriverData);
@@ -688,6 +792,31 @@ export const UserSettingsView: React.FC = () => {
       },
     );
 
+    const unsubscribeRetentionPreview = window.electron?.ipcRenderer.on(
+      CONSTANTS.API.GET_LIVE_RETENTION_PREVIEW,
+      (...args: unknown[]) => {
+        const response = (args[0] ?? {}) as ApiResponse;
+        setIsRetentionPreviewLoading(false);
+        setRetentionPreview(
+          response?.status === 'success'
+            ? ((response.data as unknown as LiveRetentionPreview) ?? null)
+            : null,
+        );
+      },
+    );
+
+    const unsubscribeLocalDataSummary = window.electron?.ipcRenderer.on(
+      CONSTANTS.API.GET_LOCAL_DATA_SUMMARY,
+      (...args: unknown[]) => {
+        const response = (args[0] ?? {}) as ApiResponse;
+        setLocalDataSummary(
+          response?.status === 'success'
+            ? ((response.data as unknown as LocalDataSummary) ?? null)
+            : null,
+        );
+      },
+    );
+
     sendMessage(CONSTANTS.API.GET_USER_SETTINGS);
     sendMessage(CONSTANTS.API.GET_PROFILE_INFO);
 
@@ -700,6 +829,8 @@ export const UserSettingsView: React.FC = () => {
       unsubscribeSelectReplayDirectory?.();
       unsubscribeLaunch?.();
       unsubscribeProfileInfo?.();
+      unsubscribeRetentionPreview?.();
+      unsubscribeLocalDataSummary?.();
 
       if (launchCooldownTimeoutRef.current) {
         clearTimeout(launchCooldownTimeoutRef.current);
@@ -788,7 +919,60 @@ export const UserSettingsView: React.FC = () => {
   };
 
   const onOpenClearLocalStorageDialog = () => {
+    // Counted fresh each time the dialog opens: the warning has to name how
+    // many decisions are about to be destroyed, and a stale number here is a
+    // number the user makes an irreversible decision against.
+    setLocalDataSummary(null);
+    sendMessage(CONSTANTS.API.GET_LOCAL_DATA_SUMMARY);
     setIsClearLocalStorageDialogOpen(true);
+  };
+
+  /**
+   * Retention is saved on its own, not through autosave.
+   *
+   * A longer window — or "never" — takes nothing away and is written straight
+   * through. A shorter one deletes on the next write, so it is held until the
+   * user has seen a summary of exactly what it would remove.
+   */
+  const isShorterRetention = (
+    next: number | null,
+    current: number | null,
+  ): boolean => next !== null && (current === null || next < current);
+
+  const saveRetentionDays = (nextValue: number | null) => {
+    setLiveCaptureRetentionDays(nextValue);
+    sendMessage(CONSTANTS.API.POST_USER_SETTINGS, {
+      liveCaptureRetentionDays: nextValue,
+    });
+  };
+
+  const onRetentionChangeRequest = (nextValue: number | null) => {
+    if (nextValue === liveCaptureRetentionDays) {
+      return;
+    }
+
+    if (!isShorterRetention(nextValue, liveCaptureRetentionDays)) {
+      saveRetentionDays(nextValue);
+      return;
+    }
+
+    setPendingRetentionDays(nextValue);
+    setRetentionPreview(null);
+    setIsRetentionPreviewLoading(true);
+    sendMessage(CONSTANTS.API.GET_LIVE_RETENTION_PREVIEW, nextValue);
+  };
+
+  const onConfirmRetentionChange = () => {
+    if (pendingRetentionDays !== undefined) {
+      saveRetentionDays(pendingRetentionDays);
+    }
+    setPendingRetentionDays(undefined);
+    setRetentionPreview(null);
+  };
+
+  const onCancelRetentionChange = () => {
+    setPendingRetentionDays(undefined);
+    setRetentionPreview(null);
   };
 
   const _onReplayLogThresholdMinutesChangeRequest = (nextValue: number) => {
@@ -1550,6 +1734,161 @@ export const UserSettingsView: React.FC = () => {
               </Box>
 
               {/*
+                Its own switch on top of the experimental gate. The capture
+                sidecar takes a machine-wide lock that wheel LED and motion
+                software also use, so turning experimental features on must not
+                start reading shared memory on its own.
+              */}
+              <Box
+                sx={{
+                  border: '1px solid',
+                  borderColor: 'divider',
+                  borderRadius: 1,
+                  p: 2,
+                  opacity: experimentalFeaturesEnabled ? 1 : 0.5,
+                }}
+              >
+                <Stack
+                  direction="row"
+                  justifyContent="space-between"
+                  alignItems="center"
+                >
+                  <Box>
+                    <Typography variant="subtitle2" fontWeight={600}>
+                      Live Capture
+                    </Typography>
+                    <Typography variant="caption" color="text.secondary">
+                      Reads LMU&apos;s shared memory while the game is running
+                      so live stewarding can capture incidents as they happen.
+                      This briefly takes a lock that wheel LED and motion
+                      software also use — leave it off if you see those
+                      misbehave. Needs Experimental Features on.
+                    </Typography>
+                  </Box>
+                  <Switch
+                    checked={experimentalFeaturesEnabled && liveCaptureEnabled}
+                    onChange={(_, checked) => setLiveCaptureEnabled(checked)}
+                    disabled={
+                      !experimentalFeaturesEnabled ||
+                      isLoading ||
+                      isSaving ||
+                      isLaunching ||
+                      isAutosaving
+                    }
+                  />
+                </Stack>
+
+                {/*
+                  Retention sits with capture because it is the cost of having
+                  it on: a contact window is ~100 KB and a long race records
+                  hundreds, so an install left alone grows without bound.
+
+                  Saved on its own rather than through autosave — shortening the
+                  window destroys data and has to be confirmed first.
+                */}
+                <Stack
+                  direction="row"
+                  justifyContent="space-between"
+                  alignItems="center"
+                  sx={{ mt: 2 }}
+                >
+                  <Box sx={{ pr: 2 }}>
+                    <Typography variant="subtitle2" fontWeight={600}>
+                      Keep Captured Sessions
+                    </Typography>
+                    <Typography variant="caption" color="text.secondary">
+                      Captured sessions and their telemetry are removed once
+                      they pass this age, whether or not they are linked to a
+                      replay. Steward decisions are never deleted.
+                    </Typography>
+                  </Box>
+                  <TextField
+                    select
+                    size="small"
+                    sx={{ minWidth: 140 }}
+                    value={
+                      liveCaptureRetentionDays === null
+                        ? 'never'
+                        : String(liveCaptureRetentionDays)
+                    }
+                    onChange={(changeEvent) => {
+                      const { value } = changeEvent.target;
+                      onRetentionChangeRequest(
+                        value === 'never' ? null : Number(value),
+                      );
+                    }}
+                    disabled={
+                      !experimentalFeaturesEnabled || isLoading || isSaving
+                    }
+                  >
+                    <MenuItem value="7">7 days</MenuItem>
+                    <MenuItem value="30">30 days</MenuItem>
+                    <MenuItem value="90">90 days</MenuItem>
+                    <MenuItem value="never">Never delete</MenuItem>
+                  </TextField>
+                </Stack>
+              </Box>
+
+              {/*
+                Beside capture rather than inside it, and not dimmed with it. The
+                replay dossier adjudicates a capture that already exists, so a
+                steward can still be making calls — and needing to be named on
+                them — with the capture switch off.
+              */}
+              <Box
+                sx={{
+                  border: '1px solid',
+                  borderColor: 'divider',
+                  borderRadius: 1,
+                  p: 2,
+                }}
+              >
+                <Stack
+                  direction="row"
+                  justifyContent="space-between"
+                  alignItems="center"
+                >
+                  <Box sx={{ pr: 2 }}>
+                    <Typography variant="subtitle2" fontWeight={600}>
+                      Steward Name
+                    </Typography>
+                    <Typography variant="caption" color="text.secondary">
+                      Recorded on every decision you make from now on, and
+                      carried into CSV, Markdown and JSON exports, so a call can
+                      be attributed on appeal. Decisions already made keep the
+                      name they were made under. Left blank, new decisions are
+                      recorded as &quot;{DEFAULT_STEWARD_AUTHOR}&quot;.
+                    </Typography>
+                  </Box>
+                  <TextField
+                    size="small"
+                    sx={{ minWidth: 220 }}
+                    value={stewardAuthorName}
+                    placeholder={DEFAULT_STEWARD_AUTHOR}
+                    inputProps={{ maxLength: 60, 'aria-label': 'Steward name' }}
+                    onChange={(changeEvent) =>
+                      setStewardAuthorName(changeEvent.target.value)
+                    }
+                    disabled={isLoading || isSaving || isLaunching}
+                  />
+                </Stack>
+              </Box>
+
+              {/*
+                Beside the steward's name and outside the capture box, for the
+                same reason: the replay dossier offers these same buttons against
+                an already-captured session, so dimming them with the capture
+                switch would grey out the tariff for someone adjudicating.
+              */}
+              <StewardActionsEditor
+                actions={editedStewardActions}
+                isAtDefaults={areStewardActionsDefault(editedStewardActions)}
+                onChange={setStewardActionsDraft}
+                onRevert={() => setStewardActionsDraft(null)}
+                disabled={isLoading || isSaving || isLaunching}
+              />
+
+              {/*
                 Rendered whether the toggle is on or off — someone deciding
                 whether to enable it needs to see what they would be enabling.
               */}
@@ -1641,6 +1980,16 @@ export const UserSettingsView: React.FC = () => {
             onDeleteImportedFilesChange={setDeleteImportedFilesOnClear}
             onClose={onCloseClearLocalStorageDialog}
             onConfirm={onConfirmClearLocalStorage}
+            localDataSummary={localDataSummary}
+          />
+
+          <RetentionShorteningDialog
+            open={pendingRetentionDays !== undefined}
+            retentionDays={pendingRetentionDays ?? null}
+            preview={retentionPreview}
+            isLoading={isRetentionPreviewLoading}
+            onCancel={onCancelRetentionChange}
+            onConfirm={onConfirmRetentionChange}
           />
 
           {/* <UserSettingsReplayThresholdDialog

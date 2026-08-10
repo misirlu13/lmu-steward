@@ -61,32 +61,61 @@ export const extractQualificationEntries = <T>(standingsData: unknown): T[] => {
   return [];
 };
 
-export const extractTrackMapPoints = (source: unknown): TrackPoints[] => {
+/** The points array, whichever envelope LMU wrapped it in this time. */
+const readTrackMapPoints = (source: unknown): ReplayTrackPointLike[] => {
   const trackMapSource = source as
     | ReplayTrackPointLike[]
     | TrackMapEnvelope
     | null
     | undefined;
-  let points: ReplayTrackPointLike[] = [];
 
   if (Array.isArray(trackMapSource)) {
-    points = trackMapSource;
-  } else if (Array.isArray(trackMapSource?.points)) {
-    points = trackMapSource.points;
-  } else if (Array.isArray(trackMapSource?.trackPoints)) {
-    points = trackMapSource.trackPoints;
-  } else if (Array.isArray(trackMapSource?.trackMap)) {
-    points = trackMapSource.trackMap;
+    return trackMapSource;
+  }
+  if (Array.isArray(trackMapSource?.points)) {
+    return trackMapSource.points;
+  }
+  if (Array.isArray(trackMapSource?.trackPoints)) {
+    return trackMapSource.trackPoints;
+  }
+  if (Array.isArray(trackMapSource?.trackMap)) {
+    return trackMapSource.trackMap;
   }
 
-  return points.filter(
+  return [];
+};
+
+const hasFiniteCoordinates = (point: ReplayTrackPointLike): boolean =>
+  Number.isFinite(point?.x) &&
+  Number.isFinite(point?.y) &&
+  Number.isFinite(point?.z);
+
+export const extractTrackMapPoints = (source: unknown): TrackPoints[] =>
+  readTrackMapPoints(source).filter(
     (point): point is TrackPoints =>
       (point?.type === undefined || Number(point?.type) === 0) &&
-      Number.isFinite(point?.x) &&
-      Number.isFinite(point?.y) &&
-      Number.isFinite(point?.z),
+      hasFiniteCoordinates(point),
   );
-};
+
+/**
+ * The pit lane, which LMU ships in the same response under `type: 1`.
+ *
+ * Worth drawing because without it a car in the pits or a garage stall floats
+ * in blank space: measured live at Laguna Seca, the seven cars in garage stalls
+ * sat 48–114 m from the nearest racing-line point and 10–14 m from the pit
+ * path. Their positions were right and the map had nothing to read them
+ * against.
+ *
+ * Everything above `type: 1` is left alone. Those arrive as ~110 two-point
+ * pairs marking individual garage stalls — real geometry, but 110 stubs drawn
+ * over each other is noise, and the pit path already gives a stopped car the
+ * context it needs.
+ */
+export const extractTrackPitLanePoints = (source: unknown): TrackPoints[] =>
+  readTrackMapPoints(source).filter(
+    (point): point is TrackPoints =>
+      Number(point?.type) === 1 && hasFiniteCoordinates(point),
+  );
 
 export const extractHeatmapSpots = <T>(standingsHistoryData: unknown): T[] =>
   Array.isArray(

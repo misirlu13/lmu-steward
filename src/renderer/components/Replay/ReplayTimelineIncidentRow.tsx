@@ -1,5 +1,6 @@
 import PlayCircleFilledIcon from '@mui/icons-material/PlayCircleFilled';
-import { Button, Chip, Stack, Typography } from '@mui/material';
+import SensorsIcon from '@mui/icons-material/Sensors';
+import { Button, Chip, Stack, Tooltip, Typography } from '@mui/material';
 import { forwardRef } from 'react';
 import { CarClassBadge } from '../CarClassBadge/CarClassBadge';
 import { AiBadge } from '../Common/AiBadge';
@@ -71,6 +72,18 @@ export const ReplayTimelineIncidentRow = forwardRef<
           variant="outlined"
           sx={{ minWidth: 92 }}
         />
+
+        {/*
+          Marks the incidents that can be examined properly. A steward scanning
+          a race's incident list needs to see at a glance which ones hold
+          closing speeds and throttle and brake traces, because those are the
+          ones a call can actually be defended on.
+        */}
+        {event.hasLiveContext ? (
+          <Tooltip title="Captured live — telemetry recorded for this incident">
+            <SensorsIcon fontSize="small" color="primary" />
+          </Tooltip>
+        ) : null}
 
         <Stack spacing={0.25} sx={{ flex: 1 }}>
           <Stack

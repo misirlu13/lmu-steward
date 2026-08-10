@@ -92,6 +92,46 @@ export const getFocusedCar = async (event: Electron.IpcMainEvent) => {
 };
 
 /**
+ * GET
+ * Which camera the game is actually showing
+ * /rest/replay/CameraController/getCameraInfo
+ *
+ * RESPONSE
+ * {"cameraName": "TRACKING021", "currentCameraGroup": "TracksideCycle"}
+ *
+ * Verified live on 2026-08-08. Despite the `replay` path it answers during a
+ * live session, exactly as `setCamera` does.
+ *
+ * `cameraName` is reported but not acted on anywhere: it changes by itself as
+ * the trackside director cycles through its angles, so keying any UI state on
+ * it would produce a control that moves while nobody touches it.
+ */
+
+export const getCameraInfo = async (event: Electron.IpcMainEvent) => {
+  try {
+    const response = await fetch(
+      `${CONSTANTS.LMU_API_BASE_URL}/rest/replay/CameraController/getCameraInfo`,
+    );
+
+    if (!response.ok) {
+      throw new Error(`API responded with status ${response.status}`);
+    }
+
+    const data = await response.json();
+
+    event.reply(CONSTANTS.API.GET_CAMERA_INFO, {
+      status: 'success',
+      data,
+    });
+  } catch (error: unknown) {
+    event.reply(CONSTANTS.API.GET_CAMERA_INFO, {
+      status: 'error',
+      message: toErrorMessage(error),
+    });
+  }
+};
+
+/**
  * PUT
  * Sets the camera to a new car
  * /rest/watch/focus/<slot-id>

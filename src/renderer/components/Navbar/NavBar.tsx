@@ -6,21 +6,38 @@ import IconButton from '@mui/material/IconButton';
 import Typography from '@mui/material/Typography';
 import Container from '@mui/material/Container';
 import Avatar from '@mui/material/Avatar';
+import Badge from '@mui/material/Badge';
 import Button from '@mui/material/Button';
 import Tooltip from '@mui/material/Tooltip';
 import SettingsRoundedIcon from '@mui/icons-material/SettingsRounded';
+import SensorsRoundedIcon from '@mui/icons-material/SensorsRounded';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { CONSTANTS } from '@constants';
 import { useNavbar } from '@/renderer/providers/NavbarContext';
 import { sendMessage } from '../../utils/postMessage';
 import { getProfileInitials } from '../../utils/profileInitials';
 import navLogoIcon from '../../../../assets/icons/48x48.png';
+import { useApi } from '../../providers/ApiContext';
+import { deriveLiveIndicator } from '../../hooks/useLiveIndicator';
+import { usePendingCaptureProposalCount } from '../../hooks/useCaptureProposals';
 
 export const NavBar = () => {
   const navigate = useNavigate();
   const { pathname } = useLocation();
   const [profileName, setProfileName] = useState('');
   const { isViewHeaderAttached } = useNavbar();
+  const {
+    isConnected,
+    hasApiStatusResponse,
+    liveSessionStatus,
+    liveCaptureEnabled,
+  } = useApi();
+  const liveIndicator = deriveLiveIndicator({
+    isConnected,
+    hasApiStatusResponse,
+    liveSessionStatus,
+  });
+  const pendingProposalCount = usePendingCaptureProposalCount(pathname);
 
   useEffect(() => {
     const unsubscribeProfileInfo = window.electron?.ipcRenderer.on(
@@ -119,11 +136,104 @@ export const NavBar = () => {
             >
               Replays
             </Button>
+            {/*
+              Only when capture is on. With it off nothing new is ever recorded,
+              so the link would lead to a page that can only ever be empty.
+
+              The badge counts proposals only. An unlinked session is a normal
+              resting state — a practice replay is often simply not kept — so
+              badging those would put a permanent number on the bar for
+              something the user cannot resolve. A proposal is the one state
+              that is actually asking a question.
+            */}
+            {liveCaptureEnabled ? (
+              <Tooltip
+                title={
+                  pendingProposalCount > 0
+                    ? `${pendingProposalCount} captured ${
+                        pendingProposalCount === 1
+                          ? 'session has'
+                          : 'sessions have'
+                      } a replay waiting to be confirmed`
+                    : ''
+                }
+              >
+                <Badge
+                  color="warning"
+                  badgeContent={pendingProposalCount}
+                  sx={{ '& .MuiBadge-badge': { top: 4, right: 2 } }}
+                >
+                  <Button
+                    color="inherit"
+                    size="small"
+                    onClick={() => navigate('/captured-sessions')}
+                    aria-label={
+                      pendingProposalCount > 0
+                        ? `Captured (${pendingProposalCount} awaiting confirmation)`
+                        : undefined
+                    }
+                    sx={{
+                      fontWeight: pathname.startsWith('/captured-sessions')
+                        ? 700
+                        : 400,
+                    }}
+                  >
+                    Captured
+                  </Button>
+                </Badge>
+              </Tooltip>
+            ) : null}
           </Box>
           <Box sx={{ flexGrow: 1 }} />
           <Box
             sx={{ display: 'flex', flexGrow: 0, alignItems: 'center', gap: 1 }}
           >
+            {/*
+              Hidden rather than disabled when capture is off: with no sidecar
+              running the indicator can never leave "unavailable", so it would
+              only ever read as something being broken.
+            */}
+            {liveCaptureEnabled && (
+              <Tooltip
+                title={
+                  liveIndicator.detail
+                    ? `${liveIndicator.label} — ${liveIndicator.detail}`
+                    : liveIndicator.label
+                }
+              >
+                <IconButton
+                  color="inherit"
+                  onClick={() => navigate('/live')}
+                  aria-label={`Open live session (${liveIndicator.label})`}
+                  sx={{
+                    color:
+                      liveIndicator.state === 'live'
+                        ? 'success.main'
+                        : 'inherit',
+                    opacity: liveIndicator.state === 'unavailable' ? 0.4 : 1,
+                    transition: 'color 200ms ease, opacity 200ms ease',
+                    ...(liveIndicator.state === 'live'
+                      ? {
+                          animation: 'lmu-live-pulse 1.8s ease-in-out infinite',
+                          '@keyframes lmu-live-pulse': {
+                            '0%, 100%': { opacity: 1 },
+                            '50%': { opacity: 0.45 },
+                          },
+                        }
+                      : {}),
+                  }}
+                >
+                  <Badge
+                    variant="dot"
+                    color="success"
+                    invisible={liveIndicator.state !== 'live'}
+                    overlap="circular"
+                  >
+                    <SensorsRoundedIcon />
+                  </Badge>
+                </IconButton>
+              </Tooltip>
+            )}
             <Tooltip title="User Settings">
               <IconButton
                 color="inherit"

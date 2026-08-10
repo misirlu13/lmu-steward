@@ -1,4 +1,4 @@
-import { CONSTANTS } from '@constants';
+import { CONSTANTS, replayJumpTargetSeconds } from '@constants';
 import {
   ArchivedReplayRecord,
   ArchivedReplayStore,
@@ -9,7 +9,7 @@ import {
   SessionType,
 } from '@types';
 import { readFile } from 'fs/promises';
-import { resolve as resolvePath, join } from 'path';
+import { resolve as resolvePath, join, dirname } from 'path';
 import { parseStringPromise } from 'xml2js';
 import { generateReplayHash } from '../util';
 import { readUserSettings, writeUserSettings } from './user-settings';
@@ -77,6 +77,8 @@ interface ReplayCacheEntry {
   hash?: string;
   multiplayer?: boolean;
   logData?: ParsedRaceResults | null;
+  logDataDirectory?: string;
+  logDataFileName?: string;
   logDataLoaded?: boolean;
   archived?: boolean;
   archivedAt?: number;
@@ -520,6 +522,68 @@ export const getCachedReplaysForCareer = (): {
     replayDirectory: replay.replayDirectory,
     replayName: replay.replayName,
   }));
+};
+
+/**
+ * A replay a captured live session might belong to.
+ *
+ * Both the cache and the imported store, because a live session can pair with a
+ * replay of the same race handed over from another machine — the case the
+ * reconciliation design calls out as "a replay appears later".
+ *
+ * The identity key travels with it so a confirmed link survives a re-hash, the
+ * same fallback the archive store uses.
+ */
+export interface ReplayMatchTarget {
+  hash: string;
+  identityKey: string;
+  replayName: string;
+  sceneDesc: string;
+  sessionType: SessionType | null;
+  /** Unix SECONDS, as everything replay-side is. */
+  timestamp: number;
+  /** Absolute path to the result log, or null when the replay has none. */
+  logPath: string | null;
+  imported: boolean;
+}
+
+export const listReplayMatchTargets = (): ReplayMatchTarget[] => {
+  const cached =
+    (getReplayStore().get('replays') as Record<string, ReplayCacheEntry>) || {};
+
+  const fromCache = Object.values(cached)
+    .filter((replay) => Boolean(replay?.hash))
+    .map((replay) => ({
+      hash: String(replay.hash),
+      identityKey: buildReplayCacheIdentityKey(replay),
+      replayName: replay.replayName ?? '',
+      sceneDesc: replay.metadata?.sceneDesc ?? '',
+      sessionType: replay.metadata?.session ?? null,
+      timestamp: Number(replay.timestamp ?? 0),
+      logPath:
+        replay.logDataDirectory && replay.logDataFileName
+          ? join(replay.logDataDirectory, replay.logDataFileName)
+          : null,
+      imported: false,
+    }));
+
+  const fromImports = Object.values(readImportedReplays()).map((record) => ({
+    hash: record.hash,
+    identityKey: buildReplayCacheIdentityKey({
+      metadata: { sceneDesc: record.sceneDesc, session: record.session },
+      replayName: record.replayName,
+      timestamp: record.timestamp,
+      replayDirectory: dirname(record.vcrPath ?? ''),
+    }),
+    replayName: record.originalReplayName || record.replayName,
+    sceneDesc: record.sceneDesc,
+    sessionType: record.session,
+    timestamp: Number(record.timestamp ?? 0),
+    logPath: record.logPath || null,
+    imported: true,
+  }));
+
+  return [...fromCache, ...fromImports];
 };
 
 export const getReplayData = async (): Promise<LMUReplay[]> => {
@@ -1203,6 +1267,188 @@ export const putReplayTime = async (
     });
   } catch (error: unknown) {
     event.reply(CONSTANTS.API.PUT_REPLAY_COMMAND_TIME, {
+      status: 'error',
+      message: toErrorMessage(error),
+    });
+  }
+};
+
+/**
+ * Is the game's picture currently showing a replay rather than the live edge?
+ *
+ * Read fresh rather than passed in. `/rest/replay/toggleactive` has no setter
+ * to pair with it — there is no `setActive` among LMU's endpoints — so the only
+ * way to reach a *known* state is to read, then toggle if the answer is wrong.
+ * A cached answer would let the steward's own press of the game's LIVE button
+ * turn "rewatch" into "return to live".
+ *
+ * Returns null when the question cannot be answered, which is the one case
+ * neither caller may guess at: toggling on a null would be a coin flip between
+ * doing nothing and yanking the picture off the live session.
+ */
+const readIsReplayActive = async (): Promise<boolean | null> => {
+  const response = await fetch(
+    `${CONSTANTS.LMU_API_BASE_URL}/rest/replay/isActive`,
+  );
+
+  if (!response.ok) {
+    return null;
+  }
+
+  return (await response.text()).trim().toLowerCase() === 'true';
+};
+
+const toggleReplayActive = async (): Promise<void> => {
+  const response = await fetch(
+    `${CONSTANTS.LMU_API_BASE_URL}/rest/replay/toggleactive`,
+    { method: 'POST' },
+  );
+
+  if (!response.ok) {
+    throw new Error(`API responded with status ${response.status}`);
+  }
+};
+
+/**
+ * POST
+ * Show the steward a moment from the live session's own replay buffer.
+ *
+ * `read isActive → toggle if live → seek → focus`, in that order, in one place.
+ *
+ * The order is not incidental. `PUT /rest/watch/replaytime/{seconds}` is
+ * **inert while `isActive` is false** — measured at the live edge, it answers
+ * 200 and does nothing — so a seek sent before the toggle silently fails. And
+ * the toggle on its own lands at lap 1, so the two are never separable: there
+ * is no honest "enter replay mode" button, only "show me this moment".
+ *
+ * **The focus is not optional garnish; without it the feature does not work.**
+ * Seeking alone rewinds the clock and leaves the camera wherever it was, so the
+ * steward arrives at the right moment pointed at the wrong car and has to focus
+ * a driver and press Rewatch a second time. The replay view's own jump has
+ * always sent both halves (`jumpToIncidentInReplay`); this shipped with only
+ * one of them. It goes last so that neither the toggle — which lands at lap 1
+ * and resets the view — nor the seek can move the camera off the car afterwards.
+ *
+ * Verified safe on 2026-08-08: with the picture seeked back 3,800 s from a live
+ * edge of ~7911, `sessionInfo.currentEventTime` kept advancing in real time and
+ * standings still reported the leader's live lap. `toggleactive` moves the
+ * rendered camera and nothing else — the sidecar's shared-memory scoring, the
+ * standings feed and therefore the live capture never see the rewind. **If that
+ * ever stops being true this feature corrupts live captures**, and the symptom
+ * would be a session appearing to split mid-race as the backwards ET jump blew
+ * through `SESSION_RESTART_ET_TOLERANCE`.
+ */
+
+export const postReplayRewatch = async (
+  event: Electron.IpcMainEvent,
+  request: { etSeconds?: number; slotId?: number },
+) => {
+  try {
+    const etSeconds = Number(request?.etSeconds);
+
+    if (!Number.isFinite(etSeconds)) {
+      throw new Error('No incident time to rewatch.');
+    }
+
+    /*
+      Optional, because a slot is the only key LMU's focus endpoint takes and
+      not every incident carries one — the layout fixtures have none, and a
+      party whose slot never reached the capture has none either. Seeking
+      without focusing is still worth doing; refusing to seek because the
+      camera cannot be aimed would be worse.
+    */
+    const slotId = Number(request?.slotId);
+    const hasSlot = Number.isFinite(slotId);
+
+    const isActive = await readIsReplayActive();
+
+    if (isActive === null) {
+      throw new Error(
+        'Le Mans Ultimate did not report whether a replay is playing.',
+      );
+    }
+
+    if (!isActive) {
+      await toggleReplayActive();
+    }
+
+    const seekToSeconds = replayJumpTargetSeconds(etSeconds);
+    const seekResponse = await fetch(
+      `${CONSTANTS.LMU_API_BASE_URL}/rest/watch/replaytime/${seekToSeconds}`,
+      { method: 'PUT' },
+    );
+
+    if (!seekResponse.ok) {
+      throw new Error(`API responded with status ${seekResponse.status}`);
+    }
+
+    /*
+      Checked rather than fired and forgotten, even though the seek has already
+      landed by this point and the picture has visibly moved. This is the one
+      call here that LMU can actually refuse — focus answers 400 on a slot
+      outside a session, where `setCamera` answers 200 to anything — so a silent
+      `await fetch` would hide the only real failure in the sequence.
+    */
+    if (hasSlot) {
+      const focusResponse = await fetch(
+        `${CONSTANTS.LMU_API_BASE_URL}/rest/watch/focus/${slotId}`,
+        { method: 'PUT' },
+      );
+
+      if (!focusResponse.ok) {
+        throw new Error(
+          `Rewound to the incident, but the camera would not move to slot ${slotId} (status ${focusResponse.status}).`,
+        );
+      }
+    }
+
+    event.reply(CONSTANTS.API.POST_REPLAY_REWATCH, {
+      status: 'success',
+      data: {
+        isReplayActive: true,
+        seekToSeconds,
+        focusedSlotId: hasSlot ? slotId : undefined,
+      },
+    });
+  } catch (error: unknown) {
+    event.reply(CONSTANTS.API.POST_REPLAY_REWATCH, {
+      status: 'error',
+      message: toErrorMessage(error),
+    });
+  }
+};
+
+/**
+ * POST
+ * Put the game's picture back on the live edge.
+ *
+ * Reads first and toggles only if a replay is actually playing, so pressing it
+ * twice — or pressing it after the steward has already used the game's own LIVE
+ * button — cannot rewind the picture into a replay. LMU resets playback speed
+ * to 1x on the way back, which is why the footer drops its speed control rather
+ * than leaving a stale one on screen.
+ */
+
+export const postReplayReturnToLive = async (event: Electron.IpcMainEvent) => {
+  try {
+    const isActive = await readIsReplayActive();
+
+    if (isActive === null) {
+      throw new Error(
+        'Le Mans Ultimate did not report whether a replay is playing.',
+      );
+    }
+
+    if (isActive) {
+      await toggleReplayActive();
+    }
+
+    event.reply(CONSTANTS.API.POST_REPLAY_RETURN_TO_LIVE, {
+      status: 'success',
+      data: { isReplayActive: false },
+    });
+  } catch (error: unknown) {
+    event.reply(CONSTANTS.API.POST_REPLAY_RETURN_TO_LIVE, {
       status: 'error',
       message: toErrorMessage(error),
     });

@@ -215,6 +215,7 @@ const resolveLogSession = (xml: string): SessionType | null => {
  */
 export const readLogCandidate = async (
   filePath: string,
+  options: { includeIncidentTimes?: boolean } = {},
 ): Promise<LogCandidate | null> => {
   try {
     const xml = await readFile(filePath, 'utf-8');
@@ -239,6 +240,16 @@ export const readLogCandidate = async (
       trackCourse: readTextHead(xml, 'TrackCourse'),
       trackEvent: readTextHead(xml, 'TrackEvent'),
       driverNames,
+      /*
+       * Off by default. Import pairs on the roster and has no use for these,
+       * and a bulk preview reads hundreds of logs — several of which may be
+       * 29 MB — so nothing here should do work nobody asked for.
+       */
+      incidentTimes: options.includeIncidentTimes
+        ? [...xml.matchAll(/<Incident\s+et="([\d.]+)"/g)].map((match) =>
+            Number(match[1]),
+          )
+        : undefined,
     };
   } catch {
     return null;
