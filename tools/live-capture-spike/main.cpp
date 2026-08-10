@@ -25,7 +25,11 @@
 #include <string>
 #include <vector>
 
-#include "SharedMemoryInterface.hpp"
+// Our own declaration of LMU's shared memory layout, not the SDK header. That
+// keeps a game install out of the build so CI can produce this binary. See the
+// file's own header comment, and run `build.bat --verify` on a machine with the
+// game installed to prove the two still agree.
+#include "lmu-shared-memory-layout.hpp"
 
 namespace {
 

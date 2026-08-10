@@ -438,6 +438,34 @@ Rust avoids the licensing constraint and ships a clean single binary, at the cos
 
 **Either way, gate on `SharedMemoryGeneric.gameVersion` and add a layout self-test** that validates expected struct sizes and offsets at startup. This is the primary defense against silent breakage on LMU updates.
 
+#### ✅ Resolved — the row this table called a C++ advantage became its blocker
+
+C++ was chosen, and the "header licensing" row turned out to be the thing that
+stopped the feature shipping: a GitHub runner has no game install, so it could
+not compile the sidecar, so the binary could never be bundled. See
+`plans/live-steward-outstanding.md` §0 for how long that went unnoticed.
+
+**The fix takes the Rust column's approach inside the C++ one.** The layout is
+now hand-declared in `tools/live-capture-spike/lmu-shared-memory-layout.hpp` and
+committed; the SDK header is no longer a build input at all. That is what
+`pyLMUSharedMemory` does in `ctypes`, and it is why the sidecar now builds on a
+clean runner.
+
+**The "can drift" cost is paid down rather than accepted.** C++ keeps one
+advantage Rust never had here — the real header can be compiled *alongside* the
+hand-port. `layout-check.cpp` does exactly that and asserts every field's offset
+matches, which is a stronger guarantee than the startup self-test this section
+proposed, and it fails at compile time rather than in front of a steward. It
+needs a game install, so it runs locally via `build.bat --verify`, never in CI.
+
+**Porting by hand found a trap worth recording.** The `V01` structs are
+`pack(4)`, but the `SharedMemory*` wrappers around them are **not** —
+`SharedMemoryInterface.hpp` includes `InternalsPlugin.hpp`, whose `pack(pop)` has
+already run by the time the wrappers are declared, so they take default 8-byte
+alignment. Packing the whole thing at 4 leaves every struct size plausible and
+silently moves `scoringStreamSize` by 4 bytes, dragging the vehicle array with
+it. Sizes alone would not have caught it; the field-by-field cross-check did.
+
 ---
 
 ## Performance Notes
@@ -597,18 +625,32 @@ Notes that affect the design:
 - **Contact events name the object struck**: `another vehicle <Name>(<ID>)`, `Immovable`, `Cone`. Only the first is a two-driver incident; a parser must not assume every `<Incident>` has two parties.
 - **Not every incident is stewardable.** Hitting a cone or a wall generates an `<Incident>` identical in shape to car-to-car contact. The triage queue needs to classify and de-prioritise solo events, or a steward drowns in their own off-track excursions.
 
-**Measured layout baseline** (item 7), from compiling against the shipped headers on 2026-07-28:
+**Measured layout baseline** (item 7), from compiling against the shipped headers. Extended 2026-08-10 when the layout was vendored — every row below was re-measured against the SDK header on that date, and these are the numbers the `static_assert`s in `lmu-shared-memory-layout.hpp` pin:
 
 | Symbol | Bytes |
 | --- | ---: |
 | `sizeof(SharedMemoryObjectOut)` | 324,824 |
+| `sizeof(SharedMemoryGeneric)` | 332 |
+| `sizeof(SharedMemoryPathData)` | 1,300 |
+| `sizeof(SharedMemoryScoringData)` | 126,832 |
+| `sizeof(SharedMemoryTelemetryData)` | 196,356 |
 | `sizeof(ScoringInfoV01)` | 548 |
 | `sizeof(VehicleScoringInfoV01)` | 584 |
 | `sizeof(TelemInfoV01)` | 1,888 |
+| `sizeof(TelemWheelV01)` | 260 |
+| `sizeof(ApplicationStateV01)` | 260 |
+| `offsetof(…, paths)` | 332 |
 | `offsetof(…, scoring)` | 1,632 |
 | `offsetof(…, telemetry)` | 128,464 |
+| `offsetof(SharedMemoryScoringData, scoringStreamSize)` | 552 |
+| `offsetof(SharedMemoryScoringData, vehScoringInfo)` | 560 |
+| `offsetof(SharedMemoryScoringData, scoringStream)` | 61,296 |
 
-These reconcile exactly with the declared arrays (104 × 1,888 + 8 = 196,360 for the telemetry block), which confirms `#pragma pack(push, 4)` is being applied as expected. **Re-run the spike after any LMU update and diff against this table** — a change means the layout drifted and any hand-ported struct definition needs revisiting.
+These reconcile with the declared arrays: the telemetry block is 4 + 104 × 1,888 = 196,356, and the scoring block is 560 + 104 × 584 + 65,536 = 126,832.
+
+**Two packing facts are visible in this table, and both matter.** `#pragma pack(push, 4)` is being applied to the `V01` structs as expected. But `scoringStreamSize` sitting at **552 rather than 548** shows the `SharedMemory*` wrappers are *not* 4-packed — that header's pack has been popped before they are declared, so a `size_t` aligns to 8. `sizeof(SharedMemoryObjectOut)` being 324,824 rather than 324,820 is the same fact showing up as tail padding.
+
+**After any LMU update, run `tools\live-capture-spike\build.bat --verify`** rather than diffing this table by eye. It compiles the vendored header against the installed SDK header and names the field that moved. Update this table when it does.
 
 Note the total is ~317 KB, not the ~1 MB estimated earlier in this document. Copying the whole object at 50Hz is roughly 16 MB/s, which is unremarkable — and `CopySharedMemoryObj` copies less than that, since it skips sections whose event flag did not fire and only walks active vehicles. **The earlier concern about telemetry copy cost was overstated.** Skipping the telemetry buffer remains reasonable for Tier 1 because the data isn't needed, not because it is expensive.
 
