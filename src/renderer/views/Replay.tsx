@@ -129,8 +129,13 @@ export const ReplayView: React.FC = () => {
     [replayForView],
   );
 
-  const onBackToReplays = () => {
+  const onCloseAndBackToReplays = () => {
     sendMessage(CONSTANTS.API.POST_CLOSE_REPLAY);
+    navigate('/replays');
+  };
+
+  const onBackToReplays = () => {
+    // sendMessage(CONSTANTS.API.POST_CLOSE_REPLAY);
     navigate('/replays');
   };
 
@@ -452,6 +457,7 @@ export const ReplayView: React.FC = () => {
               }
               onExportSessionData={onExportSessionData}
               onCopySessionMarkdown={onCopySessionMarkdown}
+              onCloseAndBackToReplays={onCloseAndBackToReplays}
               onExport={() => {
                 if (!currentReplay?.logDataFileName) {
                   return;

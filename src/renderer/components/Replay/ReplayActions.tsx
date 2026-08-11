@@ -23,6 +23,7 @@ interface ReplayActionsProps {
   sessionDataDisabledReason: string | null;
   onExportSessionData: (format: SessionExportFormat) => void;
   onCopySessionMarkdown: () => void;
+  onCloseAndBackToReplays: () => void;
 }
 
 const formatItems: { format: SessionExportFormat; label: string }[] = [
@@ -39,6 +40,7 @@ export const ReplayActions: React.FC<ReplayActionsProps> = ({
   sessionDataDisabledReason,
   onExportSessionData,
   onCopySessionMarkdown,
+  onCloseAndBackToReplays,
 }) => {
   const [menuAnchor, setMenuAnchor] = useState<HTMLElement | null>(null);
 
@@ -135,6 +137,17 @@ export const ReplayActions: React.FC<ReplayActionsProps> = ({
           </span>
         </Tooltip>
       ) : null}
+
+      <Button
+        onClick={onCloseAndBackToReplays}
+        variant="contained"
+        sx={{
+          backgroundColor: 'error.alt',
+          ':hover': { backgroundColor: 'error.main' },
+        }}
+      >
+        Close Replay
+      </Button>
     </Box>
   );
 };
