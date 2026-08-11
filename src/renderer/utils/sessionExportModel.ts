@@ -5,6 +5,7 @@ import {
   ReplayIncidentType,
 } from '../components/Replay/replayTimelineTypes';
 import { ReplaySessionLogDataLike } from './replayMetadata';
+import { isStandingCall } from './stewardDecisionState';
 
 /**
  * The authoritative session record, normalized for export.
@@ -272,12 +273,22 @@ export const buildSessionExport = ({
   const sessionType = replay?.metadata?.session ?? '';
 
   const exportDecisions: SessionExportDecision[] = decisions
-    .filter((decision) =>
-      decisionBelongsToSession(decision, {
-        replayHash: replay?.hash,
-        track,
-        sessionType,
-      }),
+    .filter(
+      (decision) =>
+        decisionBelongsToSession(decision, {
+          replayHash: replay?.hash,
+          track,
+          sessionType,
+        }) &&
+        /*
+          Withdrawn calls are kept in the store and left out of the report.
+
+          The record exists so a call can be shown to have been made and then
+          taken back, which is an audit question. This file answers a different
+          one — what was called in this session — and a league publishing it
+          would be publishing a penalty that does not stand.
+        */
+        isStandingCall(decision),
     )
     .sort((a, b) => a.decidedAt - b.decidedAt)
     .map((decision) => ({

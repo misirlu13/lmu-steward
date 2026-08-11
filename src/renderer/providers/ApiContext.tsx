@@ -306,6 +306,19 @@ interface ApiContextType {
   loadingState: LoadingState;
   markReplayCacheResetRequired: () => void;
   requestReplays: (options?: GetReplaysRequest) => void;
+  /**
+   * The same sync, without the full-screen splash over it.
+   *
+   * For passes nobody asked for — the one that runs when a session ends, to
+   * pick up the replay the game has just written. A steward watching the
+   * chequered flag must not have the window taken over by a progress screen
+   * for work they did not start.
+   *
+   * The reply is handled identically, so the replay list, the cache and the
+   * match pass behind `GET_LIVE_SESSIONS` all end up in the same state a
+   * manual sync would leave them in.
+   */
+  syncReplaysInBackground: () => void;
   archiveReplays: (hashes: string[], note?: string) => void;
   restoreReplays: (hashes: string[]) => void;
   setArchiveNote: (hashes: string[], note: string) => void;
@@ -374,6 +387,7 @@ const ApiContext = createContext<ApiContextType>({
   loadingState: { loading: false, percentage: -1 },
   markReplayCacheResetRequired: () => {},
   requestReplays: () => {},
+  syncReplaysInBackground: () => {},
   archiveReplays: () => {},
   requestImportedReplays: () => {},
   selectImportSource: () => {},
@@ -612,6 +626,22 @@ export const ApiProvider: React.FC<{ children: React.ReactNode }> = ({
     },
     [isReplayCacheResetRequired],
   );
+
+  /*
+    No counter, so no splash. The reply still decrements — with a `Math.max(0)`
+    floor that has always been there — so a background pass landing beside a
+    manual one cannot drive the count negative and strand the splash open.
+
+    The last request's scope is reused rather than widened. A steward filtered
+    to multiplayer must not find their list quietly showing race weekends
+    because a session ended.
+  */
+  const syncReplaysInBackground = useCallback(() => {
+    sendMessage(CONSTANTS.API.GET_REPLAYS, {
+      ...lastReplayRequestRef.current,
+      forceReplayCacheReset: true,
+    });
+  }, []);
 
   /**
    * Archive, restore, and note changes all reply with the current replay list
@@ -1327,8 +1357,37 @@ export const ApiProvider: React.FC<{ children: React.ReactNode }> = ({
       [CONSTANTS.API.GET_SESSION_INFO]: createHandler(
         CONSTANTS.API.GET_SESSION_INFO,
       ),
+      /*
+        Which replay the game is already showing when this app starts.
+
+        The replay keeps playing in LMU whatever this app does, so a steward who
+        restarts mid-review would otherwise be left with a loaded replay and no
+        route back to it — exactly what the return banner exists to prevent.
+        Main does the identifying, including the check that the game is still
+        showing the session we think it is; a null here means "nothing to offer"
+        rather than "no replay", and both are treated the same way.
+      */
+      [CONSTANTS.API.GET_ACTIVE_REPLAY]: createHandler(
+        CONSTANTS.API.GET_ACTIVE_REPLAY,
+        (data: unknown) => {
+          const payload = data as { status?: string; data?: LMUReplay | null };
+          if (payload?.status === 'success' && payload.data) {
+            setCurrentReplay(payload.data);
+          }
+        },
+      ),
+      /*
+        Closing the replay forgets which one it was.
+
+        `currentReplay` is "the replay the game was told to watch", and it used
+        to survive the game being told to stop watching it — harmless while
+        nothing read it across views, and wrong now that the return banner does.
+        A stale value there is a bar offering to take the steward back to a
+        replay that is no longer loaded.
+      */
       [CONSTANTS.API.POST_CLOSE_REPLAY]: createHandler(
         CONSTANTS.API.POST_CLOSE_REPLAY,
+        () => setCurrentReplay(null),
       ),
     };
 
@@ -1361,6 +1420,18 @@ export const ApiProvider: React.FC<{ children: React.ReactNode }> = ({
     const checkConnection = async () => {
       sendMessage(CONSTANTS.API.GET_API_STATUS);
       sendMessage(CONSTANTS.API.GET_LIVE_SESSION_STATUS);
+      /*
+        Asked here rather than only by the two views that used to own it.
+
+        `GET_IS_REPLAY_ACTIVE` was sent from the live view and the replay view
+        alone, so anywhere else — the driver dashboard the app opens on, the
+        captured list, settings — `isReplayActive` sat at whatever it last was,
+        which after a fresh start is `null`. The return banner is app-wide and
+        gates on this being `true`, so it could never appear on the screens it
+        exists for: the reading it needed was only ever taken on the screens
+        that do not show it.
+      */
+      sendMessage(CONSTANTS.API.GET_IS_REPLAY_ACTIVE);
     };
     checkConnection();
     sendMessage(CONSTANTS.API.GET_USER_SETTINGS);
@@ -1371,6 +1442,26 @@ export const ApiProvider: React.FC<{ children: React.ReactNode }> = ({
       clearInterval(_id);
     };
   }, [apiStatusInterval]);
+
+  /*
+    Finds out *which* replay whenever the game says one is up and this app does
+    not know.
+
+    Asking once at startup was not enough. The app is routinely running before
+    Le Mans Ultimate answers anything — and on a `npm start` it is up within
+    seconds, well before the game — so the single question at t=0 got "no
+    replay" and nothing ever asked again. Keyed on the transition instead, so it
+    resolves itself the moment the game becomes reachable, however long that
+    takes.
+
+    Guarded on `currentReplay` being absent so it asks once per gap rather than
+    on every poll tick: once main has answered, the answer is held.
+  */
+  useEffect(() => {
+    if (isReplayActive === true && !currentReplay) {
+      sendMessage(CONSTANTS.API.GET_ACTIVE_REPLAY);
+    }
+  }, [currentReplay, isReplayActive]);
 
   const contextValue: ApiContextType = useMemo(
     () => ({
@@ -1399,6 +1490,7 @@ export const ApiProvider: React.FC<{ children: React.ReactNode }> = ({
       loadingState,
       markReplayCacheResetRequired,
       requestReplays,
+      syncReplaysInBackground,
       archiveReplays,
       restoreReplays,
       setArchiveNote,
@@ -1454,6 +1546,7 @@ export const ApiProvider: React.FC<{ children: React.ReactNode }> = ({
       loadingState,
       markReplayCacheResetRequired,
       requestReplays,
+      syncReplaysInBackground,
       archiveReplays,
       restoreReplays,
       setArchiveNote,

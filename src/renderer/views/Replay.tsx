@@ -211,6 +211,17 @@ export const ReplayView: React.FC = () => {
     });
   };
 
+  /*
+    Opens the dossier and nothing else.
+
+    Jumping stays its own act on the Jump button: seeking takes over Le Mans
+    Ultimate and costs seconds, and a steward working down an incident list
+    wants to read several before choosing which is worth watching.
+  */
+  const onSelectIncident = (event: ReplayIncidentEvent) => {
+    setSelectedIncidentId(event.id);
+  };
+
   const onJumpToIncident = (event: ReplayIncidentEvent) => {
     setSelectedIncidentId(event.id);
     jumpToIncidentInReplay(event);
@@ -496,6 +507,7 @@ export const ReplayView: React.FC = () => {
           events={timelineEvents}
           availableClasses={availableClasses}
           selectedIncidentId={selectedIncidentId}
+          onSelectIncident={onSelectIncident}
           onJumpToIncident={onJumpToIncident}
           hideJumpButtons={isQuickViewModeActiveForReplay}
           dataCoverageNote={driverCoverageNote}

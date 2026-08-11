@@ -1248,6 +1248,20 @@ export const buildCareerAggregate = (
       frontRows: races.filter(
         (record) => record.classGridPos !== null && record.classGridPos <= 2,
       ).length,
+      /*
+        `<=` rather than `===` because the class best *is* the driver's own lap
+        when they set it, and the two numbers travel through the log as separate
+        scalars — a driver who owns the fastest lap must not lose it to the last
+        bit of a float. Both sides guarded: a race where nobody set a timed lap
+        leaves either as null, and null is not a fastest lap.
+      */
+      classFastestLaps: races.filter(
+        (record) =>
+          record.bestLapSec !== null &&
+          record.bestLapSec > 0 &&
+          record.classBestLapSec !== null &&
+          record.bestLapSec <= record.classBestLapSec,
+      ).length,
       winsMultiplayer: wins.filter(isMultiplayer).length,
       winsRaceWeekend: wins.filter((record) => !isMultiplayer(record)).length,
       podiumsMultiplayer: podiums.filter(isMultiplayer).length,

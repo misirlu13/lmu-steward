@@ -9,7 +9,8 @@ export type CameraMode = 'driving' | 'onboard' | 'trackside';
 
 type CameraCommand = {
   cameraGroup: string;
-  direction: 0 | 1;
+  /** -1 back, 1 forward. Not 0/1 — see the note on `CAMERA` in constants. */
+  direction: -1 | 1;
 };
 
 export const cameraModeConfig: Record<

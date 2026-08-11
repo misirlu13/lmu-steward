@@ -8,6 +8,7 @@ import {
   LMUReplay,
   SessionType,
 } from '@types';
+import log from 'electron-log';
 import { readFile } from 'fs/promises';
 import { resolve as resolvePath, join, dirname } from 'path';
 import { parseStringPromise } from 'xml2js';
@@ -34,6 +35,7 @@ import {
   scanCareer,
 } from './career';
 import { readVcrTrailer } from './vcr-metadata';
+import { getTrackAliases, tracksLikelyMatch } from './track-matching';
 
 const FIRST_RUN_GET_REPLAYS_DELAY_MS = 3000;
 const DEFAULT_REPLAY_LOG_MATCH_THRESHOLD_MS = 120_000;
@@ -1069,6 +1071,304 @@ export const postArchiveNote = async (
 };
 
 /**
+ * What the app last told Le Mans Ultimate to play.
+ *
+ * Persisted because **LMU cannot be asked which replay is loaded.**
+ * `/rest/replay/isActive` answers only true or false, and
+ * `/rest/watch/replays` lists every file on disk with nothing marking one as
+ * current — verified against a running replay on 2026-08-10. So the game is the
+ * authority on *whether* a replay is up and this record is the only answer to
+ * *which*, which is why nothing here is trusted without the check in
+ * `getActiveReplay`.
+ */
+const ACTIVE_REPLAY_KEY = 'activeReplay';
+
+interface ActiveReplayRecord {
+  hash: string;
+  identityKey: string;
+  /** All three carried for the check, since the hash itself cannot be verified. */
+  sceneDesc: string;
+  replayName: string;
+  sessionType: string;
+  loadedAt: number;
+}
+
+/*
+  The hash is passed in rather than read off the replay. It is the argument that
+  identified the replay in the first place, and a cache entry that predates the
+  field being stored carries none — which would file the record under an
+  undefined hash and quietly cost the banner.
+*/
+const rememberActiveReplay = (hash: string, replay: LMUReplay): void => {
+  try {
+    getReplayStore().set(ACTIVE_REPLAY_KEY, {
+      hash,
+      identityKey: buildReplayCacheIdentityKey(replay),
+      sceneDesc: replay.metadata?.sceneDesc ?? '',
+      // Carried because `getTrackAliases` falls back to it for a scene missing
+      // from TRACK_META_DATA, which new content is until the table catches up.
+      replayName: replay.replayName ?? '',
+      sessionType: String(replay.metadata?.session ?? ''),
+      loadedAt: Date.now(),
+    } satisfies ActiveReplayRecord);
+  } catch (error) {
+    // Best effort. Losing this costs the return banner after a restart, which
+    // is not worth failing a replay load over.
+    log.warn('replay: could not record the active replay', error);
+  }
+};
+
+const forgetActiveReplay = (): void => {
+  try {
+    getReplayStore().set(ACTIVE_REPLAY_KEY, null);
+  } catch (error) {
+    log.warn('replay: could not clear the active replay', error);
+  }
+};
+
+/**
+ * Whether the session the game is showing is the one we think we loaded.
+ *
+ * The remembered hash survives a restart of this app, but not necessarily a
+ * restart of the *game* — a steward can quit LMU, reopen it and load something
+ * else entirely, and the record would still name the old file. So the record is
+ * checked against what the game says it is playing before it is believed.
+ *
+ * Track and session type only. Two replays of the same practice session at the
+ * same circuit are genuinely indistinguishable through this API, and the
+ * remembered hash is a better answer for that case than nothing — the check is
+ * here to catch a different *session*, which is what actually goes wrong.
+ */
+export const activeReplayMatchesSession = (
+  record: Pick<ActiveReplayRecord, 'sceneDesc' | 'replayName' | 'sessionType'>,
+  info: { trackName?: string; session?: string },
+): boolean => {
+  /*
+    The two sides name the same circuit differently — `sessionInfo` answered
+    "Daytona International Speedway Road Course" against a replay whose metadata
+    says `DAYTONARC`, measured on 2026-08-10 — so this goes through the alias
+    table rather than comparing strings.
+  */
+  const trackMatches = tracksLikelyMatch(
+    getTrackAliases(record.sceneDesc, record.replayName),
+    String(info?.trackName ?? ''),
+  );
+
+  /*
+    `PRACTICE1` against `PRACTICE`, `RACE1` against `RACE`. The game numbers the
+    session it is showing and the replay's metadata does not, so this compares
+    the stem rather than the whole word.
+  */
+  const gameSession = String(info?.session ?? '').toUpperCase();
+  const storedSession = String(record.sessionType ?? '').toUpperCase();
+  const sessionMatches =
+    Boolean(gameSession) &&
+    Boolean(storedSession) &&
+    (gameSession.startsWith(storedSession) ||
+      storedSession.startsWith(gameSession));
+
+  return trackMatches && sessionMatches;
+};
+
+const activeReplayMatchesGame = async (
+  record: ActiveReplayRecord,
+): Promise<boolean> => {
+  const response = await fetch(
+    `${CONSTANTS.LMU_API_BASE_URL}/rest/watch/sessionInfo`,
+  );
+
+  if (!response.ok) {
+    return false;
+  }
+
+  return activeReplayMatchesSession(
+    record,
+    (await response.json()) as { trackName?: string; session?: string },
+  );
+};
+
+/**
+ * A replay with its result log parsed in full, ready for the replay view.
+ *
+ * The cached entry is deliberately thin — it carries where the log is, not what
+ * is in it, and `logDataLoaded: false` says so. Everything the replay view draws
+ * from the log rather than from the game comes out of `logData`: the master
+ * incident timeline, the heatmaps, the driver list, the standings table. Handing
+ * over the cache entry alone produces a view that loads, connects, and shows
+ * nothing.
+ *
+ * Shared so the two ways into that view cannot disagree. Loading a replay and
+ * rejoining one already playing have to arrive at the same object, and the
+ * second used to arrive at a much emptier one.
+ */
+const hydrateReplayWithLogData = async (
+  hash: string,
+  cachedReplay: LMUReplay,
+): Promise<LMUReplay> => {
+  /*
+    An imported replay already knows which log it belongs to — it was chosen and
+    recorded at import time. Re-deriving it here would put it back through
+    `findBestLogFile` against the whole results directory, which is exactly the
+    mismatch importing exists to avoid.
+  */
+  const importedRecord = readImportedReplays()[hash];
+  if (importedRecord) {
+    const importedLog = await parseLogXmlFull(importedRecord.logPath);
+    const importedLogData = importedLog?.rFactorXML?.RaceResults ?? null;
+
+    return {
+      ...cachedReplay,
+      logData: importedLogData,
+      logDataDirectory: importedRecord.logPath.slice(
+        0,
+        importedRecord.logPath.length - importedRecord.logFileName.length - 1,
+      ),
+      logDataFileName: importedRecord.logFileName,
+      multiplayer: getReplayMultiplayerFromLogData(importedLogData),
+      logDataLoaded: Boolean(importedLogData),
+    } as LMUReplay;
+  }
+
+  const logIndex = await buildReplayLogIndex(cachedReplay);
+  const fullLogMetaData = await getReplayLogData(cachedReplay, {
+    fullData: true,
+    index: logIndex,
+  });
+
+  return {
+    ...cachedReplay,
+    logData: fullLogMetaData?.logData ?? cachedReplay.logData,
+    logDataDirectory:
+      fullLogMetaData?.logDataDirectory || cachedReplay.logDataDirectory,
+    logDataFileName:
+      fullLogMetaData?.logDataFileName || cachedReplay.logDataFileName,
+    multiplayer: fullLogMetaData?.logData
+      ? getReplayMultiplayerFromLogData(fullLogMetaData.logData)
+      : typeof cachedReplay.multiplayer === 'boolean'
+        ? cachedReplay.multiplayer
+        : getReplayMultiplayerFromLogData(cachedReplay.logData),
+    logDataLoaded: Boolean(fullLogMetaData?.logData),
+  };
+};
+
+/**
+ * The replay the game is showing, or null.
+ *
+ * Answers the question the return banner needs after this app restarts: the
+ * replay keeps playing in LMU whatever this app does, and a steward who
+ * restarts mid-review would otherwise be left with a loaded replay and no route
+ * back to it — the exact situation the banner exists for.
+ *
+ * **A pure read.** It used to clear the remembered replay whenever `isActive`
+ * came back false, which destroyed the record in every ordinary case: the game
+ * not started yet, the game mid-load, the app running before LMU is reachable.
+ * One negative answer wiped the only memory of which replay was loaded and no
+ * later call could recover it — the banner never came back, whatever the game
+ * went on to do. The record is only ever cleared by closing the replay, which
+ * is a deliberate act, or overwritten by loading another.
+ */
+export const getActiveReplay = async (event: Electron.IpcMainEvent) => {
+  try {
+    const activeResponse = await fetch(
+      `${CONSTANTS.LMU_API_BASE_URL}/rest/replay/isActive`,
+    );
+    const isActive =
+      activeResponse.ok && (await activeResponse.json()) === true;
+
+    const replayStore = getReplayStore();
+    const record = replayStore.get(
+      ACTIVE_REPLAY_KEY,
+    ) as ActiveReplayRecord | null;
+
+    if (!isActive) {
+      log.info('active-replay: the game reports no replay is playing');
+
+      event.reply(CONSTANTS.API.GET_ACTIVE_REPLAY, {
+        status: 'success',
+        data: null,
+      });
+      return;
+    }
+
+    const cached =
+      (replayStore.get('replays') as Record<string, ReplayCacheEntry>) || {};
+    const replay = record
+      ? ((cached[record.hash] as LMUReplay | undefined) ??
+        (Object.values(cached).find(
+          (entry) => buildReplayCacheIdentityKey(entry) === record.identityKey,
+        ) as LMUReplay | undefined))
+      : undefined;
+
+    const matchesGame =
+      record !== null &&
+      record !== undefined &&
+      replay !== undefined &&
+      (await activeReplayMatchesGame(record));
+
+    /*
+      Logged because every way this can come back empty looks identical on
+      screen — no banner — and they want different fixes. "no record" means the
+      replay was loaded by something other than this app; "not in the cache"
+      means a sync is due; "does not match" means the game has moved on.
+    */
+    log.info(
+      `active-replay: playing, ${
+        !record
+          ? 'but nothing was recorded as loaded'
+          : !replay
+            ? `but ${record.hash.slice(0, 12)} is not in the replay cache`
+            : matchesGame
+              ? `resolved to ${record.replayName}`
+              : `but the game is not showing ${record.replayName}`
+      }`,
+    );
+
+    /*
+      Parsed in full before it goes back, exactly as loading a replay does.
+
+      The cache entry says where the log is, not what is in it. Everything the
+      replay view draws from the log rather than from the game — the master
+      incident timeline, the heatmaps, the driver list — lives in `logData`, so
+      returning the bare entry produced a view that loaded and then showed
+      nothing at all.
+    */
+    /*
+      Contained, so a log that cannot be read costs the banner rather than
+      erroring the whole call. Reported as "no replay" on purpose: the view is
+      built out of `logData`, so a banner leading to a replay whose log could
+      not be parsed would land the steward on an empty screen — worse than not
+      offering the way back.
+    */
+    let hydrated: LMUReplay | null = null;
+    if (matchesGame) {
+      try {
+        hydrated = await hydrateReplayWithLogData(record.hash, replay);
+      } catch (hydrationError) {
+        log.error(
+          `active-replay: could not read the result log for ${record.replayName}`,
+          hydrationError,
+        );
+      }
+    }
+
+    event.reply(CONSTANTS.API.GET_ACTIVE_REPLAY, {
+      status: 'success',
+      data: hydrated,
+    });
+  } catch (error: unknown) {
+    /*
+      A replay this cannot identify is reported as none. The banner offers to
+      take a steward back to a specific replay, and one that guessed would send
+      them to the wrong file — worse than not offering.
+    */
+    event.reply(CONSTANTS.API.GET_ACTIVE_REPLAY, {
+      status: 'error',
+      message: toErrorMessage(error),
+    });
+  }
+};
+
+/**
  * GET
  * Gets an existing replay by hash
  * /rest/watch/play/<hash>
@@ -1159,24 +1459,9 @@ export const postWatchReplay = async (
       cachedReplay = storedReplay[hash] as LMUReplay;
     }
 
-    const fullLogMetaData = await getReplayLogData(replay, {
-      fullData: true,
-      index: logIndex,
-    });
-    const responseReplay = {
-      ...cachedReplay,
-      logData: fullLogMetaData?.logData ?? cachedReplay.logData,
-      logDataDirectory:
-        fullLogMetaData?.logDataDirectory || cachedReplay.logDataDirectory,
-      logDataFileName:
-        fullLogMetaData?.logDataFileName || cachedReplay.logDataFileName,
-      multiplayer: fullLogMetaData?.logData
-        ? getReplayMultiplayerFromLogData(fullLogMetaData.logData)
-        : typeof cachedReplay.multiplayer === 'boolean'
-          ? cachedReplay.multiplayer
-          : getReplayMultiplayerFromLogData(cachedReplay.logData),
-      logDataLoaded: Boolean(fullLogMetaData?.logData),
-    };
+    const responseReplay = await hydrateReplayWithLogData(hash, cachedReplay);
+
+    rememberActiveReplay(hash, responseReplay);
 
     event.reply(CONSTANTS.API.POST_WATCH_REPLAY, {
       status: 'success',
@@ -1606,6 +1891,8 @@ export const postCloseReplay = async (event: Electron.IpcMainEvent) => {
     if (!response.ok) {
       throw new Error(`API responded with status ${response.status}`);
     }
+
+    forgetActiveReplay();
 
     event.reply(CONSTANTS.API.POST_CLOSE_REPLAY, {
       status: 'success',

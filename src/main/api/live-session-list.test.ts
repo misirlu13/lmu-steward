@@ -209,16 +209,26 @@ describe('link state', () => {
   });
 
   /*
-    Unlinking has to dismiss as well, or the next match pass immediately
-    re-proposes the replay the user has just rejected.
+    Unlinking is not rejecting. It undoes the pairing — usually on the way to
+    choosing a different replay — so the capture goes back to being matchable,
+    and the "Replay found" badge it carried before the link comes back with it.
+    Dismissing here made unlinking a one-way door out of ever being matched
+    again.
   */
-  it('dismisses further suggestions when a link is removed', () => {
-    store.sessions = { a: session('a', { link }) };
+  it('leaves the session matchable again when a link is removed', () => {
+    store.sessions = {
+      a: session('a', {
+        link,
+        matchDismissedAt: 123,
+      } as Partial<LiveSessionRecord>),
+    };
 
     unlinkLiveSession('a');
 
+    // The two fields `shouldMatchSession` reads. Both clear is what puts the
+    // capture back in the next match pass.
     expect(written().link).toBeUndefined();
-    expect(written().matchDismissedAt).toEqual(expect.any(Number));
+    expect(written().matchDismissedAt).toBeUndefined();
   });
 
   it('records a dismissal without touching what was captured', () => {

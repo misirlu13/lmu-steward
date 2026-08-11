@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Box, Paper, Stack, Typography } from '@mui/material';
+import { Box, Button, Paper, Stack, Tooltip, Typography } from '@mui/material';
+import SyncIcon from '@mui/icons-material/Sync';
 import { CONSTANTS } from '@constants';
 import { LiveSessionMatchResult, LiveSessionSummary } from '@types';
 import { ViewHeader } from '../components/Common/ViewHeader';
@@ -24,7 +25,8 @@ import { useViewReplayDisabledReason } from '../hooks/useReplayGating';
  */
 export const CapturedSessionsView = () => {
   const navigate = useNavigate();
-  const { subscribeToApiChannel, liveCaptureEnabled } = useApi();
+  const { subscribeToApiChannel, liveCaptureEnabled, syncReplaysInBackground } =
+    useApi();
   const viewReplayDisabledReason = useViewReplayDisabledReason();
   const [sessions, setSessions] = useState<LiveSessionSummary[]>([]);
   const [pendingDelete, setPendingDelete] = useState<LiveSessionSummary | null>(
@@ -37,6 +39,12 @@ export const CapturedSessionsView = () => {
   const [selectedHash, setSelectedHash] = useState('');
   const [deletingKey, setDeletingKey] = useState<string | null>(null);
   const [error, setError] = useState('');
+  /*
+    Cleared by the list arriving rather than by a timer. The sync and the list
+    read are two messages, and the list is the second — so the button stays busy
+    until the answer it was pressed for is on screen.
+  */
+  const [isSyncing, setSyncing] = useState(false);
 
   const applyList = useCallback((payload: unknown) => {
     const response = payload as {
@@ -51,6 +59,7 @@ export const CapturedSessionsView = () => {
 
     setError(response?.status === 'error' ? (response.message ?? '') : '');
     setDeletingKey(null);
+    setSyncing(false);
   }, []);
 
   const applyMatches = useCallback((payload: unknown) => {
@@ -168,6 +177,23 @@ export const CapturedSessionsView = () => {
     });
   };
 
+  /*
+    Rescans the replay directory, then re-reads the list — which is what runs
+    the match pass, and what makes a replay written since the last sync a
+    candidate for the captures still waiting for one.
+
+    Worth its own control despite the automatic pass at session end. That pass
+    waits a fixed half-minute for the game to finish writing and can still be
+    early on a long race, the app may not have been running when the session
+    ended, and a replay imported from another machine arrives on no schedule at
+    all. This is the answer to "it should have found it by now".
+  */
+  const onSyncReplays = () => {
+    setSyncing(true);
+    syncReplaysInBackground();
+    sendMessage(CONSTANTS.API.GET_LIVE_SESSIONS);
+  };
+
   const onDismiss = () => {
     if (!linking) {
       return;
@@ -185,6 +211,21 @@ export const CapturedSessionsView = () => {
       <ViewHeader
         title="Captured Sessions"
         subtitle="Sessions recorded by live capture, with the evidence a replay cannot rebuild."
+        actions={
+          <Tooltip title="Rescan the replay folder and look again for replays matching these captures. Use this when a session has ended and its replay has not been found yet.">
+            <span>
+              <Button
+                variant="outlined"
+                size="small"
+                startIcon={<SyncIcon />}
+                disabled={isSyncing}
+                onClick={onSyncReplays}
+              >
+                {isSyncing ? 'Syncing…' : 'Sync Replays'}
+              </Button>
+            </span>
+          </Tooltip>
+        }
       />
 
       {error ? (

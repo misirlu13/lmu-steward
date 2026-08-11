@@ -248,6 +248,32 @@ describe('decisions in the export', () => {
     expect(data.decisions[0].driverName).toBe('Antares Au');
   });
 
+  /*
+    The record is kept so a call can be shown to have been made and taken back,
+    which is an audit question. This file answers a different one — what was
+    called in this session — and a league publishing it would otherwise be
+    publishing a penalty that does not stand.
+  */
+  it('should exclude a call that was withdrawn', () => {
+    const data = build({
+      decisions: [decision({ state: 'WITHDRAWN', outcome: undefined })],
+    });
+
+    expect(data.decisions).toEqual([]);
+  });
+
+  it('should keep the calls that still stand beside a withdrawn one', () => {
+    const data = build({
+      decisions: [
+        decision({ state: 'WITHDRAWN', outcome: undefined }),
+        decision({ id: 'still-stands', outcome: 'penalty-10s' }),
+      ],
+    });
+
+    expect(data.decisions).toHaveLength(1);
+    expect(data.decisions[0].outcome).toBe('penalty-10s');
+  });
+
   it('should exclude decisions belonging to another session', () => {
     const data = build({
       decisions: [

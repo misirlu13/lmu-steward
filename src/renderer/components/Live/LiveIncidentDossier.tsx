@@ -356,6 +356,22 @@ interface LiveIncidentDossierProps {
    */
   reasoning?: string;
   onChangeReasoning?: (next: string) => void;
+  /**
+   * Why this incident has no captured evidence, or absent when it has some.
+   *
+   * Set by the replay dossier for an incident the result log knows about and
+   * live capture never saw — a session run before capture was switched on, or
+   * one where the sidecar was not attached. Almost every incident in the
+   * library is one of these.
+   *
+   * The panel is kept and the evidence half replaced, rather than the whole
+   * dossier being withheld: the drivers, the tariff and the flag are all still
+   * meaningful without a trace, and a steward looking at footage of a contact
+   * on screen is in a better position to call it than the telemetry ever was.
+   * A row of "—" where the measurements go would say the same thing far less
+   * clearly.
+   */
+  evidenceUnavailable?: string;
 }
 
 export const LiveIncidentDossier: React.FC<LiveIncidentDossierProps> = ({
@@ -370,6 +386,7 @@ export const LiveIncidentDossier: React.FC<LiveIncidentDossierProps> = ({
   priorCallsByDriver,
   reasoning,
   onChangeReasoning,
+  evidenceUnavailable,
 }) => {
   /*
     The tariff, taken resolved off the API context rather than held here.
@@ -609,113 +626,155 @@ export const LiveIncidentDossier: React.FC<LiveIncidentDossierProps> = ({
           })}
         </Stack>
 
-        <Box
-          sx={{
-            px: 1.5,
-            py: 1,
-            mb: 2,
-            borderRadius: 1,
-            backgroundColor: 'background.default',
-            border: '1px solid',
-            borderColor: 'divider',
-          }}
-        >
-          <Typography
-            variant="caption"
-            color="text.secondary"
+        {/*
+          Everything from here to the prior calls is what live capture recorded,
+          so with nothing captured there is nothing for any of it to say. One
+          sentence replaces the lot — a raw-stream box holding the log's own
+          text, three stat tiles reading "—" and five evidence rows doing the
+          same is a panel that looks broken rather than empty.
+        */}
+        {evidenceUnavailable ? (
+          <Box
             sx={{
-              display: 'block',
-              textTransform: 'uppercase',
-              letterSpacing: 0.8,
+              px: 1.5,
+              py: 2,
+              mb: 2,
+              borderRadius: 1,
+              backgroundColor: 'background.default',
+              border: '1px dashed',
+              borderColor: 'divider',
             }}
           >
-            Raw stream
-          </Typography>
-          <Typography variant="body2" sx={{ fontFamily: 'monospace' }}>
-            {incident.rawText}
-          </Typography>
-        </Box>
-
-        <Stack direction="row" sx={{ mb: 2 }}>
-          <StatDisplay label="Closing Speed">
-            <Typography variant="h6">
-              {incident.evidence.closingSpeedKph
-                ? `${incident.evidence.closingSpeedKph.toFixed(1)} kph`
-                : '—'}
+            <Typography
+              variant="caption"
+              color="text.secondary"
+              sx={{
+                display: 'block',
+                textTransform: 'uppercase',
+                letterSpacing: 0.8,
+              }}
+            >
+              No captured evidence
             </Typography>
-          </StatDisplay>
-          <StatDisplay label="Magnitude">
-            <Typography variant="h6">
-              {incident.contactMagnitude
-                ? incident.contactMagnitude.toFixed(0)
-                : '—'}
+            <Typography variant="body2" color="text.secondary">
+              {evidenceUnavailable}
             </Typography>
-          </StatDisplay>
-          <StatDisplay label="Location">
-            <Typography variant="h6">
-              {incident.evidence.trackPositionLabel ?? '—'}
-            </Typography>
-          </StatDisplay>
-        </Stack>
+          </Box>
+        ) : (
+          <>
+            <Box
+              sx={{
+                px: 1.5,
+                py: 1,
+                mb: 2,
+                borderRadius: 1,
+                backgroundColor: 'background.default',
+                border: '1px solid',
+                borderColor: 'divider',
+              }}
+            >
+              <Typography
+                variant="caption"
+                color="text.secondary"
+                sx={{
+                  display: 'block',
+                  textTransform: 'uppercase',
+                  letterSpacing: 0.8,
+                }}
+              >
+                Raw stream
+              </Typography>
+              <Typography variant="body2" sx={{ fontFamily: 'monospace' }}>
+                {incident.rawText}
+              </Typography>
+            </Box>
 
-        <Divider sx={{ mb: 1 }} />
+            <Stack direction="row" sx={{ mb: 2 }}>
+              <StatDisplay label="Closing Speed">
+                <Typography variant="h6">
+                  {incident.evidence.closingSpeedKph
+                    ? `${incident.evidence.closingSpeedKph.toFixed(1)} kph`
+                    : '—'}
+                </Typography>
+              </StatDisplay>
+              <StatDisplay label="Magnitude">
+                <Typography variant="h6">
+                  {incident.contactMagnitude
+                    ? incident.contactMagnitude.toFixed(0)
+                    : '—'}
+                </Typography>
+              </StatDisplay>
+              <StatDisplay label="Location">
+                <Typography variant="h6">
+                  {incident.evidence.trackPositionLabel ?? '—'}
+                </Typography>
+              </StatDisplay>
+            </Stack>
 
-        <EvidenceRow
-          label="Ahead at contact"
-          value={
-            aheadDriver
-              ? `${aheadDriver.displayName} #${aheadDriver.carNumber}`
-              : '—'
-          }
-        />
-        <EvidenceRow
-          label="Class interaction"
-          value={
-            incident.evidence.isTrafficIncident === undefined
-              ? '—'
-              : incident.evidence.isTrafficIncident
-                ? 'Multiclass traffic'
-                : 'Same class'
-          }
-          emphasis={incident.evidence.isTrafficIncident === true}
-        />
-        <EvidenceRow
-          label="Off track"
-          value={
-            offTrackNames.length
-              ? offTrackNames.join(', ')
-              : anyOffTrackKnown
-                ? 'All parties on track'
-                : '—'
-          }
-          emphasis={offTrackNames.length > 0}
-        />
-        <EvidenceRow
-          label="Participants"
-          value={
-            incident.drivers.some((d) => d.isAiDriver)
-              ? 'Includes AI driver'
-              : 'All human'
-          }
-          emphasis={incident.drivers.some((d) => d.isAiDriver)}
-        />
+            <Divider sx={{ mb: 1 }} />
 
-        <CarMeasurements incident={incident} />
+            <EvidenceRow
+              label="Ahead at contact"
+              value={
+                aheadDriver
+                  ? `${aheadDriver.displayName} #${aheadDriver.carNumber}`
+                  : '—'
+              }
+            />
+            <EvidenceRow
+              label="Class interaction"
+              value={
+                incident.evidence.isTrafficIncident === undefined
+                  ? '—'
+                  : incident.evidence.isTrafficIncident
+                    ? 'Multiclass traffic'
+                    : 'Same class'
+              }
+              emphasis={incident.evidence.isTrafficIncident === true}
+            />
+            <EvidenceRow
+              label="Off track"
+              value={
+                offTrackNames.length
+                  ? offTrackNames.join(', ')
+                  : anyOffTrackKnown
+                    ? 'All parties on track'
+                    : '—'
+              }
+              emphasis={offTrackNames.length > 0}
+            />
+            <EvidenceRow
+              label="Participants"
+              value={
+                incident.drivers.some((d) => d.isAiDriver)
+                  ? 'Includes AI driver'
+                  : 'All human'
+              }
+              emphasis={incident.drivers.some((d) => d.isAiDriver)}
+            />
 
-        {traces?.length ? (
-          <LiveIncidentTraceChart
-            traces={traces}
-            anchorErrorSeconds={
-              incident.anchorErrorSeconds ?? context?.anchorErrorSeconds
-            }
-          />
-        ) : null}
+            <CarMeasurements incident={incident} />
 
-        {isLoading ? (
-          <Typography variant="caption" color="text.secondary" sx={{ mt: 2 }}>
-            Loading captured trace…
-          </Typography>
-        ) : null}
+            {traces?.length ? (
+              <LiveIncidentTraceChart
+                traces={traces}
+                anchorErrorSeconds={
+                  incident.anchorErrorSeconds ?? context?.anchorErrorSeconds
+                }
+              />
+            ) : null}
+
+            {isLoading ? (
+              <Typography
+                variant="caption"
+                color="text.secondary"
+                sx={{ mt: 2 }}
+              >
+                Loading captured trace…
+              </Typography>
+            ) : null}
+          </>
+        )}
 
         {/*
           Placed last in the evidence, immediately above the tariff: it is the

@@ -152,9 +152,14 @@ describe('ReplayIncidentDossier', () => {
     expect(screen.getByText(/Lap 12/)).toBeInTheDocument();
   });
 
-  // Most incidents were never captured, and most replays have no capture at all.
-  it('renders nothing when this incident was not captured', () => {
-    const { container } = render(
+  /*
+    Most incidents were never captured and most replays have no capture at all,
+    so this is the ordinary case rather than the edge — and it used to leave the
+    steward watching the footage with nothing to record against it. The panel
+    stays; only the evidence half is replaced.
+  */
+  it('still offers a call on an incident that was not captured', () => {
+    render(
       <ReplayIncidentDossier
         event={event({ liveIncidentId: undefined })}
         liveData={liveData}
@@ -162,21 +167,81 @@ describe('ReplayIncidentDossier', () => {
       />,
     );
 
-    expect(container).toBeEmptyDOMElement();
+    expect(screen.getByText('No captured evidence')).toBeInTheDocument();
+    expect(screen.getByText('5s Penalty')).toBeInTheDocument();
+    expect(screen.getByText(/Flag for review/)).toBeInTheDocument();
   });
 
-  it('renders nothing when the replay has no linked capture', () => {
+  // The measurements are what capture supplies, so with none there is nothing
+  // for any of them to say — a grid of dashes reads as broken, not as empty.
+  it('draws no evidence grid for an uncaptured incident', () => {
+    render(
+      <ReplayIncidentDossier
+        event={event({ liveIncidentId: undefined })}
+        liveData={liveData}
+        replayHash="hash-p1-7"
+      />,
+    );
+
+    expect(screen.queryByText('Closing Speed')).not.toBeInTheDocument();
+    expect(screen.queryByText('Speed at contact')).not.toBeInTheDocument();
+    expect(screen.queryByText('Raw stream')).not.toBeInTheDocument();
+  });
+
+  it('still offers a call when the replay has no linked capture', () => {
     useApiMock.mockReturnValue({
       stewardDecisions: {},
       saveStewardDecision: jest.fn(),
       stewardActions: DEFAULT_STEWARD_ACTIONS,
     } as unknown as ReturnType<typeof useApi>);
 
-    const { container } = render(
+    render(
       <ReplayIncidentDossier
         event={event()}
         liveData={null}
         replayHash="hash-p1-7"
+      />,
+    );
+
+    expect(screen.getByText('No captured evidence')).toBeInTheDocument();
+    expect(screen.getByText('5s Penalty')).toBeInTheDocument();
+  });
+
+  /*
+    A replay event id is a position in one file — `collision-4-1434.4` — so two
+    replays hold the same one. Without the replay in the key, a call on one race
+    would surface against an unrelated incident in another.
+  */
+  it('keys an uncaptured call on the replay, never on a blank session', () => {
+    const saveStewardDecision = jest.fn();
+    useApiMock.mockReturnValue({
+      stewardDecisions: {},
+      saveStewardDecision,
+      stewardActions: DEFAULT_STEWARD_ACTIONS,
+    } as unknown as ReturnType<typeof useApi>);
+
+    render(
+      <ReplayIncidentDossier
+        event={event()}
+        liveData={null}
+        replayHash="hash-p1-7"
+      />,
+    );
+
+    fireEvent.click(screen.getByText('No Action'));
+
+    const saved = saveStewardDecision.mock.calls[0][0] as StewardDecision;
+    expect(saved.sessionKey).toBe('replay|hash-p1-7');
+    expect(saved.id.startsWith('replay|hash-p1-7|')).toBe(true);
+  });
+
+  // Nothing to file a call against and nowhere to file it.
+  it('renders nothing without a replay to anchor the call to', () => {
+    const { container } = render(
+      <ReplayIncidentDossier
+        event={event()}
+        liveData={null}
+        replayHash={undefined}
       />,
     );
 
@@ -276,6 +341,100 @@ describe('ReplayIncidentDossier', () => {
 
     expect(screen.getByText('Decision')).toBeInTheDocument();
     expect(screen.getByText('Called live')).toBeInTheDocument();
+  });
+
+  /*
+    The field the live dossier has and this one did not. It was left off because
+    a blank box wired into the decision would wipe the reasoning a live call
+    already carries the first time any button here was pressed — so seeding it
+    from the record is what makes it safe to add, and is asserted here rather
+    than assumed.
+  */
+  describe('the reasoning note', () => {
+    const note = () => screen.getByLabelText('Reasoning (optional)');
+
+    const withLiveCall = (reasoning?: string) =>
+      renderDossier({
+        decisions: {
+          existing: {
+            id: `${SESSION_KEY}|${INCIDENT_ID}|slot-13`,
+            incidentId: INCIDENT_ID,
+            sessionKey: SESSION_KEY,
+            state: 'DECIDED',
+            status: 'provisional',
+            outcome: '5s Penalty',
+            reasoning,
+            basis: 'incident',
+            involvedParties: [],
+            stewardAuthor: 'Steward',
+            decidedAt: 1785798030000,
+            sessionTrack: 'WeatherTech Raceway Laguna Seca',
+            sessionType: 'PRACTICE',
+            revisions: [],
+          } as StewardDecision,
+        },
+      });
+
+    it('is offered on a captured incident', () => {
+      renderDossier();
+
+      expect(note()).toBeInTheDocument();
+    });
+
+    it('starts from the note the live call already carries', () => {
+      withLiveCall('Called live');
+
+      expect(note()).toHaveValue('Called live');
+    });
+
+    it('is written onto the call', () => {
+      const { saveStewardDecision } = renderDossier();
+
+      fireEvent.change(note(), {
+        target: { value: 'Reviewed on the replay — contact was avoidable' },
+      });
+      fireEvent.click(screen.getByText('No Action'));
+
+      const saved = saveStewardDecision.mock.calls[0][0] as StewardDecision;
+      expect(saved.reasoning).toBe(
+        'Reviewed on the replay — contact was avoidable',
+      );
+    });
+
+    /*
+      The defect the field was withheld to avoid: pressing a button without
+      touching the note must not blank the one already on the record.
+    */
+    it('does not wipe the live note when the call is confirmed untouched', () => {
+      const { saveStewardDecision } = withLiveCall('Called live');
+
+      fireEvent.click(screen.getByText('No Action'));
+
+      const saved = saveStewardDecision.mock.calls[0][0] as StewardDecision;
+      expect(saved.reasoning).toBe('Called live');
+    });
+
+    it('records nothing rather than a blank string when left empty', () => {
+      const { saveStewardDecision } = renderDossier();
+
+      fireEvent.change(note(), { target: { value: '   ' } });
+      fireEvent.click(screen.getByText('No Action'));
+
+      const saved = saveStewardDecision.mock.calls[0][0] as StewardDecision;
+      expect(saved.reasoning).toBeUndefined();
+    });
+
+    it('is offered on an uncaptured incident too', () => {
+      render(
+        <ReplayIncidentDossier
+          event={event({ liveIncidentId: undefined })}
+          liveData={liveData}
+          replayHash="hash-p1-7"
+        />,
+      );
+
+      expect(note()).toBeInTheDocument();
+    });
   });
 
   /*

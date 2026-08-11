@@ -1,6 +1,7 @@
 import { Outlet, useNavigate } from 'react-router-dom';
 import { Box, Chip, Paper, Stack, Tooltip, Typography } from '@mui/material';
 import ScienceOutlinedIcon from '@mui/icons-material/ScienceOutlined';
+import SensorsOffIcon from '@mui/icons-material/SensorsOff';
 import { ViewHeader } from '../../components/Common/ViewHeader';
 import { LiveNavRail } from '../../components/Live/LiveNavRail';
 import { LiveSessionHeader } from '../../components/Live/LiveSessionHeader';
@@ -57,6 +58,88 @@ const LiveShellBody: React.FC = () => {
     onReturnToLive,
   } = useLiveSession();
   const { phase } = session;
+
+  /*
+    Nothing is running and this is not dev mode, so there is no session for any
+    of it to be about.
+
+    Everything below — the track name, the phase badge, the class counts, the
+    timing table, the map — falls back to the layout fixture when capture is
+    detached, which is why this screen greeted a steward with "Bahrain
+    International Circuit" and a full field on a machine with the game closed.
+    The empty state replaces the view rather than sitting above it: a fixture
+    rendered underneath an explanation that there is no session is still a
+    screen full of numbers that are not true.
+
+    Nothing is lost by standing the rest down. The segment picker, the track map
+    and the poll behind them are all gated on the same condition in the
+    provider, so with no session there is no record to read here either.
+  */
+  if (!useFixtures && liveIndicator.state !== 'live') {
+    return (
+      <Box>
+        <ViewHeader
+          breadcrumb={
+            <Stack direction="row" alignItems="center" spacing={1}>
+              <Typography
+                variant="caption"
+                color="text.secondary"
+                sx={{ cursor: 'pointer' }}
+                onClick={() => navigate('/')}
+              >
+                Driver
+              </Typography>
+              <Typography variant="caption" color="text.secondary">
+                /
+              </Typography>
+              <Typography
+                variant="caption"
+                color="primary.main"
+                fontWeight={700}
+              >
+                Live Session
+              </Typography>
+            </Stack>
+          }
+          title={<Typography variant="h5">No Live Session</Typography>}
+          onBack={() => navigate('/')}
+        />
+
+        <Paper
+          variant="outlined"
+          component="section"
+          aria-label="No live session"
+          sx={{
+            borderColor: 'divider',
+            borderRadius: 2,
+            p: 4,
+            display: 'flex',
+            flexDirection: 'column',
+            alignItems: 'center',
+            gap: 1,
+            textAlign: 'center',
+          }}
+        >
+          <SensorsOffIcon sx={{ fontSize: 40, color: 'text.secondary' }} />
+          <Typography variant="subtitle1" fontWeight={700}>
+            No live session
+          </Typography>
+          {/*
+            The indicator's own words. It already distinguishes "the game is not
+            running" from "the game is running and between sessions", and those
+            two send a steward to different places.
+          */}
+          <Typography variant="body2" color="text.secondary">
+            {liveIndicator.detail ?? liveIndicator.label}
+          </Typography>
+          <Typography variant="caption" color="text.secondary">
+            Live capture attaches automatically once Le Mans Ultimate loads a
+            session with plugins enabled.
+          </Typography>
+        </Paper>
+      </Box>
+    );
+  }
 
   return (
     <Box sx={{ pb: canDriveCamera ? `${LIVE_CAMERA_BAR_HEIGHT}px` : 0 }}>
@@ -129,22 +212,6 @@ const LiveShellBody: React.FC = () => {
         }
         onBack={() => navigate('/')}
       />
-
-      {!useFixtures && liveIndicator.state !== 'live' ? (
-        <Paper
-          variant="outlined"
-          sx={{ borderColor: 'divider', borderRadius: 2, p: 2, mb: 2 }}
-        >
-          <Typography variant="subtitle1" fontWeight={700}>
-            No live session
-          </Typography>
-          <Typography variant="body2" color="text.secondary">
-            {liveIndicator.detail ?? liveIndicator.label} Live capture attaches
-            automatically once Le Mans Ultimate loads a session with plugins
-            enabled.
-          </Typography>
-        </Paper>
-      ) : null}
 
       {/*
         Above the rail, not inside a route: this is the session's general
