@@ -3,6 +3,7 @@ import {
   DEFAULT_USER_SETTINGS,
   getLmuExecutablePathValidationError,
   getLmuReplayDirectoryPathValidationError,
+  getStewardActionsValidationError,
   postDashboardView,
   readUserSettings,
   writeUserSettings,
@@ -95,6 +96,57 @@ describe('main/user-settings path validation', () => {
   });
 
   // Removed getReplayLogMatchThresholdValidationError tests
+});
+
+/*
+  Structural only. Whether a tariff is *usable* — labels present, labels unique,
+  at least one action — is decided once, in the renderer's stewardActions.ts, and
+  a second copy of those rules here is the drift the setting exists to remove.
+  What main protects is the store: either absent, or a list of entries carrying
+  labels.
+*/
+describe('main/user-settings steward actions validation', () => {
+  it.each([
+    ['never set', undefined],
+    ['explicitly cleared', null],
+  ])('accepts %s, which means the shipped tariff', (_case, candidate) => {
+    expect(getStewardActionsValidationError(candidate)).toBeNull();
+  });
+
+  it('accepts a list of labelled entries', () => {
+    expect(
+      getStewardActionsValidationError([
+        { id: 'a', label: 'DT', driverScoped: true },
+      ]),
+    ).toBeNull();
+  });
+
+  // An empty list is a usability question, not a structural one — the renderer
+  // reads it back as "use the shipped tariff".
+  it('accepts an empty list', () => {
+    expect(getStewardActionsValidationError([])).toBeNull();
+  });
+
+  it('rejects a value that is not a list', () => {
+    expect(getStewardActionsValidationError('penalty-5s')).toBe(
+      'Steward actions must be a list.',
+    );
+  });
+
+  it.each([
+    ['a non-object entry', ['DT']],
+    ['an entry with no label', [{ id: 'a', driverScoped: true }]],
+    ['an entry whose label is not a string', [{ id: 'a', label: 5 }]],
+  ])('rejects %s', (_case, candidate) => {
+    expect(getStewardActionsValidationError(candidate)).toBe(
+      'Every steward action needs a label.',
+    );
+  });
+
+  // Nothing is stored until the user departs from the shipped tariff.
+  it('ships with nothing stored', () => {
+    expect(DEFAULT_USER_SETTINGS.stewardActions).toBeNull();
+  });
 });
 
 describe('main/user-settings dashboard view', () => {

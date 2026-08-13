@@ -35,28 +35,29 @@
   "scripts": {
     "build": "concurrently \"npm run build:main\" \"npm run build:renderer\"",
     "build:icons": "node ./scripts/generate-icons.js",
+    "build:sidecar": "cross-env TS_NODE_TRANSPILE_ONLY=true ts-node ./.erb/scripts/build-sidecar.js",
+    "build:sidecar:dev": "cross-env TS_NODE_TRANSPILE_ONLY=true ts-node ./.erb/scripts/build-sidecar.js --optional",
     "commit": "cz",
     "commitlint:last": "commitlint --from=HEAD~1 --to=HEAD",
     "build:dll": "cross-env NODE_ENV=development TS_NODE_TRANSPILE_ONLY=true NODE_OPTIONS=\"-r ts-node/register --no-warnings\" webpack --config ./.erb/configs/webpack.config.renderer.dev.dll.ts",
     "build:main": "cross-env NODE_ENV=production TS_NODE_TRANSPILE_ONLY=true NODE_OPTIONS=\"-r ts-node/register --no-warnings\" webpack --config ./.erb/configs/webpack.config.main.prod.ts",
     "build:renderer": "cross-env NODE_ENV=production TS_NODE_TRANSPILE_ONLY=true NODE_OPTIONS=\"-r ts-node/register --no-warnings\" webpack --config ./.erb/configs/webpack.config.renderer.prod.ts",
-    "postinstall": "ts-node .erb/scripts/check-native-dep.js && electron-builder install-app-deps && npm run build:dll",
+    "postinstall": "ts-node .erb/scripts/check-native-dep.js && electron-builder install-app-deps && node .erb/scripts/restore-test-sqlite-abi.js && npm run build:dll",
     "audit:replays": "node ./scripts/audit-replay-metadata.js",
     "lint": "cross-env NODE_ENV=development eslint . --ext .js,.jsx,.ts,.tsx",
     "lint:fix": "cross-env NODE_ENV=development eslint . --ext .js,.jsx,.ts,.tsx --fix",
-    "package": "ts-node ./.erb/scripts/clean.js dist && npm run build:icons && npm run build && npm --prefix release/app run rebuild && electron-builder build --publish never && npm run build:dll",
+    "package": "ts-node ./.erb/scripts/clean.js dist && npm run build:icons && npm run build:sidecar && npm run build && npm --prefix release/app run rebuild && electron-builder build --publish never && npm run build:dll",
     "rebuild": "electron-rebuild --parallel --types prod,dev,optional --module-dir release/app",
     "release": "semantic-release",
     "release:dry": "semantic-release --dry-run",
-    "prestart": "cross-env NODE_ENV=development TS_NODE_TRANSPILE_ONLY=true NODE_OPTIONS=\"-r ts-node/register --no-warnings\" webpack --config ./.erb/configs/webpack.config.main.dev.ts",
-    "pretest": "npm rebuild better-sqlite3 --prefix release/app",
-    "posttest": "npm --prefix release/app run rebuild",
+    "prestart": "npm run build:sidecar:dev && cross-env NODE_ENV=development TS_NODE_TRANSPILE_ONLY=true NODE_OPTIONS=\"-r ts-node/register --no-warnings\" webpack --config ./.erb/configs/webpack.config.main.dev.ts",
     "start": "ts-node ./.erb/scripts/check-port-in-use.js && npm run prestart && npm run start:renderer",
     "start:devmode": "cross-env LMU_DEVMODE=true npm start",
     "start:main": "concurrently -k -P \"cross-env NODE_ENV=development TS_NODE_TRANSPILE_ONLY=true webpack --watch --config ./.erb/configs/webpack.config.main.dev.ts\" \"electronmon . -- {@}\" --",
     "start:preload": "cross-env NODE_ENV=development TS_NODE_TRANSPILE_ONLY=true NODE_OPTIONS=\"-r ts-node/register --no-warnings\" webpack --config ./.erb/configs/webpack.config.preload.dev.ts",
     "start:renderer": "cross-env NODE_ENV=development TS_NODE_TRANSPILE_ONLY=true NODE_OPTIONS=\"-r ts-node/register --no-warnings\" webpack serve --config ./.erb/configs/webpack.config.renderer.dev.ts",
-    "test": "jest"
+    "test": "jest",
+    "test:live-api": "jest --config jest.live-api.config.js"
   },
   "browserslist": [
     "extends browserslist-config-erb"
@@ -89,6 +90,7 @@
       "json"
     ],
     "moduleNameMapper": {
+      "^better-sqlite3$": "<rootDir>/node_modules/better-sqlite3",
       "^(\\.{1,2}/.*)\\.js$": "$1",
       "^@/(.*)$": "<rootDir>/src/$1",
       "^@constants$": "<rootDir>/constants.ts",
@@ -105,7 +107,8 @@
     },
     "testPathIgnorePatterns": [
       "release/app/dist",
-      ".erb/dll"
+      ".erb/dll",
+      "\\.live\\.test\\.ts$"
     ],
     "transform": {
       "\\.(ts|tsx|js|jsx)$": "ts-jest"
@@ -159,6 +162,7 @@
     "@types/yazl": "^3.3.1",
     "@typescript-eslint/eslint-plugin": "^8.26.1",
     "@typescript-eslint/parser": "^8.26.1",
+    "better-sqlite3": "^12.11.1",
     "browserslist-config-erb": "^0.0.3",
     "chalk": "^4.1.2",
     "commitizen": "^4.3.1",
@@ -257,6 +261,15 @@
     "win": {
       "target": [
         "nsis"
+      ],
+      "extraResources": [
+        {
+          "from": "tools/live-capture-spike/build",
+          "to": ".",
+          "filter": [
+            "lmu-spike.exe"
+          ]
+        }
       ]
     },
     "linux": {

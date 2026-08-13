@@ -24,6 +24,30 @@ describe('replayTimeline helpers', () => {
     ).toEqual({ name: 'Driver Two', carNumber: '99' });
   });
 
+  /*
+    Regression, and a lesson about fixtures. Every real collision reads "with
+    another vehicle X(n)", and the prefix was being captured as part of the
+    name — so the second car of every collision rendered as a driver called
+    "another vehicle Rui Andrade", matching nothing in the roster and showing no
+    car number, class or laps. The case above missed it because its text is
+    synthetic and omits a prefix no real log omits.
+  */
+  it('strips the "another vehicle" prefix real logs always carry', () => {
+    expect(
+      extractSecondaryIncidentDriver(
+        'Antares Au(13) reported contact (230.22) with another vehicle Rui Andrade(22)',
+      ),
+    ).toEqual({ name: 'Rui Andrade', carNumber: '22' });
+  });
+
+  it('leaves a solo contact with no secondary driver', () => {
+    expect(
+      extractSecondaryIncidentDriver(
+        'Tom Dillmann(37) reported contact (66.19) with Immovable',
+      ),
+    ).toBeNull();
+  });
+
   it('builds incident description from contact target segment', () => {
     expect(
       extractIncidentDescription('Driver One(12) with Driver Two(99)'),

@@ -7,17 +7,25 @@ import { CONSTANTS } from '@constants';
  *
  * BODY
  *
- *  {"cameraGroup": "Driving", "direction": 0}
- *  {"cameraGroup": "Driving", "direction": 1}
- *  {"cameraGroup": "Trackside", "direction": 0}
- *  {"cameraGroup": "Trackside", "direction": 1}
- *  {"cameraGroup": "Onboard", "direction": 0}
- *  {"cameraGroup": "Onboard", "direction": 1}
+ *  {"cameraGroup": "Driving",   "direction": -1}
+ *  {"cameraGroup": "Driving",   "direction":  1}
+ *  {"cameraGroup": "Trackside", "direction": -1}
+ *  {"cameraGroup": "Trackside", "direction":  1}
+ *  {"cameraGroup": "Onboard",   "direction": -1}
+ *  {"cameraGroup": "Onboard",   "direction":  1}
+ *
+ * **-1 steps back and 1 steps forward. 0 does not step back** — it advances,
+ * which made previous and next the same button until this was measured against
+ * a running session. See the note on `CAMERA` in constants.ts.
+ *
+ * Note also what a 200 here does and does not mean. The endpoint answers 200 to
+ * any well-formed body — a bogus `cameraGroup` and `{}` both do — so a success
+ * reply says the request was accepted, never that the camera moved.
  */
 
 interface CameraAngleRequestBody {
   cameraGroup: 'Driving' | 'Trackside' | 'Onboard';
-  direction: 0 | 1;
+  direction: -1 | 1;
 }
 
 const toErrorMessage = (error: unknown): string => {
@@ -85,6 +93,46 @@ export const getFocusedCar = async (event: Electron.IpcMainEvent) => {
     });
   } catch (error: unknown) {
     event.reply(CONSTANTS.API.GET_FOCUSED_CAR, {
+      status: 'error',
+      message: toErrorMessage(error),
+    });
+  }
+};
+
+/**
+ * GET
+ * Which camera the game is actually showing
+ * /rest/replay/CameraController/getCameraInfo
+ *
+ * RESPONSE
+ * {"cameraName": "TRACKING021", "currentCameraGroup": "TracksideCycle"}
+ *
+ * Verified live on 2026-08-08. Despite the `replay` path it answers during a
+ * live session, exactly as `setCamera` does.
+ *
+ * `cameraName` is reported but not acted on anywhere: it changes by itself as
+ * the trackside director cycles through its angles, so keying any UI state on
+ * it would produce a control that moves while nobody touches it.
+ */
+
+export const getCameraInfo = async (event: Electron.IpcMainEvent) => {
+  try {
+    const response = await fetch(
+      `${CONSTANTS.LMU_API_BASE_URL}/rest/replay/CameraController/getCameraInfo`,
+    );
+
+    if (!response.ok) {
+      throw new Error(`API responded with status ${response.status}`);
+    }
+
+    const data = await response.json();
+
+    event.reply(CONSTANTS.API.GET_CAMERA_INFO, {
+      status: 'success',
+      data,
+    });
+  } catch (error: unknown) {
+    event.reply(CONSTANTS.API.GET_CAMERA_INFO, {
       status: 'error',
       message: toErrorMessage(error),
     });

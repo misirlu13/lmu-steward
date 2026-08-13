@@ -1,4 +1,4 @@
-import { CONSTANTS } from '@constants';
+import { CONSTANTS, replayJumpTargetSeconds } from '@constants';
 import {
   ArchivedReplayRecord,
   ArchivedReplayStore,
@@ -8,13 +8,33 @@ import {
   LMUReplay,
   SessionType,
 } from '@types';
-import { createReadStream } from 'fs';
-import { readdir, readFile, stat } from 'fs/promises';
-import { resolve as resolvePath, join } from 'path';
+import log from 'electron-log';
+import { readFile } from 'fs/promises';
+import { resolve as resolvePath, join, dirname } from 'path';
 import { parseStringPromise } from 'xml2js';
 import { generateReplayHash } from '../util';
 import { readUserSettings, writeUserSettings } from './user-settings';
 import { getMainPersistentStore } from '../storage/local-data-store';
+import {
+  buildLogFileIndex,
+  getLogDataSessionType as getLogDataSessionTypeFromIndex,
+  LogFileIndex,
+  safeModifiedAtSeconds,
+  selectBestLogSummary,
+} from './log-index';
+import {
+  parseResultLog,
+  ParsedLogXml,
+  ParsedRaceResults,
+  ResultLogParser,
+} from './result-log';
+import {
+  createCareerLogParser,
+  enrichCareerFromReplays,
+  ensureCareerIdentity,
+  scanCareer,
+} from './career';
+import { readVcrTrailer } from './vcr-metadata';
 import { getTrackAliases, tracksLikelyMatch } from './track-matching';
 
 const FIRST_RUN_GET_REPLAYS_DELAY_MS = 3000;
@@ -26,8 +46,13 @@ const DEFAULT_REPLAY_LOG_MATCH_THRESHOLD_MS = 120_000;
  * for a restarted weekend those point three of four races at another race's
  * results. Archive state and imported replays live outside this cache and are
  * unaffected; the cost is one resync.
+ *
+ * Bumped to 3 for the TrackLimitCount fix. Both previous parsers matched the
+ * element as `tracklimit` where the log writes `<TrackLimits>`, so every cached
+ * replay carries an undefined count and the dashboard renders zero track limits
+ * for it. Cached entries are never re-parsed, so only a reset reaches them.
  */
-export const REPLAY_CACHE_SCHEMA_VERSION = 2;
+export const REPLAY_CACHE_SCHEMA_VERSION = 3;
 
 const delay = (ms: number) =>
   new Promise<void>((resolve) => {
@@ -54,6 +79,8 @@ interface ReplayCacheEntry {
   hash?: string;
   multiplayer?: boolean;
   logData?: ParsedRaceResults | null;
+  logDataDirectory?: string;
+  logDataFileName?: string;
   logDataLoaded?: boolean;
   archived?: boolean;
   archivedAt?: number;
@@ -73,46 +100,6 @@ interface ReplaySyncProgress {
 
 interface ReplaySyncOptions {
   forceReplayCacheReset?: boolean;
-}
-
-interface ParsedSessionSummary {
-  Minutes?: number;
-  DriverCount?: number;
-  CarClasses?: string[];
-  IncidentCount?: number;
-  PenaltyCount?: number;
-  TrackLimitCount?: number;
-  Stream?: {
-    IncidentCount?: number;
-    PenaltyCount?: number;
-    TrackLimitCount?: number;
-  };
-  [key: string]: unknown;
-}
-
-interface ParsedRaceResults {
-  Setting?: string;
-  DateTime?: number;
-  TrackVenue?: string;
-  TrackCourse?: string;
-  TrackEvent?: string;
-  GameVersion?: string;
-  FuelMult?: number;
-  TireMult?: number;
-  TireWarmers?: string;
-  IncidentCount?: number;
-  PenaltyCount?: number;
-  TrackLimitCount?: number;
-  DriverCount?: number;
-  Race?: ParsedSessionSummary;
-  Qualify?: ParsedSessionSummary;
-  Practice1?: ParsedSessionSummary;
-}
-
-interface ParsedLogXml {
-  rFactorXML?: {
-    RaceResults?: ParsedRaceResults;
-  };
 }
 
 const isMultiplayerSetting = (setting: unknown): boolean =>
@@ -368,701 +355,17 @@ const resolveArchivedKey = (
  * Replay Directory - C:\Program Files (x86)\Steam\steamapps\common\Le Mans Ultimate\UserData\Replays
  */
 
-const decodeXmlText = (value: string): string =>
-  value
-    .replace(/&amp;/g, '&')
-    .replace(/&lt;/g, '<')
-    .replace(/&gt;/g, '>')
-    .replace(/&quot;/g, '"')
-    .replace(/&#39;/g, "'");
-
-const parseLogXmlContent = (xml: string): ParsedLogXml => {
-  const raceResults: ParsedRaceResults = {};
-  let currentValueTag:
-    | 'Setting'
-    | 'DateTime'
-    | 'TrackVenue'
-    | 'TrackCourse'
-    | 'TrackEvent'
-    | 'GameVersion'
-    | 'FuelMult'
-    | 'TireMult'
-    | 'TireWarmers'
-    | 'Minutes'
-    | 'CarClass'
-    | null = null;
-  let currentValueText = '';
-  let raceResultsDepth = 0;
-  let currentSessionType: 'Race' | 'Qualify' | 'Practice1' | null = null;
-  let _inDriverTag = false;
-  let inStreamTag = false;
-  let driverCount = 0;
-  let incidentCount = 0;
-  let penaltyCount = 0;
-  let trackLimitCount = 0;
-  let totalDriverCount = 0;
-  let totalIncidentCount = 0;
-  let totalPenaltyCount = 0;
-  let totalTrackLimitCount = 0;
-  let currentSessionCarClasses = new Set<string>();
-
-  const commitCurrentValue = () => {
-    if (!currentValueTag) {
-      return;
-    }
-
-    const normalizedValue = decodeXmlText(currentValueText).trim();
-    if (currentValueTag === 'Setting') {
-      raceResults.Setting = normalizedValue || undefined;
-    } else if (currentValueTag === 'DateTime') {
-      /**
-       * Only the root <DateTime>, which is when LMU created the event — the
-       * same instant it stamps onto every .Vcr it writes for that weekend, and
-       * therefore what the replay API reports as a replay's timestamp.
-       *
-       * <Race>/<Qualify>/<Practice1> each carry their own <DateTime> holding
-       * that session's start. Those sit at the same nesting depth this parser
-       * tracks, so without the session guard the last one wins and every log
-       * looks minutes-to-hours later than the replay it belongs to. Two events
-       * at one track in an evening then match the wrong way round.
-       */
-      if (!currentSessionType) {
-        raceResults.DateTime = Number(normalizedValue) || undefined;
-      }
-    } else if (currentValueTag === 'TrackVenue') {
-      raceResults.TrackVenue = normalizedValue || undefined;
-    } else if (currentValueTag === 'TrackCourse') {
-      raceResults.TrackCourse = normalizedValue || undefined;
-    } else if (currentValueTag === 'TrackEvent') {
-      raceResults.TrackEvent = normalizedValue || undefined;
-    } else if (currentValueTag === 'GameVersion') {
-      raceResults.GameVersion = normalizedValue || undefined;
-    } else if (currentValueTag === 'FuelMult') {
-      raceResults.FuelMult = Number(normalizedValue) || undefined;
-    } else if (currentValueTag === 'TireMult') {
-      raceResults.TireMult = Number(normalizedValue) || undefined;
-    } else if (currentValueTag === 'TireWarmers') {
-      raceResults.TireWarmers = normalizedValue || undefined;
-    } else if (currentValueTag === 'Minutes') {
-      if (currentSessionType && raceResults[currentSessionType]) {
-        const session = raceResults[currentSessionType] as Record<
-          string,
-          unknown
-        >;
-        session.Minutes = Number(normalizedValue) || undefined;
-      }
-    } else if (currentValueTag === 'CarClass') {
-      if (currentSessionType && normalizedValue) {
-        currentSessionCarClasses.add(normalizedValue);
-      }
-    }
-
-    currentValueTag = null;
-    currentValueText = '';
-  };
-
-  const processTag = (tagText: string) => {
-    if (!tagText.startsWith('<') || tagText.startsWith('<!--')) {
-      return;
-    }
-
-    const isClosingTag = tagText.startsWith('</');
-    const isSelfClosingTag = /\/\s*>$/.test(tagText);
-    const tagNameMatch = tagText.match(
-      /^<\s*(\/)?\s*([A-Za-z0-9:_.-]+)(?:\s[^>]*)?\/?\s*>$/,
-    );
-
-    if (!tagNameMatch) {
-      return;
-    }
-
-    const [, , rawTagName] = tagNameMatch;
-    const tagName = rawTagName.toLowerCase();
-
-    if (currentValueTag && (isClosingTag || isSelfClosingTag)) {
-      if (tagName === currentValueTag.toLowerCase()) {
-        commitCurrentValue();
-      }
-    }
-
-    if (isClosingTag) {
-      if (tagName === 'raceresults' && raceResultsDepth > 0) {
-        raceResultsDepth -= 1;
-      }
-      if (tagName === 'driver') {
-        _inDriverTag = false;
-      }
-      if (tagName === 'stream') {
-        inStreamTag = false;
-      }
-      if (['race', 'qualify', 'practice1'].includes(tagName)) {
-        if (currentSessionType && raceResults[currentSessionType]) {
-          const session = raceResults[
-            currentSessionType
-          ] as ParsedSessionSummary;
-          session.DriverCount = driverCount || undefined;
-          if (currentSessionCarClasses.size > 0) {
-            session.CarClasses = Array.from(currentSessionCarClasses);
-          }
-          session.IncidentCount = incidentCount || undefined;
-          session.PenaltyCount = penaltyCount || undefined;
-          session.TrackLimitCount = trackLimitCount || undefined;
-          session.Stream = {
-            IncidentCount: incidentCount || undefined,
-            PenaltyCount: penaltyCount || undefined,
-            TrackLimitCount: trackLimitCount || undefined,
-          };
-        }
-        currentSessionType = null;
-        driverCount = 0;
-        incidentCount = 0;
-        penaltyCount = 0;
-        trackLimitCount = 0;
-        currentSessionCarClasses = new Set<string>();
-      }
-      return;
-    }
-
-    if (tagName === 'raceresults') {
-      raceResultsDepth += 1;
-      return;
-    }
-
-    if (raceResultsDepth <= 0) {
-      return;
-    }
-
-    if (tagName === 'race') {
-      raceResults.Race = {};
-      currentSessionType = 'Race';
-      return;
-    }
-
-    if (tagName === 'qualify') {
-      raceResults.Qualify = {};
-      currentSessionType = 'Qualify';
-      return;
-    }
-
-    if (tagName === 'practice1') {
-      raceResults.Practice1 = {};
-      currentSessionType = 'Practice1';
-      return;
-    }
-
-    if (isSelfClosingTag) {
-      if (tagName === 'driver' && currentSessionType) {
-        driverCount++;
-        totalDriverCount++;
-      }
-      if (tagName === 'incident' && inStreamTag && currentSessionType) {
-        incidentCount++;
-        totalIncidentCount++;
-      }
-      if (tagName === 'penalty' && inStreamTag && currentSessionType) {
-        penaltyCount++;
-        totalPenaltyCount++;
-      }
-      if (tagName === 'tracklimit' && inStreamTag && currentSessionType) {
-        trackLimitCount++;
-        totalTrackLimitCount++;
-      }
-      return;
-    }
-
-    if (tagName === 'datetime') {
-      currentValueTag = 'DateTime';
-      currentValueText = '';
-      return;
-    }
-
-    if (tagName === 'setting') {
-      currentValueTag = 'Setting';
-      currentValueText = '';
-      return;
-    }
-
-    if (tagName === 'trackvenue') {
-      currentValueTag = 'TrackVenue';
-      currentValueText = '';
-      return;
-    }
-
-    if (tagName === 'trackcourse') {
-      currentValueTag = 'TrackCourse';
-      currentValueText = '';
-      return;
-    }
-
-    if (tagName === 'trackevent') {
-      currentValueTag = 'TrackEvent';
-      currentValueText = '';
-      return;
-    }
-
-    if (tagName === 'gameversion') {
-      currentValueTag = 'GameVersion';
-      currentValueText = '';
-      return;
-    }
-
-    if (tagName === 'fuelmult') {
-      currentValueTag = 'FuelMult';
-      currentValueText = '';
-      return;
-    }
-
-    if (tagName === 'tiremult') {
-      currentValueTag = 'TireMult';
-      currentValueText = '';
-      return;
-    }
-
-    if (tagName === 'tirewarmers') {
-      currentValueTag = 'TireWarmers';
-      currentValueText = '';
-      return;
-    }
-
-    if (tagName === 'minutes') {
-      currentValueTag = 'Minutes';
-      currentValueText = '';
-      return;
-    }
-
-    if (tagName === 'carclass') {
-      currentValueTag = 'CarClass';
-      currentValueText = '';
-      return;
-    }
-
-    if (tagName === 'driver') {
-      if (currentSessionType) {
-        driverCount++;
-        totalDriverCount++;
-      }
-      _inDriverTag = true;
-      return;
-    }
-
-    if (tagName === 'incident' && inStreamTag && currentSessionType) {
-      incidentCount++;
-      totalIncidentCount++;
-      return;
-    }
-
-    if (tagName === 'penalty' && inStreamTag && currentSessionType) {
-      penaltyCount++;
-      totalPenaltyCount++;
-      return;
-    }
-
-    if (tagName === 'tracklimit' && inStreamTag && currentSessionType) {
-      trackLimitCount++;
-      totalTrackLimitCount++;
-      return;
-    }
-
-    if (tagName === 'stream') {
-      inStreamTag = true;
-    }
-  };
-
-  let searchFrom = 0;
-  for (;;) {
-    const openTagIndex = xml.indexOf('<', searchFrom);
-    if (openTagIndex === -1) {
-      break;
-    }
-
-    const closeTagIndex = xml.indexOf('>', openTagIndex + 1);
-    if (closeTagIndex === -1) {
-      break;
-    }
-
-    const textBeforeTag = xml.slice(searchFrom, openTagIndex);
-    if (currentValueTag) {
-      currentValueText += decodeXmlText(textBeforeTag);
-    }
-
-    processTag(xml.slice(openTagIndex, closeTagIndex + 1));
-    searchFrom = closeTagIndex + 1;
-  }
-
-  if (currentValueTag) {
-    currentValueText += decodeXmlText(xml.slice(searchFrom));
-    commitCurrentValue();
-  }
-
-  if (raceResultsDepth !== 0 || currentValueTag !== null) {
-    throw new Error('Malformed XML log');
-  }
-
-  raceResults.IncidentCount = totalIncidentCount || undefined;
-  raceResults.PenaltyCount = totalPenaltyCount || undefined;
-  raceResults.TrackLimitCount = totalTrackLimitCount || undefined;
-  raceResults.DriverCount = totalDriverCount || undefined;
-
-  return {
-    rFactorXML: {
-      RaceResults: raceResults,
-    },
-  };
-};
-
-const parseLogXmlFromStream = async (
-  stream: AsyncIterable<string | Buffer>,
-): Promise<ParsedLogXml> => {
-  const raceResults: ParsedRaceResults = {};
-  let currentValueTag:
-    | 'Setting'
-    | 'DateTime'
-    | 'TrackVenue'
-    | 'TrackCourse'
-    | 'TrackEvent'
-    | 'GameVersion'
-    | 'FuelMult'
-    | 'TireMult'
-    | 'TireWarmers'
-    | 'Minutes'
-    | 'CarClass'
-    | null = null;
-  let currentValueText = '';
-  let raceResultsDepth = 0;
-  let pendingText = '';
-  let currentSessionType: 'Race' | 'Qualify' | 'Practice1' | null = null;
-  let _inDriverTag = false;
-  let inStreamTag = false;
-  let driverCount = 0;
-  let incidentCount = 0;
-  let penaltyCount = 0;
-  let trackLimitCount = 0;
-  let totalDriverCount = 0;
-  let totalIncidentCount = 0;
-  let totalPenaltyCount = 0;
-  let totalTrackLimitCount = 0;
-  let currentSessionCarClasses = new Set<string>();
-
-  const commitCurrentValue = () => {
-    if (!currentValueTag) {
-      return;
-    }
-
-    const normalizedValue = decodeXmlText(currentValueText).trim();
-    if (currentValueTag === 'Setting') {
-      raceResults.Setting = normalizedValue || undefined;
-    } else if (currentValueTag === 'DateTime') {
-      /**
-       * Only the root <DateTime>, which is when LMU created the event — the
-       * same instant it stamps onto every .Vcr it writes for that weekend, and
-       * therefore what the replay API reports as a replay's timestamp.
-       *
-       * <Race>/<Qualify>/<Practice1> each carry their own <DateTime> holding
-       * that session's start. Those sit at the same nesting depth this parser
-       * tracks, so without the session guard the last one wins and every log
-       * looks minutes-to-hours later than the replay it belongs to. Two events
-       * at one track in an evening then match the wrong way round.
-       */
-      if (!currentSessionType) {
-        raceResults.DateTime = Number(normalizedValue) || undefined;
-      }
-    } else if (currentValueTag === 'TrackVenue') {
-      raceResults.TrackVenue = normalizedValue || undefined;
-    } else if (currentValueTag === 'TrackCourse') {
-      raceResults.TrackCourse = normalizedValue || undefined;
-    } else if (currentValueTag === 'TrackEvent') {
-      raceResults.TrackEvent = normalizedValue || undefined;
-    } else if (currentValueTag === 'GameVersion') {
-      raceResults.GameVersion = normalizedValue || undefined;
-    } else if (currentValueTag === 'FuelMult') {
-      raceResults.FuelMult = Number(normalizedValue) || undefined;
-    } else if (currentValueTag === 'TireMult') {
-      raceResults.TireMult = Number(normalizedValue) || undefined;
-    } else if (currentValueTag === 'TireWarmers') {
-      raceResults.TireWarmers = normalizedValue || undefined;
-    } else if (currentValueTag === 'Minutes') {
-      if (currentSessionType && raceResults[currentSessionType]) {
-        (raceResults[currentSessionType] as Record<string, unknown>).Minutes =
-          Number(normalizedValue) || undefined;
-      }
-    } else if (currentValueTag === 'CarClass') {
-      if (currentSessionType && normalizedValue) {
-        currentSessionCarClasses.add(normalizedValue);
-      }
-    }
-
-    currentValueTag = null;
-    currentValueText = '';
-  };
-
-  const processText = (text: string) => {
-    if (currentValueTag) {
-      currentValueText += decodeXmlText(text);
-    }
-  };
-
-  const processTag = (tagText: string) => {
-    if (!tagText.startsWith('<') || tagText.startsWith('<!--')) {
-      return;
-    }
-
-    const isClosingTag = tagText.startsWith('</');
-    const isSelfClosingTag = /\/\s*>$/.test(tagText);
-    const tagNameMatch = tagText.match(
-      /^<\s*(\/)?\s*([A-Za-z0-9:_.-]+)(?:\s[^>]*)?\/?\s*>$/,
-    );
-
-    if (!tagNameMatch) {
-      return;
-    }
-
-    const [, , rawTagName] = tagNameMatch;
-    const tagName = rawTagName.toLowerCase();
-
-    if (currentValueTag && (isClosingTag || isSelfClosingTag)) {
-      if (tagName === currentValueTag.toLowerCase()) {
-        commitCurrentValue();
-      }
-    }
-
-    if (isClosingTag) {
-      if (tagName === 'raceresults' && raceResultsDepth > 0) {
-        raceResultsDepth -= 1;
-      }
-      if (tagName === 'driver') {
-        _inDriverTag = false;
-      }
-      if (tagName === 'stream') {
-        inStreamTag = false;
-      }
-      if (['race', 'qualify', 'practice1'].includes(tagName)) {
-        if (currentSessionType && raceResults[currentSessionType]) {
-          const session = raceResults[
-            currentSessionType
-          ] as ParsedSessionSummary;
-          session.DriverCount = driverCount || undefined;
-          if (currentSessionCarClasses.size > 0) {
-            session.CarClasses = Array.from(currentSessionCarClasses);
-          }
-          session.IncidentCount = incidentCount || undefined;
-          session.PenaltyCount = penaltyCount || undefined;
-          session.TrackLimitCount = trackLimitCount || undefined;
-          session.Stream = {
-            IncidentCount: incidentCount || undefined,
-            PenaltyCount: penaltyCount || undefined,
-            TrackLimitCount: trackLimitCount || undefined,
-          };
-        }
-        currentSessionType = null;
-        driverCount = 0;
-        incidentCount = 0;
-        penaltyCount = 0;
-        trackLimitCount = 0;
-        currentSessionCarClasses = new Set<string>();
-      }
-      return;
-    }
-
-    if (tagName === 'raceresults') {
-      raceResultsDepth += 1;
-      return;
-    }
-
-    if (raceResultsDepth <= 0) {
-      return;
-    }
-
-    if (tagName === 'race') {
-      raceResults.Race = {};
-      currentSessionType = 'Race';
-      return;
-    }
-
-    if (tagName === 'qualify') {
-      raceResults.Qualify = {};
-      currentSessionType = 'Qualify';
-      return;
-    }
-
-    if (tagName === 'practice1') {
-      raceResults.Practice1 = {};
-      currentSessionType = 'Practice1';
-      return;
-    }
-
-    if (isSelfClosingTag) {
-      if (tagName === 'driver' && currentSessionType) {
-        driverCount++;
-        totalDriverCount++;
-      }
-      if (tagName === 'incident' && inStreamTag && currentSessionType) {
-        incidentCount++;
-        totalIncidentCount++;
-      }
-      if (tagName === 'penalty' && inStreamTag && currentSessionType) {
-        penaltyCount++;
-        totalPenaltyCount++;
-      }
-      if (tagName === 'tracklimit' && inStreamTag && currentSessionType) {
-        trackLimitCount++;
-        totalTrackLimitCount++;
-      }
-      return;
-    }
-
-    if (tagName === 'datetime') {
-      currentValueTag = 'DateTime';
-      currentValueText = '';
-      return;
-    }
-
-    if (tagName === 'setting') {
-      currentValueTag = 'Setting';
-      currentValueText = '';
-      return;
-    }
-
-    if (tagName === 'trackvenue') {
-      currentValueTag = 'TrackVenue';
-      currentValueText = '';
-      return;
-    }
-
-    if (tagName === 'trackcourse') {
-      currentValueTag = 'TrackCourse';
-      currentValueText = '';
-      return;
-    }
-
-    if (tagName === 'trackevent') {
-      currentValueTag = 'TrackEvent';
-      currentValueText = '';
-      return;
-    }
-
-    if (tagName === 'gameversion') {
-      currentValueTag = 'GameVersion';
-      currentValueText = '';
-      return;
-    }
-
-    if (tagName === 'fuelmult') {
-      currentValueTag = 'FuelMult';
-      currentValueText = '';
-      return;
-    }
-
-    if (tagName === 'tiremult') {
-      currentValueTag = 'TireMult';
-      currentValueText = '';
-      return;
-    }
-
-    if (tagName === 'tirewarmers') {
-      currentValueTag = 'TireWarmers';
-      currentValueText = '';
-      return;
-    }
-
-    if (tagName === 'minutes') {
-      currentValueTag = 'Minutes';
-      currentValueText = '';
-      return;
-    }
-
-    if (tagName === 'carclass') {
-      currentValueTag = 'CarClass';
-      currentValueText = '';
-      return;
-    }
-
-    if (tagName === 'driver') {
-      if (currentSessionType) {
-        driverCount++;
-        totalDriverCount++;
-      }
-      _inDriverTag = true;
-      return;
-    }
-
-    if (tagName === 'incident' && inStreamTag && currentSessionType) {
-      incidentCount++;
-      totalIncidentCount++;
-      return;
-    }
-
-    if (tagName === 'penalty' && inStreamTag && currentSessionType) {
-      penaltyCount++;
-      totalPenaltyCount++;
-      return;
-    }
-
-    if (tagName === 'tracklimit' && inStreamTag && currentSessionType) {
-      trackLimitCount++;
-      totalTrackLimitCount++;
-      return;
-    }
-
-    if (tagName === 'stream') {
-      inStreamTag = true;
-    }
-  };
-
-  for await (const chunk of stream) {
-    const chunkText = typeof chunk === 'string' ? chunk : chunk.toString();
-    const combinedText = pendingText + chunkText;
-    let searchFrom = 0;
-
-    for (;;) {
-      const openTagIndex = combinedText.indexOf('<', searchFrom);
-      if (openTagIndex === -1) {
-        pendingText = combinedText.slice(searchFrom);
-        break;
-      }
-
-      const closeTagIndex = combinedText.indexOf('>', openTagIndex + 1);
-      if (closeTagIndex === -1) {
-        pendingText = combinedText.slice(openTagIndex);
-        break;
-      }
-
-      processText(combinedText.slice(searchFrom, openTagIndex));
-      processTag(combinedText.slice(openTagIndex, closeTagIndex + 1));
-      searchFrom = closeTagIndex + 1;
-    }
-  }
-
-  processText(pendingText);
-
-  if (currentValueTag) {
-    commitCurrentValue();
-  }
-
-  if (raceResultsDepth !== 0 || currentValueTag !== null) {
-    throw new Error('Malformed XML log');
-  }
-
-  // Store aggregate counts at root level
-  raceResults.IncidentCount = totalIncidentCount || undefined;
-  raceResults.PenaltyCount = totalPenaltyCount || undefined;
-  raceResults.TrackLimitCount = totalTrackLimitCount || undefined;
-  raceResults.DriverCount = totalDriverCount || undefined;
-
-  return {
-    rFactorXML: {
-      RaceResults: raceResults,
-    },
-  };
-};
-
-export const parseLogXml = async (filePath: string) => {
-  try {
-    const stream = createReadStream(filePath, { encoding: 'utf-8' });
-    return await parseLogXmlFromStream(stream);
-  } catch {
-    const xml = await readFile(filePath, 'utf-8');
-    return parseLogXmlContent(xml);
-  }
+/**
+ * The session summary, in the shape the dashboard and the replay cache expect.
+ *
+ * A thin view over the canonical single-pass extractor, which produces this and
+ * the career facts together. Kept because the import path and the replay cache
+ * only want the summary half.
+ */
+export const parseLogXml = async (filePath: string): Promise<ParsedLogXml> => {
+  const record = await parseResultLog(filePath);
+
+  return { rFactorXML: { RaceResults: record.summary } };
 };
 
 export const parseLogXmlFull = async (filePath: string) => {
@@ -1074,189 +377,59 @@ export const parseLogXmlFull = async (filePath: string) => {
   })) as ParsedLogXml;
 };
 
+/** Re-exported from log-index, which needs it to summarise a directory. */
 export const getLogDataSessionType = (
   logData: ParsedLogXml,
-): SessionType | null => {
-  const raceResultsKeys = Object.keys(logData?.rFactorXML?.RaceResults || {});
-
-  if (raceResultsKeys.includes('Race')) {
-    return 'RACE';
-  }
-  if (raceResultsKeys.includes('Qualify')) {
-    return 'QUALIFY';
-  }
-  if (raceResultsKeys.includes('Practice1')) {
-    return 'PRACTICE';
-  }
-  return null;
-};
-
-/**
- * File modification time, or null when it cannot be read.
- *
- * Deliberately forgiving. This only refines a tiebreak, so a filesystem that
- * will not answer should fall back to the previous ordering rather than fail
- * the whole match.
- */
-const safeModifiedAt = async (filePath: string): Promise<number | null> => {
-  try {
-    const { mtimeMs } = await stat(filePath);
-    return Number.isFinite(mtimeMs) ? mtimeMs / 1000 : null;
-  } catch {
-    return null;
-  }
-};
+): SessionType | null => getLogDataSessionTypeFromIndex(logData);
 
 interface LogFileData {
   logDataFileName: string | null;
   logData: ParsedLogXml | null;
 }
 
-const getSessionCodeFromFileName = (fileName: string): SessionType | null => {
-  const match = String(fileName ?? '').match(/([RQP])\d+\.xml$/i);
-  if (!match) {
-    return null;
-  }
+/**
+ * When a race is restarted, the weekend produces several sessions that are
+ * identical to everything matching looks at: same event DateTime, same track,
+ * same session type, same grid. The only thing that separates them is when each
+ * one finished — and a replay is flushed at the same moment its result log is
+ * written, to within a second.
+ *
+ * Compared as absolute times rather than by parsing the log's file name, which
+ * is local time and would need the recording machine's offset to be meaningful.
+ */
+const getReplayFlushedAt = (replay: LMUReplay): Promise<number | null> =>
+  safeModifiedAtSeconds(
+    join(replay.replayDirectory ?? '', `${replay.replayName}.Vcr`),
+  );
 
-  const code = match[1].toUpperCase();
-  if (code === 'R') {
-    return 'RACE';
-  }
-  if (code === 'Q') {
-    return 'QUALIFY';
-  }
-
-  return 'PRACTICE';
-};
-
+/**
+ * Selects the log belonging to a replay.
+ *
+ * Retained for callers that hold no index — chiefly the tests, which exercise
+ * ranking a directory at a time. Anything syncing or opening more than one
+ * replay should build an index once and pass it to getReplayLogData instead;
+ * this rebuilds the directory summary on every call.
+ */
 export const findBestLogFile = async (
   logDir: string,
   replay: LMUReplay,
-  parser: (filePath: string) => Promise<ParsedLogXml> = parseLogXml,
+  parser: ResultLogParser = parseResultLog,
 ): Promise<LogFileData | null> => {
   try {
-    const files = (await readdir(logDir)).filter((file) =>
-      file.endsWith('.xml'),
-    );
-    const replayTimestamp = replay.timestamp;
-    const replaySessionType = replay.metadata.session;
-    const replayTrackAliases = getTrackAliases(
-      replay.metadata.sceneDesc,
-      replay.replayName,
+    const index = await buildLogFileIndex(logDir, parser);
+    const best = selectBestLogSummary(
+      index,
+      replay,
+      await getReplayFlushedAt(replay),
     );
 
-    /*
-     * When a race is restarted, the weekend produces several sessions that are
-     * identical to everything else here: same event DateTime, same track, same
-     * session type, same grid. The only thing that separates them is when each
-     * one finished — and a replay is flushed at the same moment its result log
-     * is written, to within a second.
-     *
-     * Compared as absolute times rather than by parsing the log's file name,
-     * which is local time and would need the recording machine's offset to be
-     * meaningful.
-     */
-    const replayFlushedAt = await safeModifiedAt(
-      join(replay.replayDirectory ?? '', `${replay.replayName}.Vcr`),
-    );
-
-    const logSummaries = (
-      await Promise.allSettled(
-        files.map(async (file) => {
-          const fileData = await parser(join(logDir, file));
-          const raceResults = fileData?.rFactorXML?.RaceResults || {};
-          return {
-            fileName: file,
-            dateTime: raceResults?.DateTime ?? null,
-            sessionCode:
-              getLogDataSessionType(fileData) ||
-              getSessionCodeFromFileName(file),
-            trackVenue: raceResults?.TrackVenue || '',
-            trackCourse: raceResults?.TrackCourse || '',
-            trackEvent: raceResults?.TrackEvent || '',
-            writtenAt: await safeModifiedAt(join(logDir, file)),
-            fileData,
-          };
-        }),
-      )
-    ).flatMap((result) =>
-      result.status === 'fulfilled' ? [result.value] : [],
-    );
-
-    const candidates = logSummaries.filter(
-      (log) =>
-        log.sessionCode === replaySessionType &&
-        log.dateTime !== null &&
-        log.dateTime !== undefined,
-    );
-    if (candidates.length === 0) {
+    if (!best) {
       return { logDataFileName: null, logData: null };
     }
 
-    const ranked = candidates
-      .map((log) => {
-        const diff = Math.abs(replayTimestamp - Number(log.dateTime));
-        const trackMatch = tracksLikelyMatch(
-          replayTrackAliases,
-          log.trackVenue,
-          log.trackCourse,
-          log.trackEvent,
-        );
-        const fileNameTsMatch = log.fileName.match(
-          /^(\d{4})_(\d{2})_(\d{2})_(\d{2})_(\d{2})_(\d{2})-/,
-        );
-        let fileNameTs = null;
-        if (fileNameTsMatch) {
-          const dt = new Date(
-            Date.UTC(
-              Number(fileNameTsMatch[1]),
-              Number(fileNameTsMatch[2]) - 1,
-              Number(fileNameTsMatch[3]),
-              Number(fileNameTsMatch[4]),
-              Number(fileNameTsMatch[5]),
-              Number(fileNameTsMatch[6]),
-            ),
-          );
-          fileNameTs = Math.floor(dt.getTime() / 1000);
-        }
-        return {
-          ...log,
-          diffSec: diff,
-          trackMatch,
-          fileNameTs,
-        };
-      })
-      .sort((a, b) => {
-        if (a.trackMatch !== b.trackMatch) return b.trackMatch ? 1 : -1;
-        if (a.diffSec !== b.diffSec) return a.diffSec - b.diffSec;
-        if (
-          replayFlushedAt !== null &&
-          a.writtenAt !== null &&
-          b.writtenAt !== null
-        ) {
-          const aFlushDelta = Math.abs(replayFlushedAt - a.writtenAt);
-          const bFlushDelta = Math.abs(replayFlushedAt - b.writtenAt);
-          if (aFlushDelta !== bFlushDelta) {
-            return aFlushDelta - bFlushDelta;
-          }
-        }
-        if (
-          a.fileNameTs !== null &&
-          b.fileNameTs !== null &&
-          a.fileNameTs !== b.fileNameTs
-        ) {
-          return (
-            Math.abs(replayTimestamp - a.fileNameTs) -
-            Math.abs(replayTimestamp - b.fileNameTs)
-          );
-        }
-        return a.fileName.localeCompare(b.fileName);
-      });
-
-    const best = ranked[0];
     return {
-      logDataFileName: best?.fileName ?? null,
-      logData: best?.fileData ?? null,
+      logDataFileName: best.fileName,
+      logData: { rFactorXML: { RaceResults: best.record.summary } },
     };
   } catch {
     return { logDataFileName: null, logData: null };
@@ -1269,32 +442,150 @@ interface LogMetaData {
   logDataFileName: string;
 }
 
+export const resolveLogDirectoryForReplay = (replay: LMUReplay): string =>
+  resolvePath(replay.replayDirectory, '../Log/Results');
+
+/**
+ * Builds the results-directory index for a replay's install.
+ *
+ * Callers that touch more than one replay should build this once and pass it
+ * down. Summaries are memoised per file, so a rebuild after nothing changed
+ * costs a stat per file rather than a parse.
+ */
+export const buildReplayLogIndex = (replay: LMUReplay): Promise<LogFileIndex> =>
+  buildLogFileIndex(resolveLogDirectoryForReplay(replay));
+
 export const getReplayLogData = async (
   replay: LMUReplay,
-  options?: { fullData?: boolean },
+  options?: { fullData?: boolean; index?: LogFileIndex },
 ): Promise<LogMetaData | null> => {
   try {
-    const { replayDirectory } = replay;
-    const logDataDirectory = resolvePath(replayDirectory, '../Log/Results');
-    const logData = await findBestLogFile(
-      logDataDirectory,
+    const logDataDirectory = resolveLogDirectoryForReplay(replay);
+    /*
+     * Selection always runs on the cheap streaming summaries, never on whole
+     * documents. Asking for full data used to swap the parser for xml2js — for
+     * every log in the directory, in parallel, to choose one of them. That is
+     * seconds and hundreds of megabytes per replay opened once a 24h log is in
+     * the folder.
+     */
+    const index =
+      options?.index?.logDir === logDataDirectory
+        ? options.index
+        : await buildLogFileIndex(logDataDirectory);
+
+    const best = selectBestLogSummary(
+      index,
       replay,
-      options?.fullData ? parseLogXmlFull : parseLogXml,
+      await getReplayFlushedAt(replay),
     );
 
-    if (!logData || !logData.logDataFileName || !logData.logData) {
+    if (!best) {
       return null;
     }
 
-    const logMetaData: LogMetaData = {
-      logData: logData?.logData?.rFactorXML?.RaceResults || null,
+    // Only the one log the replay actually belongs to is read in full.
+    const logData = options?.fullData
+      ? ((await parseLogXmlFull(best.filePath))?.rFactorXML?.RaceResults ??
+        null)
+      : best.record.summary;
+
+    if (!logData) {
+      return null;
+    }
+
+    return {
+      logData,
       logDataDirectory,
-      logDataFileName: logData?.logDataFileName || '',
+      logDataFileName: best.fileName,
     };
-    return logMetaData;
   } catch {
     return null;
   }
+};
+
+/**
+ * Cached replays, with just the fields the career needs to pair a session to a
+ * replay it can read an event title out of.
+ *
+ * Deliberately the cache rather than the replay folder: a career enrichment
+ * pass must never walk a directory of multi-gigabyte files, and a replay the
+ * game no longer lists has nothing to add anyway.
+ */
+export const getCachedReplaysForCareer = (): {
+  logDataFileName?: string;
+  replayDirectory?: string;
+  replayName?: string;
+}[] => {
+  const stored =
+    (getReplayStore().get('replays') as Record<string, ReplayCacheEntry>) || {};
+
+  return Object.values(stored).map((replay) => ({
+    logDataFileName: (replay as { logDataFileName?: string }).logDataFileName,
+    replayDirectory: replay.replayDirectory,
+    replayName: replay.replayName,
+  }));
+};
+
+/**
+ * A replay a captured live session might belong to.
+ *
+ * Both the cache and the imported store, because a live session can pair with a
+ * replay of the same race handed over from another machine — the case the
+ * reconciliation design calls out as "a replay appears later".
+ *
+ * The identity key travels with it so a confirmed link survives a re-hash, the
+ * same fallback the archive store uses.
+ */
+export interface ReplayMatchTarget {
+  hash: string;
+  identityKey: string;
+  replayName: string;
+  sceneDesc: string;
+  sessionType: SessionType | null;
+  /** Unix SECONDS, as everything replay-side is. */
+  timestamp: number;
+  /** Absolute path to the result log, or null when the replay has none. */
+  logPath: string | null;
+  imported: boolean;
+}
+
+export const listReplayMatchTargets = (): ReplayMatchTarget[] => {
+  const cached =
+    (getReplayStore().get('replays') as Record<string, ReplayCacheEntry>) || {};
+
+  const fromCache = Object.values(cached)
+    .filter((replay) => Boolean(replay?.hash))
+    .map((replay) => ({
+      hash: String(replay.hash),
+      identityKey: buildReplayCacheIdentityKey(replay),
+      replayName: replay.replayName ?? '',
+      sceneDesc: replay.metadata?.sceneDesc ?? '',
+      sessionType: replay.metadata?.session ?? null,
+      timestamp: Number(replay.timestamp ?? 0),
+      logPath:
+        replay.logDataDirectory && replay.logDataFileName
+          ? join(replay.logDataDirectory, replay.logDataFileName)
+          : null,
+      imported: false,
+    }));
+
+  const fromImports = Object.values(readImportedReplays()).map((record) => ({
+    hash: record.hash,
+    identityKey: buildReplayCacheIdentityKey({
+      metadata: { sceneDesc: record.sceneDesc, session: record.session },
+      replayName: record.replayName,
+      timestamp: record.timestamp,
+      replayDirectory: dirname(record.vcrPath ?? ''),
+    }),
+    replayName: record.originalReplayName || record.replayName,
+    sceneDesc: record.sceneDesc,
+    sessionType: record.session,
+    timestamp: Number(record.timestamp ?? 0),
+    logPath: record.logPath || null,
+    imported: true,
+  }));
+
+  return [...fromCache, ...fromImports];
 };
 
 export const getReplayData = async (): Promise<LMUReplay[]> => {
@@ -1373,6 +664,32 @@ export const syncReplayData = async (
    */
   const importedPaths = buildImportedPathIndex(readImportedReplays());
 
+  /*
+   * Built once for the whole sync, not once per replay.
+   *
+   * Every replay in a run shares an install and therefore a results directory,
+   * so re-deriving it per replay meant re-reading and re-parsing the same
+   * directory for each one — a first sync of 193 replays against 388 logs is
+   * 74 884 parses of the same files. Lazily, because a sync that finds nothing
+   * new should not touch the directory at all.
+   */
+  let logIndex: LogFileIndex | null = null;
+  const getLogIndex = async (replay: LMUReplay) => {
+    const logDir = resolveLogDirectoryForReplay(replay);
+    if (logIndex?.logDir !== logDir) {
+      /*
+       * Parsed with the career's own parser so this one pass serves both
+       * consumers. Matching reads only the session summary, which is identical
+       * either way; the career needs its driver names bound in, because
+       * isPlayer marks every human on the grid rather than the local one.
+       */
+      ensureCareerIdentity();
+      logIndex = await buildLogFileIndex(logDir, createCareerLogParser());
+    }
+
+    return logIndex;
+  };
+
   // Add hash to each replay and store in electron-store
   for (const replay of data) {
     if (importedPaths.has(buildReplayFilePath(replay))) {
@@ -1423,7 +740,9 @@ export const syncReplayData = async (
     }
 
     if (!storedReplay[hash]) {
-      const logMetaData = await getReplayLogData(replay);
+      const logMetaData = await getReplayLogData(replay, {
+        index: await getLogIndex(replay),
+      });
 
       if (logMetaData) {
         replay.logData = logMetaData.logData;
@@ -1444,6 +763,58 @@ export const syncReplayData = async (
   }
 
   replayStore.set('replays', storedReplay);
+
+  /*
+   * The career rides the index this sync already built, so it costs no extra
+   * filesystem work. Deliberately after the replay cache is written and behind
+   * its own guard: a career scan that fails must not lose a completed sync.
+   *
+   * Skipped when the sync never needed the directory — every replay was already
+   * cached — because the career is rescanned explicitly from its own page and
+   * has nothing new to read either.
+   */
+  if (logIndex) {
+    try {
+      await scanCareer({
+        index: logIndex,
+        /*
+         * Only logs this app actually wrote. Importing a replay of a race the
+         * user also drove copies no log — theirs is already there — and
+         * excluding those would drop their own sessions from their career.
+         */
+        importedLogPaths: new Set(
+          Object.values(readImportedReplays())
+            .filter((record) => record.logWasWritten)
+            .map((record) => record.logPath)
+            .filter((path): path is string => Boolean(path)),
+        ),
+      });
+
+      /*
+       * Official-event identity, which only the replay knows — a log for an
+       * "LMGT3 Sprint Cup split 3" session says nothing but `Multiplayer` and
+       * the track's name. Runs here as well as on an explicit rescan, or a
+       * driver who never opens the career page and presses a button would never
+       * get it. Each replay's trailer is read once and the session marked, so
+       * this costs nothing on subsequent syncs.
+       */
+      await enrichCareerFromReplays(
+        getCachedReplaysForCareer(),
+        async (filePath) => {
+          const trailer = await readVcrTrailer(filePath);
+          return trailer
+            ? {
+                eventTitle: trailer.eventTitle,
+                eventType: trailer.eventType,
+                splitNo: trailer.splitNo,
+              }
+            : null;
+        },
+      );
+    } catch {
+      // Career data is rebuilt on demand; a failure here is not a sync failure.
+    }
+  }
 };
 
 /**
@@ -1700,6 +1071,304 @@ export const postArchiveNote = async (
 };
 
 /**
+ * What the app last told Le Mans Ultimate to play.
+ *
+ * Persisted because **LMU cannot be asked which replay is loaded.**
+ * `/rest/replay/isActive` answers only true or false, and
+ * `/rest/watch/replays` lists every file on disk with nothing marking one as
+ * current — verified against a running replay on 2026-08-10. So the game is the
+ * authority on *whether* a replay is up and this record is the only answer to
+ * *which*, which is why nothing here is trusted without the check in
+ * `getActiveReplay`.
+ */
+const ACTIVE_REPLAY_KEY = 'activeReplay';
+
+interface ActiveReplayRecord {
+  hash: string;
+  identityKey: string;
+  /** All three carried for the check, since the hash itself cannot be verified. */
+  sceneDesc: string;
+  replayName: string;
+  sessionType: string;
+  loadedAt: number;
+}
+
+/*
+  The hash is passed in rather than read off the replay. It is the argument that
+  identified the replay in the first place, and a cache entry that predates the
+  field being stored carries none — which would file the record under an
+  undefined hash and quietly cost the banner.
+*/
+const rememberActiveReplay = (hash: string, replay: LMUReplay): void => {
+  try {
+    getReplayStore().set(ACTIVE_REPLAY_KEY, {
+      hash,
+      identityKey: buildReplayCacheIdentityKey(replay),
+      sceneDesc: replay.metadata?.sceneDesc ?? '',
+      // Carried because `getTrackAliases` falls back to it for a scene missing
+      // from TRACK_META_DATA, which new content is until the table catches up.
+      replayName: replay.replayName ?? '',
+      sessionType: String(replay.metadata?.session ?? ''),
+      loadedAt: Date.now(),
+    } satisfies ActiveReplayRecord);
+  } catch (error) {
+    // Best effort. Losing this costs the return banner after a restart, which
+    // is not worth failing a replay load over.
+    log.warn('replay: could not record the active replay', error);
+  }
+};
+
+const forgetActiveReplay = (): void => {
+  try {
+    getReplayStore().set(ACTIVE_REPLAY_KEY, null);
+  } catch (error) {
+    log.warn('replay: could not clear the active replay', error);
+  }
+};
+
+/**
+ * Whether the session the game is showing is the one we think we loaded.
+ *
+ * The remembered hash survives a restart of this app, but not necessarily a
+ * restart of the *game* — a steward can quit LMU, reopen it and load something
+ * else entirely, and the record would still name the old file. So the record is
+ * checked against what the game says it is playing before it is believed.
+ *
+ * Track and session type only. Two replays of the same practice session at the
+ * same circuit are genuinely indistinguishable through this API, and the
+ * remembered hash is a better answer for that case than nothing — the check is
+ * here to catch a different *session*, which is what actually goes wrong.
+ */
+export const activeReplayMatchesSession = (
+  record: Pick<ActiveReplayRecord, 'sceneDesc' | 'replayName' | 'sessionType'>,
+  info: { trackName?: string; session?: string },
+): boolean => {
+  /*
+    The two sides name the same circuit differently — `sessionInfo` answered
+    "Daytona International Speedway Road Course" against a replay whose metadata
+    says `DAYTONARC`, measured on 2026-08-10 — so this goes through the alias
+    table rather than comparing strings.
+  */
+  const trackMatches = tracksLikelyMatch(
+    getTrackAliases(record.sceneDesc, record.replayName),
+    String(info?.trackName ?? ''),
+  );
+
+  /*
+    `PRACTICE1` against `PRACTICE`, `RACE1` against `RACE`. The game numbers the
+    session it is showing and the replay's metadata does not, so this compares
+    the stem rather than the whole word.
+  */
+  const gameSession = String(info?.session ?? '').toUpperCase();
+  const storedSession = String(record.sessionType ?? '').toUpperCase();
+  const sessionMatches =
+    Boolean(gameSession) &&
+    Boolean(storedSession) &&
+    (gameSession.startsWith(storedSession) ||
+      storedSession.startsWith(gameSession));
+
+  return trackMatches && sessionMatches;
+};
+
+const activeReplayMatchesGame = async (
+  record: ActiveReplayRecord,
+): Promise<boolean> => {
+  const response = await fetch(
+    `${CONSTANTS.LMU_API_BASE_URL}/rest/watch/sessionInfo`,
+  );
+
+  if (!response.ok) {
+    return false;
+  }
+
+  return activeReplayMatchesSession(
+    record,
+    (await response.json()) as { trackName?: string; session?: string },
+  );
+};
+
+/**
+ * A replay with its result log parsed in full, ready for the replay view.
+ *
+ * The cached entry is deliberately thin — it carries where the log is, not what
+ * is in it, and `logDataLoaded: false` says so. Everything the replay view draws
+ * from the log rather than from the game comes out of `logData`: the master
+ * incident timeline, the heatmaps, the driver list, the standings table. Handing
+ * over the cache entry alone produces a view that loads, connects, and shows
+ * nothing.
+ *
+ * Shared so the two ways into that view cannot disagree. Loading a replay and
+ * rejoining one already playing have to arrive at the same object, and the
+ * second used to arrive at a much emptier one.
+ */
+const hydrateReplayWithLogData = async (
+  hash: string,
+  cachedReplay: LMUReplay,
+): Promise<LMUReplay> => {
+  /*
+    An imported replay already knows which log it belongs to — it was chosen and
+    recorded at import time. Re-deriving it here would put it back through
+    `findBestLogFile` against the whole results directory, which is exactly the
+    mismatch importing exists to avoid.
+  */
+  const importedRecord = readImportedReplays()[hash];
+  if (importedRecord) {
+    const importedLog = await parseLogXmlFull(importedRecord.logPath);
+    const importedLogData = importedLog?.rFactorXML?.RaceResults ?? null;
+
+    return {
+      ...cachedReplay,
+      logData: importedLogData,
+      logDataDirectory: importedRecord.logPath.slice(
+        0,
+        importedRecord.logPath.length - importedRecord.logFileName.length - 1,
+      ),
+      logDataFileName: importedRecord.logFileName,
+      multiplayer: getReplayMultiplayerFromLogData(importedLogData),
+      logDataLoaded: Boolean(importedLogData),
+    } as LMUReplay;
+  }
+
+  const logIndex = await buildReplayLogIndex(cachedReplay);
+  const fullLogMetaData = await getReplayLogData(cachedReplay, {
+    fullData: true,
+    index: logIndex,
+  });
+
+  return {
+    ...cachedReplay,
+    logData: fullLogMetaData?.logData ?? cachedReplay.logData,
+    logDataDirectory:
+      fullLogMetaData?.logDataDirectory || cachedReplay.logDataDirectory,
+    logDataFileName:
+      fullLogMetaData?.logDataFileName || cachedReplay.logDataFileName,
+    multiplayer: fullLogMetaData?.logData
+      ? getReplayMultiplayerFromLogData(fullLogMetaData.logData)
+      : typeof cachedReplay.multiplayer === 'boolean'
+        ? cachedReplay.multiplayer
+        : getReplayMultiplayerFromLogData(cachedReplay.logData),
+    logDataLoaded: Boolean(fullLogMetaData?.logData),
+  };
+};
+
+/**
+ * The replay the game is showing, or null.
+ *
+ * Answers the question the return banner needs after this app restarts: the
+ * replay keeps playing in LMU whatever this app does, and a steward who
+ * restarts mid-review would otherwise be left with a loaded replay and no route
+ * back to it — the exact situation the banner exists for.
+ *
+ * **A pure read.** It used to clear the remembered replay whenever `isActive`
+ * came back false, which destroyed the record in every ordinary case: the game
+ * not started yet, the game mid-load, the app running before LMU is reachable.
+ * One negative answer wiped the only memory of which replay was loaded and no
+ * later call could recover it — the banner never came back, whatever the game
+ * went on to do. The record is only ever cleared by closing the replay, which
+ * is a deliberate act, or overwritten by loading another.
+ */
+export const getActiveReplay = async (event: Electron.IpcMainEvent) => {
+  try {
+    const activeResponse = await fetch(
+      `${CONSTANTS.LMU_API_BASE_URL}/rest/replay/isActive`,
+    );
+    const isActive =
+      activeResponse.ok && (await activeResponse.json()) === true;
+
+    const replayStore = getReplayStore();
+    const record = replayStore.get(
+      ACTIVE_REPLAY_KEY,
+    ) as ActiveReplayRecord | null;
+
+    if (!isActive) {
+      log.info('active-replay: the game reports no replay is playing');
+
+      event.reply(CONSTANTS.API.GET_ACTIVE_REPLAY, {
+        status: 'success',
+        data: null,
+      });
+      return;
+    }
+
+    const cached =
+      (replayStore.get('replays') as Record<string, ReplayCacheEntry>) || {};
+    const replay = record
+      ? ((cached[record.hash] as LMUReplay | undefined) ??
+        (Object.values(cached).find(
+          (entry) => buildReplayCacheIdentityKey(entry) === record.identityKey,
+        ) as LMUReplay | undefined))
+      : undefined;
+
+    const matchesGame =
+      record !== null &&
+      record !== undefined &&
+      replay !== undefined &&
+      (await activeReplayMatchesGame(record));
+
+    /*
+      Logged because every way this can come back empty looks identical on
+      screen — no banner — and they want different fixes. "no record" means the
+      replay was loaded by something other than this app; "not in the cache"
+      means a sync is due; "does not match" means the game has moved on.
+    */
+    log.info(
+      `active-replay: playing, ${
+        !record
+          ? 'but nothing was recorded as loaded'
+          : !replay
+            ? `but ${record.hash.slice(0, 12)} is not in the replay cache`
+            : matchesGame
+              ? `resolved to ${record.replayName}`
+              : `but the game is not showing ${record.replayName}`
+      }`,
+    );
+
+    /*
+      Parsed in full before it goes back, exactly as loading a replay does.
+
+      The cache entry says where the log is, not what is in it. Everything the
+      replay view draws from the log rather than from the game — the master
+      incident timeline, the heatmaps, the driver list — lives in `logData`, so
+      returning the bare entry produced a view that loaded and then showed
+      nothing at all.
+    */
+    /*
+      Contained, so a log that cannot be read costs the banner rather than
+      erroring the whole call. Reported as "no replay" on purpose: the view is
+      built out of `logData`, so a banner leading to a replay whose log could
+      not be parsed would land the steward on an empty screen — worse than not
+      offering the way back.
+    */
+    let hydrated: LMUReplay | null = null;
+    if (matchesGame) {
+      try {
+        hydrated = await hydrateReplayWithLogData(record.hash, replay);
+      } catch (hydrationError) {
+        log.error(
+          `active-replay: could not read the result log for ${record.replayName}`,
+          hydrationError,
+        );
+      }
+    }
+
+    event.reply(CONSTANTS.API.GET_ACTIVE_REPLAY, {
+      status: 'success',
+      data: hydrated,
+    });
+  } catch (error: unknown) {
+    /*
+      A replay this cannot identify is reported as none. The banner offers to
+      take a steward back to a specific replay, and one that guessed would send
+      them to the wrong file — worse than not offering.
+    */
+    event.reply(CONSTANTS.API.GET_ACTIVE_REPLAY, {
+      status: 'error',
+      message: toErrorMessage(error),
+    });
+  }
+};
+
+/**
  * GET
  * Gets an existing replay by hash
  * /rest/watch/play/<hash>
@@ -1769,9 +1438,12 @@ export const postWatchReplay = async (
       return;
     }
 
+    // One index for both lookups below, rather than a directory scan per call.
+    const logIndex = await buildReplayLogIndex(replay);
+
     let cachedReplay = storedReplay[hash] as LMUReplay | undefined;
     if (!cachedReplay) {
-      const logMetaData = await getReplayLogData(replay);
+      const logMetaData = await getReplayLogData(replay, { index: logIndex });
 
       if (!logMetaData) {
         return;
@@ -1787,21 +1459,9 @@ export const postWatchReplay = async (
       cachedReplay = storedReplay[hash] as LMUReplay;
     }
 
-    const fullLogMetaData = await getReplayLogData(replay, { fullData: true });
-    const responseReplay = {
-      ...cachedReplay,
-      logData: fullLogMetaData?.logData ?? cachedReplay.logData,
-      logDataDirectory:
-        fullLogMetaData?.logDataDirectory || cachedReplay.logDataDirectory,
-      logDataFileName:
-        fullLogMetaData?.logDataFileName || cachedReplay.logDataFileName,
-      multiplayer: fullLogMetaData?.logData
-        ? getReplayMultiplayerFromLogData(fullLogMetaData.logData)
-        : typeof cachedReplay.multiplayer === 'boolean'
-          ? cachedReplay.multiplayer
-          : getReplayMultiplayerFromLogData(cachedReplay.logData),
-      logDataLoaded: Boolean(fullLogMetaData?.logData),
-    };
+    const responseReplay = await hydrateReplayWithLogData(hash, cachedReplay);
+
+    rememberActiveReplay(hash, responseReplay);
 
     event.reply(CONSTANTS.API.POST_WATCH_REPLAY, {
       status: 'success',
@@ -1892,6 +1552,188 @@ export const putReplayTime = async (
     });
   } catch (error: unknown) {
     event.reply(CONSTANTS.API.PUT_REPLAY_COMMAND_TIME, {
+      status: 'error',
+      message: toErrorMessage(error),
+    });
+  }
+};
+
+/**
+ * Is the game's picture currently showing a replay rather than the live edge?
+ *
+ * Read fresh rather than passed in. `/rest/replay/toggleactive` has no setter
+ * to pair with it — there is no `setActive` among LMU's endpoints — so the only
+ * way to reach a *known* state is to read, then toggle if the answer is wrong.
+ * A cached answer would let the steward's own press of the game's LIVE button
+ * turn "rewatch" into "return to live".
+ *
+ * Returns null when the question cannot be answered, which is the one case
+ * neither caller may guess at: toggling on a null would be a coin flip between
+ * doing nothing and yanking the picture off the live session.
+ */
+const readIsReplayActive = async (): Promise<boolean | null> => {
+  const response = await fetch(
+    `${CONSTANTS.LMU_API_BASE_URL}/rest/replay/isActive`,
+  );
+
+  if (!response.ok) {
+    return null;
+  }
+
+  return (await response.text()).trim().toLowerCase() === 'true';
+};
+
+const toggleReplayActive = async (): Promise<void> => {
+  const response = await fetch(
+    `${CONSTANTS.LMU_API_BASE_URL}/rest/replay/toggleactive`,
+    { method: 'POST' },
+  );
+
+  if (!response.ok) {
+    throw new Error(`API responded with status ${response.status}`);
+  }
+};
+
+/**
+ * POST
+ * Show the steward a moment from the live session's own replay buffer.
+ *
+ * `read isActive → toggle if live → seek → focus`, in that order, in one place.
+ *
+ * The order is not incidental. `PUT /rest/watch/replaytime/{seconds}` is
+ * **inert while `isActive` is false** — measured at the live edge, it answers
+ * 200 and does nothing — so a seek sent before the toggle silently fails. And
+ * the toggle on its own lands at lap 1, so the two are never separable: there
+ * is no honest "enter replay mode" button, only "show me this moment".
+ *
+ * **The focus is not optional garnish; without it the feature does not work.**
+ * Seeking alone rewinds the clock and leaves the camera wherever it was, so the
+ * steward arrives at the right moment pointed at the wrong car and has to focus
+ * a driver and press Rewatch a second time. The replay view's own jump has
+ * always sent both halves (`jumpToIncidentInReplay`); this shipped with only
+ * one of them. It goes last so that neither the toggle — which lands at lap 1
+ * and resets the view — nor the seek can move the camera off the car afterwards.
+ *
+ * Verified safe on 2026-08-08: with the picture seeked back 3,800 s from a live
+ * edge of ~7911, `sessionInfo.currentEventTime` kept advancing in real time and
+ * standings still reported the leader's live lap. `toggleactive` moves the
+ * rendered camera and nothing else — the sidecar's shared-memory scoring, the
+ * standings feed and therefore the live capture never see the rewind. **If that
+ * ever stops being true this feature corrupts live captures**, and the symptom
+ * would be a session appearing to split mid-race as the backwards ET jump blew
+ * through `SESSION_RESTART_ET_TOLERANCE`.
+ */
+
+export const postReplayRewatch = async (
+  event: Electron.IpcMainEvent,
+  request: { etSeconds?: number; slotId?: number },
+) => {
+  try {
+    const etSeconds = Number(request?.etSeconds);
+
+    if (!Number.isFinite(etSeconds)) {
+      throw new Error('No incident time to rewatch.');
+    }
+
+    /*
+      Optional, because a slot is the only key LMU's focus endpoint takes and
+      not every incident carries one — the layout fixtures have none, and a
+      party whose slot never reached the capture has none either. Seeking
+      without focusing is still worth doing; refusing to seek because the
+      camera cannot be aimed would be worse.
+    */
+    const slotId = Number(request?.slotId);
+    const hasSlot = Number.isFinite(slotId);
+
+    const isActive = await readIsReplayActive();
+
+    if (isActive === null) {
+      throw new Error(
+        'Le Mans Ultimate did not report whether a replay is playing.',
+      );
+    }
+
+    if (!isActive) {
+      await toggleReplayActive();
+    }
+
+    const seekToSeconds = replayJumpTargetSeconds(etSeconds);
+    const seekResponse = await fetch(
+      `${CONSTANTS.LMU_API_BASE_URL}/rest/watch/replaytime/${seekToSeconds}`,
+      { method: 'PUT' },
+    );
+
+    if (!seekResponse.ok) {
+      throw new Error(`API responded with status ${seekResponse.status}`);
+    }
+
+    /*
+      Checked rather than fired and forgotten, even though the seek has already
+      landed by this point and the picture has visibly moved. This is the one
+      call here that LMU can actually refuse — focus answers 400 on a slot
+      outside a session, where `setCamera` answers 200 to anything — so a silent
+      `await fetch` would hide the only real failure in the sequence.
+    */
+    if (hasSlot) {
+      const focusResponse = await fetch(
+        `${CONSTANTS.LMU_API_BASE_URL}/rest/watch/focus/${slotId}`,
+        { method: 'PUT' },
+      );
+
+      if (!focusResponse.ok) {
+        throw new Error(
+          `Rewound to the incident, but the camera would not move to slot ${slotId} (status ${focusResponse.status}).`,
+        );
+      }
+    }
+
+    event.reply(CONSTANTS.API.POST_REPLAY_REWATCH, {
+      status: 'success',
+      data: {
+        isReplayActive: true,
+        seekToSeconds,
+        focusedSlotId: hasSlot ? slotId : undefined,
+      },
+    });
+  } catch (error: unknown) {
+    event.reply(CONSTANTS.API.POST_REPLAY_REWATCH, {
+      status: 'error',
+      message: toErrorMessage(error),
+    });
+  }
+};
+
+/**
+ * POST
+ * Put the game's picture back on the live edge.
+ *
+ * Reads first and toggles only if a replay is actually playing, so pressing it
+ * twice — or pressing it after the steward has already used the game's own LIVE
+ * button — cannot rewind the picture into a replay. LMU resets playback speed
+ * to 1x on the way back, which is why the footer drops its speed control rather
+ * than leaving a stale one on screen.
+ */
+
+export const postReplayReturnToLive = async (event: Electron.IpcMainEvent) => {
+  try {
+    const isActive = await readIsReplayActive();
+
+    if (isActive === null) {
+      throw new Error(
+        'Le Mans Ultimate did not report whether a replay is playing.',
+      );
+    }
+
+    if (isActive) {
+      await toggleReplayActive();
+    }
+
+    event.reply(CONSTANTS.API.POST_REPLAY_RETURN_TO_LIVE, {
+      status: 'success',
+      data: { isReplayActive: false },
+    });
+  } catch (error: unknown) {
+    event.reply(CONSTANTS.API.POST_REPLAY_RETURN_TO_LIVE, {
       status: 'error',
       message: toErrorMessage(error),
     });
@@ -2049,6 +1891,8 @@ export const postCloseReplay = async (event: Electron.IpcMainEvent) => {
     if (!response.ok) {
       throw new Error(`API responded with status ${response.status}`);
     }
+
+    forgetActiveReplay();
 
     event.reply(CONSTANTS.API.POST_CLOSE_REPLAY, {
       status: 'success',

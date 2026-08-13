@@ -8,7 +8,17 @@ import {
   writeFileSync,
 } from 'fs';
 import nodePath from 'path';
-import { ImportedReplayRecord, LMUReplay, ProfileCacheStore } from '@types';
+import {
+  CareerSessionRecord,
+  ImportedReplayRecord,
+  LiveIncidentContextRecord,
+  LiveIncidentRecord,
+  LiveSessionRecord,
+  LMUReplay,
+  ProfileCacheStore,
+  StewardDecision,
+  StewardDecisionStore,
+} from '@types';
 
 type SqliteDatabase = import('better-sqlite3').Database;
 
@@ -32,6 +42,12 @@ interface StorageManager {
   legacyProfilePath: string;
   initializationError: string | null;
   clearAll: () => void;
+  /**
+   * The one deliberate exception to upsert-never-delete on the live tables.
+   * Capture must never drop a row on its own, but a captured session is user
+   * data that accumulates, so the user has to be able to remove one.
+   */
+  deleteLiveSession: (sessionKey: string) => void;
   dispose: () => void;
 }
 
@@ -55,6 +71,31 @@ const LEGACY_SYNC_STAMPS_KEY = '__syncStamps__';
  * carries it without a second code path.
  */
 const IMPORTED_REPLAYS_KEY = 'importedReplays';
+
+/**
+ * Backed by the career_sessions table, for the same reason imported replays get
+ * their own: these records survive the deletion of the files they came from, so
+ * they must not sit in a cache that is wiped on schema bumps.
+ */
+const CAREER_SESSIONS_KEY = 'careerSessions';
+
+/**
+ * Backed by the steward_decisions table, for the same reason the two above get
+ * their own: a decision is human judgement that exists nowhere else on disk.
+ */
+const STEWARD_DECISIONS_KEY = 'stewardDecisions';
+
+/**
+ * Backed by live_sessions / live_incidents / live_incident_contexts.
+ *
+ * Callers write these one record at a time as capture produces them, relying on
+ * the same upsert-never-delete rule as the keys above: a partial map touches
+ * only the rows it names. Writing at session end instead would be wrong —
+ * SME_END_SESSION is not guaranteed to fire.
+ */
+const LIVE_SESSIONS_KEY = 'liveSessions';
+const LIVE_INCIDENTS_KEY = 'liveIncidents';
+const LIVE_INCIDENT_CONTEXTS_KEY = 'liveIncidentContexts';
 const RESERVED_LEGACY_KEYS = new Set(['__internal__', LEGACY_SYNC_STAMPS_KEY]);
 
 const SQLITE_OPEN_ATTEMPTS = 3;
@@ -162,6 +203,99 @@ class SqliteNamespaceStore implements PersistentStore {
       return imported;
     }
 
+    if (this.namespace === 'main' && key === STEWARD_DECISIONS_KEY) {
+      const rows = this.db
+        .prepare(
+          'SELECT id, payload FROM steward_decisions ORDER BY decided_at DESC',
+        )
+        .all() as Array<{ id: string; payload: string }>;
+      const decisions: StewardDecisionStore = {};
+
+      for (const row of rows) {
+        const record = deserializeValue(row.payload);
+        if (record !== undefined) {
+          decisions[row.id] = record as StewardDecision;
+        }
+      }
+
+      return decisions;
+    }
+
+    if (this.namespace === 'main' && key === LIVE_SESSIONS_KEY) {
+      const rows = this.db
+        .prepare(
+          'SELECT session_key, payload FROM live_sessions ORDER BY started_at DESC',
+        )
+        .all() as Array<{ session_key: string; payload: string }>;
+      const sessions: Record<string, LiveSessionRecord> = {};
+
+      for (const row of rows) {
+        const record = deserializeValue(row.payload);
+        if (record !== undefined) {
+          sessions[row.session_key] = record as LiveSessionRecord;
+        }
+      }
+
+      return sessions;
+    }
+
+    if (this.namespace === 'main' && key === LIVE_INCIDENTS_KEY) {
+      const rows = this.db
+        .prepare(
+          'SELECT id, payload FROM live_incidents ORDER BY session_key, et_seconds',
+        )
+        .all() as Array<{ id: string; payload: string }>;
+      const liveIncidents: Record<string, LiveIncidentRecord> = {};
+
+      for (const row of rows) {
+        const record = deserializeValue(row.payload);
+        if (record !== undefined) {
+          liveIncidents[row.id] = record as LiveIncidentRecord;
+        }
+      }
+
+      return liveIncidents;
+    }
+
+    /*
+      Deliberately reads every trace in the table. Callers wanting one dossier
+      should query by incident id rather than pulling the whole collection —
+      this exists for completeness and for the migration path.
+    */
+    if (this.namespace === 'main' && key === LIVE_INCIDENT_CONTEXTS_KEY) {
+      const rows = this.db
+        .prepare('SELECT incident_id, payload FROM live_incident_contexts')
+        .all() as Array<{ incident_id: string; payload: string }>;
+      const contexts: Record<string, LiveIncidentContextRecord> = {};
+
+      for (const row of rows) {
+        const record = deserializeValue(row.payload);
+        if (record !== undefined) {
+          contexts[row.incident_id] = record as LiveIncidentContextRecord;
+        }
+      }
+
+      return contexts;
+    }
+
+    if (this.namespace === 'main' && key === CAREER_SESSIONS_KEY) {
+      const rows = this.db
+        .prepare(
+          'SELECT session_key, payload FROM career_sessions ORDER BY started_at DESC',
+        )
+        .all() as Array<{ session_key: string; payload: string }>;
+      const sessions: Record<string, CareerSessionRecord> = {};
+
+      for (const row of rows) {
+        const record = deserializeValue(row.payload);
+        if (record !== undefined) {
+          sessions[row.session_key] = record as CareerSessionRecord;
+        }
+      }
+
+      return sessions;
+    }
+
     const row = this.db
       .prepare(
         'SELECT value FROM kv_store WHERE namespace = ? AND key = ? LIMIT 1',
@@ -264,6 +398,301 @@ class SqliteNamespaceStore implements PersistentStore {
       return;
     }
 
+    /*
+      Upsert only, for the strongest reason of any table here: a decision is a
+      human judgement that exists nowhere else, and one made under appeal is
+      evidence. A partial map from any caller must leave the rest standing.
+    */
+    if (this.namespace === 'main' && key === STEWARD_DECISIONS_KEY) {
+      const decisionEntries = Object.entries(
+        isRecord(value) ? value : {},
+      ) as Array<[string, StewardDecision]>;
+
+      const upsertDecisions = this.db.transaction(
+        (entries: Array<[string, StewardDecision]>) => {
+          const statement = this.db.prepare(`
+            INSERT INTO steward_decisions (
+              id,
+              session_key,
+              session_track,
+              session_type,
+              session_date,
+              replay_hash,
+              incident_id,
+              basis,
+              driver_steam_id,
+              driver_slot_id,
+              driver_name,
+              outcome,
+              state,
+              status,
+              steward_author,
+              decided_at,
+              payload,
+              updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(id) DO UPDATE SET
+              session_key = excluded.session_key,
+              session_track = excluded.session_track,
+              session_type = excluded.session_type,
+              session_date = excluded.session_date,
+              replay_hash = excluded.replay_hash,
+              incident_id = excluded.incident_id,
+              basis = excluded.basis,
+              driver_steam_id = excluded.driver_steam_id,
+              driver_slot_id = excluded.driver_slot_id,
+              driver_name = excluded.driver_name,
+              outcome = excluded.outcome,
+              state = excluded.state,
+              status = excluded.status,
+              steward_author = excluded.steward_author,
+              decided_at = excluded.decided_at,
+              payload = excluded.payload,
+              updated_at = excluded.updated_at
+          `);
+
+          const updatedAt = Date.now();
+
+          for (const [id, record] of entries) {
+            statement.run(
+              id,
+              record?.sessionKey ?? '',
+              record?.sessionTrack ?? null,
+              record?.sessionType ?? null,
+              Number(record?.sessionDate ?? 0),
+              record?.replayHash ?? null,
+              record?.incidentId ?? null,
+              record?.basis ?? 'incident',
+              record?.target?.steamId ?? null,
+              record?.target?.slotId ?? null,
+              record?.target?.driverName ?? null,
+              record?.outcome ?? '',
+              record?.state ?? 'DECIDED',
+              record?.status ?? 'provisional',
+              record?.stewardAuthor ?? '',
+              Number(record?.decidedAt ?? updatedAt),
+              serializeValue(record),
+              updatedAt,
+            );
+          }
+        },
+      );
+
+      upsertDecisions(decisionEntries);
+      return;
+    }
+
+    /*
+      Live capture writes one record per call, mid-session, so these three
+      branches must upsert exactly what they are given and touch nothing else.
+      Anything that rewrote the collection would erase the session in progress.
+    */
+    if (this.namespace === 'main' && key === LIVE_SESSIONS_KEY) {
+      const entries = Object.entries(isRecord(value) ? value : {}) as Array<
+        [string, LiveSessionRecord]
+      >;
+
+      const upsertLiveSessions = this.db.transaction(
+        (rows: Array<[string, LiveSessionRecord]>) => {
+          const statement = this.db.prepare(`
+            INSERT INTO live_sessions (
+              session_key, track_name, session_type, session,
+              started_at, last_seen_at, driver_count,
+              linked_replay_hash, linked_replay_identity_key,
+              payload, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(session_key) DO UPDATE SET
+              track_name = excluded.track_name,
+              session_type = excluded.session_type,
+              session = excluded.session,
+              started_at = excluded.started_at,
+              last_seen_at = excluded.last_seen_at,
+              driver_count = excluded.driver_count,
+              linked_replay_hash = excluded.linked_replay_hash,
+              linked_replay_identity_key = excluded.linked_replay_identity_key,
+              payload = excluded.payload,
+              updated_at = excluded.updated_at
+          `);
+
+          const updatedAt = Date.now();
+
+          for (const [sessionKey, record] of rows) {
+            statement.run(
+              sessionKey,
+              record?.trackName ?? '',
+              record?.sessionType ?? null,
+              Number(record?.session ?? 0),
+              Number(record?.startedAt ?? 0),
+              Number(record?.lastSeenAt ?? 0),
+              record?.driverCount ?? null,
+              record?.link?.replayHash ?? null,
+              record?.link?.replayIdentityKey ?? null,
+              serializeValue(record),
+              updatedAt,
+            );
+          }
+        },
+      );
+
+      upsertLiveSessions(entries);
+      return;
+    }
+
+    if (this.namespace === 'main' && key === LIVE_INCIDENTS_KEY) {
+      const entries = Object.entries(isRecord(value) ? value : {}) as Array<
+        [string, LiveIncidentRecord]
+      >;
+
+      const upsertLiveIncidents = this.db.transaction(
+        (rows: Array<[string, LiveIncidentRecord]>) => {
+          const statement = this.db.prepare(`
+            INSERT INTO live_incidents (
+              id, session_key, kind, et_seconds,
+              occurred_at, has_context, payload, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(id) DO UPDATE SET
+              session_key = excluded.session_key,
+              kind = excluded.kind,
+              et_seconds = excluded.et_seconds,
+              occurred_at = excluded.occurred_at,
+              has_context = excluded.has_context,
+              payload = excluded.payload,
+              updated_at = excluded.updated_at
+          `);
+
+          const updatedAt = Date.now();
+
+          for (const [id, record] of rows) {
+            statement.run(
+              id,
+              record?.sessionKey ?? '',
+              record?.incident?.kind ?? 'incident',
+              Number(record?.incident?.etSeconds ?? 0),
+              Number(record?.occurredAt ?? 0),
+              record?.hasContext ? 1 : 0,
+              serializeValue(record),
+              updatedAt,
+            );
+          }
+        },
+      );
+
+      upsertLiveIncidents(entries);
+      return;
+    }
+
+    if (this.namespace === 'main' && key === LIVE_INCIDENT_CONTEXTS_KEY) {
+      const entries = Object.entries(isRecord(value) ? value : {}) as Array<
+        [string, LiveIncidentContextRecord]
+      >;
+
+      const upsertLiveContexts = this.db.transaction(
+        (rows: Array<[string, LiveIncidentContextRecord]>) => {
+          const statement = this.db.prepare(`
+            INSERT INTO live_incident_contexts (
+              incident_id, session_key, payload, updated_at
+            ) VALUES (?, ?, ?, ?)
+            ON CONFLICT(incident_id) DO UPDATE SET
+              session_key = excluded.session_key,
+              payload = excluded.payload,
+              updated_at = excluded.updated_at
+          `);
+
+          const updatedAt = Date.now();
+
+          for (const [incidentId, record] of rows) {
+            statement.run(
+              incidentId,
+              record?.sessionKey ?? '',
+              serializeValue(record),
+              updatedAt,
+            );
+          }
+        },
+      );
+
+      upsertLiveContexts(entries);
+      return;
+    }
+
+    /*
+      Written as an upsert over the collection the caller holds, never as a
+      delete-then-insert. A career record cannot be rebuilt once its source log
+      is gone, so a caller that somehow passes a partial map must leave the rest
+      of the table standing rather than erasing history.
+    */
+    if (this.namespace === 'main' && key === CAREER_SESSIONS_KEY) {
+      const careerEntries = Object.entries(
+        isRecord(value) ? value : {},
+      ) as Array<[string, CareerSessionRecord]>;
+
+      const upsertCareer = this.db.transaction(
+        (entries: Array<[string, CareerSessionRecord]>) => {
+          const statement = this.db.prepare(`
+            INSERT INTO career_sessions (
+              session_key,
+              driver_name,
+              started_at,
+              session_type,
+              setting,
+              track_folder,
+              track_layout,
+              track_venue,
+              car_class,
+              source_file_name,
+              source_fingerprint,
+              file_present,
+              excluded,
+              payload,
+              first_seen_at,
+              updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(session_key) DO UPDATE SET
+              driver_name = excluded.driver_name,
+              started_at = excluded.started_at,
+              session_type = excluded.session_type,
+              setting = excluded.setting,
+              track_folder = excluded.track_folder,
+              track_layout = excluded.track_layout,
+              track_venue = excluded.track_venue,
+              car_class = excluded.car_class,
+              source_file_name = excluded.source_file_name,
+              source_fingerprint = excluded.source_fingerprint,
+              file_present = excluded.file_present,
+              excluded = excluded.excluded,
+              payload = excluded.payload,
+              updated_at = excluded.updated_at
+          `);
+
+          const updatedAt = Date.now();
+
+          for (const [sessionKey, record] of entries) {
+            statement.run(
+              sessionKey,
+              record?.driverName ?? '',
+              Number(record?.startedAt ?? 0),
+              record?.sessionType ?? '',
+              record?.setting ?? null,
+              record?.trackFolder ?? null,
+              record?.trackLayout ?? null,
+              record?.trackVenue ?? null,
+              record?.carClass ?? null,
+              record?.sourceFileName ?? null,
+              record?.sourceFingerprint ?? null,
+              record?.filePresent === false ? 0 : 1,
+              record?.excluded ? 1 : 0,
+              serializeValue(record),
+              Number(record?.firstSeenAt ?? updatedAt),
+              updatedAt,
+            );
+          }
+        },
+      );
+
+      upsertCareer(careerEntries);
+      return;
+    }
+
     this.db
       .prepare(
         `
@@ -285,6 +714,7 @@ class SqliteNamespaceStore implements PersistentStore {
     if (this.namespace === 'main') {
       this.db.prepare('DELETE FROM replay_cache').run();
       this.db.prepare('DELETE FROM imported_replays').run();
+      this.db.prepare('DELETE FROM career_sessions').run();
     }
   }
 }
@@ -355,6 +785,40 @@ const ensureKvUpdatedAtColumn = (db: SqliteDatabase) => {
   db.prepare('UPDATE kv_store SET updated_at = ?').run(Date.now());
 };
 
+/**
+ * Adds the link columns to a live_sessions table created before they existed.
+ *
+ * Live capture shipped its tables before matching did, so an install that has
+ * already captured sessions has the older shape. Dropping and recreating would
+ * take real evidence with it.
+ */
+const ensureLiveSessionLinkColumns = (db: SqliteDatabase) => {
+  const columns = db
+    .prepare('PRAGMA table_info(live_sessions)')
+    .all() as Array<{
+    name: string;
+  }>;
+
+  const existing = new Set(columns.map((column) => column.name));
+
+  if (!existing.has('linked_replay_hash')) {
+    db.exec('ALTER TABLE live_sessions ADD COLUMN linked_replay_hash TEXT');
+  }
+
+  if (!existing.has('linked_replay_identity_key')) {
+    db.exec(
+      'ALTER TABLE live_sessions ADD COLUMN linked_replay_identity_key TEXT',
+    );
+  }
+
+  // After the columns exist, never in the schema block — the index would be
+  // created against a table that has not been altered yet.
+  db.exec(`
+    CREATE INDEX IF NOT EXISTS idx_live_sessions_linked_replay
+      ON live_sessions(linked_replay_hash);
+  `);
+};
+
 const initializeSqliteSchema = (db: SqliteDatabase) => {
   db.exec(`
     PRAGMA journal_mode = WAL;
@@ -405,6 +869,136 @@ const initializeSqliteSchema = (db: SqliteDatabase) => {
     CREATE INDEX IF NOT EXISTS idx_imported_replays_timestamp
       ON imported_replays(timestamp DESC);
 
+    /*
+      Sessions the user drove, as the driver dashboard remembers them.
+
+      Deliberately not in replay_cache, and for a stronger reason than imported
+      replays are not: a career record can outlive every file it was derived
+      from. Once the user deletes a result log no scan can rebuild that session,
+      so scanning only ever inserts and updates, and a vanished source marks
+      file_present rather than removing the row. Nothing here is dropped except
+      by an explicit user action.
+    */
+    CREATE TABLE IF NOT EXISTS career_sessions (
+      session_key TEXT PRIMARY KEY,
+      driver_name TEXT NOT NULL,
+      started_at INTEGER NOT NULL DEFAULT 0,
+      session_type TEXT NOT NULL,
+      setting TEXT,
+      track_folder TEXT,
+      track_layout TEXT,
+      track_venue TEXT,
+      car_class TEXT,
+      source_file_name TEXT,
+      source_fingerprint TEXT,
+      file_present INTEGER NOT NULL DEFAULT 1,
+      excluded INTEGER NOT NULL DEFAULT 0,
+      payload TEXT NOT NULL,
+      first_seen_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_career_sessions_started_at
+      ON career_sessions(started_at DESC);
+
+    CREATE INDEX IF NOT EXISTS idx_career_sessions_track
+      ON career_sessions(track_folder, track_layout);
+
+    /*
+      Steward decisions, and the same reasoning again: a decision is the output
+      of human judgement and exists nowhere else, so it must not sit anywhere
+      that gets emptied. Nothing here is ever dropped by the app.
+
+      The columns exist so a season-long query — "this driver's penalties across
+      every session in a date range" — can be served without loading and
+      scanning every decision ever made. The full record stays in payload.
+    */
+    CREATE TABLE IF NOT EXISTS steward_decisions (
+      id TEXT PRIMARY KEY,
+      session_key TEXT NOT NULL,
+      session_track TEXT,
+      session_type TEXT,
+      session_date INTEGER NOT NULL DEFAULT 0,
+      replay_hash TEXT,
+      incident_id TEXT,
+      basis TEXT NOT NULL,
+      driver_steam_id TEXT,
+      driver_slot_id INTEGER,
+      driver_name TEXT,
+      outcome TEXT NOT NULL,
+      state TEXT NOT NULL,
+      status TEXT NOT NULL,
+      steward_author TEXT,
+      decided_at INTEGER NOT NULL DEFAULT 0,
+      payload TEXT NOT NULL,
+      updated_at INTEGER NOT NULL
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_steward_decisions_session
+      ON steward_decisions(session_key);
+
+    CREATE INDEX IF NOT EXISTS idx_steward_decisions_driver
+      ON steward_decisions(driver_steam_id, session_date DESC);
+
+    /*
+      Captured live sessions, and their incidents and context windows.
+
+      These are user data, not cache, by the same argument as career sessions:
+      the post-session XML can rebuild incidents and standings, but derived
+      evidence and context windows exist nowhere else and a replay-cache wipe
+      must not take them.
+
+      Three tables rather than one because context windows are bulky — 60-80 KB
+      of trace JSON per contact, ~60 MB across a 24-hour race. Listing a
+      session's incidents has to stay cheap, so the traces sit apart and are
+      loaded only when a dossier is opened.
+    */
+    CREATE TABLE IF NOT EXISTS live_sessions (
+      session_key TEXT PRIMARY KEY,
+      track_name TEXT NOT NULL DEFAULT '',
+      session_type TEXT,
+      session INTEGER NOT NULL DEFAULT 0,
+      started_at INTEGER NOT NULL DEFAULT 0,
+      last_seen_at INTEGER NOT NULL DEFAULT 0,
+      driver_count INTEGER,
+      /*
+        The confirmed replay, by hash and by the cache's own fallback identity.
+        Both are columns rather than payload fields because the replay view
+        looks a session up by them, and a re-hash must not drop the link.
+      */
+      linked_replay_hash TEXT,
+      linked_replay_identity_key TEXT,
+      payload TEXT NOT NULL,
+      updated_at INTEGER NOT NULL
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_live_sessions_started
+      ON live_sessions(started_at DESC);
+
+    CREATE TABLE IF NOT EXISTS live_incidents (
+      id TEXT PRIMARY KEY,
+      session_key TEXT NOT NULL,
+      kind TEXT NOT NULL DEFAULT 'incident',
+      et_seconds REAL NOT NULL DEFAULT 0,
+      occurred_at INTEGER NOT NULL DEFAULT 0,
+      has_context INTEGER NOT NULL DEFAULT 0,
+      payload TEXT NOT NULL,
+      updated_at INTEGER NOT NULL
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_live_incidents_session
+      ON live_incidents(session_key, et_seconds);
+
+    CREATE TABLE IF NOT EXISTS live_incident_contexts (
+      incident_id TEXT PRIMARY KEY,
+      session_key TEXT NOT NULL,
+      payload TEXT NOT NULL,
+      updated_at INTEGER NOT NULL
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_live_incident_contexts_session
+      ON live_incident_contexts(session_key);
+
     CREATE TABLE IF NOT EXISTS meta (
       key TEXT PRIMARY KEY,
       value TEXT NOT NULL
@@ -412,6 +1006,7 @@ const initializeSqliteSchema = (db: SqliteDatabase) => {
   `);
 
   ensureKvUpdatedAtColumn(db);
+  ensureLiveSessionLinkColumns(db);
 };
 
 const getMeta = (db: SqliteDatabase, key: string): string | undefined => {
@@ -494,6 +1089,22 @@ const readImportedStamps = (db: SqliteDatabase): Map<string, number> => {
   return new Map(rows.map((row) => [row.hash, row.updated_at]));
 };
 
+const readDecisionStamps = (db: SqliteDatabase): Map<string, number> => {
+  const rows = db
+    .prepare('SELECT id, updated_at FROM steward_decisions')
+    .all() as Array<{ id: string; updated_at: number }>;
+
+  return new Map(rows.map((row) => [row.id, row.updated_at]));
+};
+
+const readCareerStamps = (db: SqliteDatabase): Map<string, number> => {
+  const rows = db
+    .prepare('SELECT session_key, updated_at FROM career_sessions')
+    .all() as Array<{ session_key: string; updated_at: number }>;
+
+  return new Map(rows.map((row) => [row.session_key, row.updated_at]));
+};
+
 /**
  * Merges a legacy main-store snapshot into SQLite, keeping whichever copy of
  * each key was written last. Replays merge per hash rather than replacing the
@@ -507,6 +1118,83 @@ const reconcileLegacyMainStore = (
   const kvStamps = readKvStamps(db, 'main');
   const replayStamps = readReplayStamps(db);
   const importedStamps = readImportedStamps(db);
+  const decisionStamps = readDecisionStamps(db);
+  const decisionStatement = db.prepare(`
+    INSERT INTO steward_decisions (
+      id,
+      session_key,
+      session_track,
+      session_type,
+      session_date,
+      replay_hash,
+      incident_id,
+      basis,
+      driver_steam_id,
+      driver_slot_id,
+      driver_name,
+      outcome,
+      state,
+      status,
+      steward_author,
+      decided_at,
+      payload,
+      updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT(id) DO UPDATE SET
+      session_key = excluded.session_key,
+      session_track = excluded.session_track,
+      session_type = excluded.session_type,
+      session_date = excluded.session_date,
+      replay_hash = excluded.replay_hash,
+      incident_id = excluded.incident_id,
+      basis = excluded.basis,
+      driver_steam_id = excluded.driver_steam_id,
+      driver_slot_id = excluded.driver_slot_id,
+      driver_name = excluded.driver_name,
+      outcome = excluded.outcome,
+      state = excluded.state,
+      status = excluded.status,
+      steward_author = excluded.steward_author,
+      decided_at = excluded.decided_at,
+      payload = excluded.payload,
+      updated_at = excluded.updated_at
+  `);
+  const careerStamps = readCareerStamps(db);
+  const careerStatement = db.prepare(`
+    INSERT INTO career_sessions (
+      session_key,
+      driver_name,
+      started_at,
+      session_type,
+      setting,
+      track_folder,
+      track_layout,
+      track_venue,
+      car_class,
+      source_file_name,
+      source_fingerprint,
+      file_present,
+      excluded,
+      payload,
+      first_seen_at,
+      updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT(session_key) DO UPDATE SET
+      driver_name = excluded.driver_name,
+      started_at = excluded.started_at,
+      session_type = excluded.session_type,
+      setting = excluded.setting,
+      track_folder = excluded.track_folder,
+      track_layout = excluded.track_layout,
+      track_venue = excluded.track_venue,
+      car_class = excluded.car_class,
+      source_file_name = excluded.source_file_name,
+      source_fingerprint = excluded.source_fingerprint,
+      file_present = excluded.file_present,
+      excluded = excluded.excluded,
+      payload = excluded.payload,
+      updated_at = excluded.updated_at
+  `);
   const importedStatement = db.prepare(`
     INSERT INTO imported_replays (
       hash,
@@ -629,6 +1317,85 @@ const reconcileLegacyMainStore = (
       continue;
     }
 
+    /*
+      Decisions merge per id and are never removed. Without this branch they
+      would fall through to kv_store, where the table reader would never find
+      them again.
+    */
+    if (key === STEWARD_DECISIONS_KEY) {
+      const decisionEntries = Object.entries(
+        isRecord(value) ? value : {},
+      ) as Array<[string, StewardDecision]>;
+
+      for (const [id, record] of decisionEntries) {
+        if ((decisionStamps.get(id) ?? -1) >= stamp) {
+          continue;
+        }
+
+        decisionStatement.run(
+          id,
+          record?.sessionKey ?? '',
+          record?.sessionTrack ?? null,
+          record?.sessionType ?? null,
+          Number(record?.sessionDate ?? 0),
+          record?.replayHash ?? null,
+          record?.incidentId ?? null,
+          record?.basis ?? 'incident',
+          record?.target?.steamId ?? null,
+          record?.target?.slotId ?? null,
+          record?.target?.driverName ?? null,
+          record?.outcome ?? '',
+          record?.state ?? 'DECIDED',
+          record?.status ?? 'provisional',
+          record?.stewardAuthor ?? '',
+          Number(record?.decidedAt ?? stamp),
+          serializeValue(record),
+          stamp,
+        );
+      }
+
+      continue;
+    }
+
+    /*
+      Career sessions merge per key, and for a stronger reason than the two
+      above: a record whose source log has since been deleted exists nowhere
+      else. Replacing the collection with a fallback session's partial view
+      would destroy history that cannot be rebuilt from disk.
+    */
+    if (key === CAREER_SESSIONS_KEY) {
+      const careerEntries = Object.entries(
+        isRecord(value) ? value : {},
+      ) as Array<[string, CareerSessionRecord]>;
+
+      for (const [sessionKey, record] of careerEntries) {
+        if ((careerStamps.get(sessionKey) ?? -1) >= stamp) {
+          continue;
+        }
+
+        careerStatement.run(
+          sessionKey,
+          record?.driverName ?? '',
+          Number(record?.startedAt ?? 0),
+          record?.sessionType ?? '',
+          record?.setting ?? null,
+          record?.trackFolder ?? null,
+          record?.trackLayout ?? null,
+          record?.trackVenue ?? null,
+          record?.carClass ?? null,
+          record?.sourceFileName ?? null,
+          record?.sourceFingerprint ?? null,
+          record?.filePresent === false ? 0 : 1,
+          record?.excluded ? 1 : 0,
+          serializeValue(record),
+          Number(record?.firstSeenAt ?? stamp),
+          stamp,
+        );
+      }
+
+      continue;
+    }
+
     if ((kvStamps.get(key) ?? -1) >= stamp) {
       continue;
     }
@@ -726,6 +1493,10 @@ const clearSqliteContents = (db: SqliteDatabase) => {
     db.prepare('DELETE FROM kv_store').run();
     db.prepare('DELETE FROM replay_cache').run();
     db.prepare('DELETE FROM imported_replays').run();
+    db.prepare('DELETE FROM career_sessions').run();
+    db.prepare('DELETE FROM live_sessions').run();
+    db.prepare('DELETE FROM live_incidents').run();
+    db.prepare('DELETE FROM live_incident_contexts').run();
     db.prepare('DELETE FROM meta').run();
   });
 
@@ -835,6 +1606,21 @@ const createSqliteStorageManager = (
       removeFileIfExists(pendingClearPath);
       clearSqliteContents(db);
     },
+    deleteLiveSession: (sessionKey: string) => {
+      // One transaction: a session whose traces survived its incidents would
+      // leave orphaned rows that nothing can reach or remove.
+      db.transaction(() => {
+        db.prepare(
+          'DELETE FROM live_incident_contexts WHERE session_key = ?',
+        ).run(sessionKey);
+        db.prepare('DELETE FROM live_incidents WHERE session_key = ?').run(
+          sessionKey,
+        );
+        db.prepare('DELETE FROM live_sessions WHERE session_key = ?').run(
+          sessionKey,
+        );
+      })();
+    },
     dispose: () => {
       db.close();
     },
@@ -895,6 +1681,34 @@ const createLegacyStorageManager = (
         'utf-8',
       );
     },
+    /*
+      Legacy `set` replaces a key wholesale, so filtering the collection and
+      writing it back is the delete. SQLite is unreachable this session and
+      keeps its own copy; the next successful start reconciles from here.
+    */
+    deleteLiveSession: (sessionKey: string) => {
+      const without = <T extends { sessionKey?: string }>(key: string) => {
+        const existing = (mainStore.get(key) ?? {}) as Record<string, T>;
+        return Object.fromEntries(
+          Object.entries(existing).filter(
+            ([, record]) => record?.sessionKey !== sessionKey,
+          ),
+        );
+      };
+
+      mainStore.set(
+        LIVE_INCIDENT_CONTEXTS_KEY,
+        without(LIVE_INCIDENT_CONTEXTS_KEY),
+      );
+      mainStore.set(LIVE_INCIDENTS_KEY, without(LIVE_INCIDENTS_KEY));
+
+      const sessions = (mainStore.get(LIVE_SESSIONS_KEY) ?? {}) as Record<
+        string,
+        unknown
+      >;
+      delete sessions[sessionKey];
+      mainStore.set(LIVE_SESSIONS_KEY, sessions);
+    },
     dispose: () => {},
   };
 };
@@ -942,6 +1756,10 @@ export const getProfilePersistentStore = (): PersistentStore =>
 
 export const clearPersistentStorage = (): void => {
   getStorageManager().clearAll();
+};
+
+export const deleteLiveSessionRecords = (sessionKey: string): void => {
+  getStorageManager().deleteLiveSession(sessionKey);
 };
 
 export const getPrimaryLocalDataPath = (): string =>

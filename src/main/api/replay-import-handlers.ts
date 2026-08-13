@@ -1,7 +1,8 @@
 import { CONSTANTS } from '@constants';
 import { ImportedReplayRecord, ImportedReplayStore } from '@types';
 import { dialog } from 'electron';
-import { mkdir, mkdtemp, rm, stat } from 'fs/promises';
+import log from 'electron-log';
+import { mkdir, mkdtemp, readFile, rm, stat } from 'fs/promises';
 import { tmpdir } from 'os';
 import { basename, dirname, join, resolve as resolvePath } from 'path';
 import { getMainPersistentStore } from '../storage/local-data-store';
@@ -11,11 +12,18 @@ import {
   ImportPreviewRow,
   ImportSelection,
   importReplays,
+  readLiveDataSidecar,
   readLogCandidate,
   scanImportSource,
 } from './replay-import';
+import { readManifestFile } from './import-manifest';
 import { readVcrTrailerResult } from './vcr-metadata';
-import { parseLogXml } from './replay';
+import { listReplayMatchTargets, parseLogXml } from './replay';
+import {
+  applyLiveExportPayload,
+  buildLiveExportPayload,
+  isLiveExportPayload,
+} from './live-export';
 import { validateImportPair } from './replay-import-match';
 import { getTrackAliases } from './track-matching';
 import { assertFreeSpace } from './disk-space';
@@ -26,6 +34,7 @@ import {
   buildWeekendFileName,
   buildWeekendLayout,
   buildWeekendManifest,
+  EXPORT_LIVE_DATA_NAME,
   EXPORT_MANIFEST_NAME,
   ExportProgress,
   ExportReplayRequest,
@@ -400,6 +409,72 @@ export interface ImportReplaysRequest {
  * inside the temp directory this process unpacked. A row naming anything else
  * is dropped rather than trusted.
  */
+/**
+ * Restores any captured sessions that travelled with the imported replays.
+ *
+ * The file sits beside the .Vcr it belongs to, which is what makes the pairing
+ * unambiguous — no matching is needed or wanted here, because the archive is a
+ * direct statement from the exporting steward about which capture goes with
+ * which replay.
+ *
+ * Isolated per row: an unreadable capture must not fail an import that has
+ * already copied gigabytes of replay onto the disk successfully.
+ */
+const restoreImportedLiveData = async (
+  rows: ImportPreviewRow[],
+  outcomes: Array<{ id: string; status: string; hash?: string }>,
+): Promise<void> => {
+  const rowsById = new Map(rows.map((row) => [row.id, row]));
+  const targets = listReplayMatchTargets();
+
+  for (const outcome of outcomes) {
+    if (outcome.status !== 'imported' || !outcome.hash) {
+      continue;
+    }
+
+    const row = rowsById.get(outcome.id);
+    const target = targets.find((entry) => entry.hash === outcome.hash);
+
+    if (!row || !target) {
+      continue;
+    }
+
+    const livePath = join(dirname(row.vcrPath), EXPORT_LIVE_DATA_NAME);
+
+    try {
+      // eslint-disable-next-line no-await-in-loop
+      const raw = await readFile(livePath, 'utf-8');
+      const payload = JSON.parse(raw) as unknown;
+
+      if (!isLiveExportPayload(payload)) {
+        log.warn(
+          `live-export: ${livePath} is not a captured session, ignoring it`,
+        );
+        continue;
+      }
+
+      applyLiveExportPayload(payload, {
+        hash: target.hash,
+        identityKey: target.identityKey,
+        replayName: target.replayName,
+      });
+    } catch (error) {
+      /*
+        A missing file is the ordinary case — most archives carry no capture.
+        Anything else is not, and must not look like it: swallowing a parse or
+        write failure here would make a broken import indistinguishable from a
+        normal one, with the evidence silently absent on the far side.
+      */
+      if ((error as NodeJS.ErrnoException)?.code !== 'ENOENT') {
+        log.error(
+          `live-export: failed to restore the capture from ${livePath}`,
+          error,
+        );
+      }
+    }
+  }
+};
+
 export const postImportReplays = async (
   event: Electron.IpcMainEvent,
   request?: ImportReplaysRequest,
@@ -433,6 +508,14 @@ export const postImportReplays = async (
     });
 
     writeImportedStore(imported);
+
+    /*
+      Captured sessions ride in beside the replays they belong to. Restored
+      after the store is written, because the link needs the hash and identity
+      key the import just minted — and before the extracted source is thrown
+      away, which is the only place the file exists.
+    */
+    await restoreImportedLiveData(rows, outcomes);
 
     // The unpacked archive has served its purpose the moment the copies land.
     await discardExtractedSource();
@@ -628,6 +711,55 @@ const measureSessionFiles = async (
 };
 
 /**
+ * The captured session for a replay, ready to drop into the archive.
+ *
+ * Null when the replay has no linked capture, which is the ordinary case and
+ * produces exactly the archive exports produced before this existed.
+ *
+ * Failures are swallowed: a hand-off that carries the footage and the log is
+ * still a working hand-off, and refusing to export a multi-gigabyte replay
+ * because a trace could not be read would be a poor trade.
+ */
+const buildLiveArchiveEntry = (
+  request: ExportReplayRequest,
+  entryPrefix: string,
+): {
+  entry: ArchiveEntry;
+  bytes: number;
+  summary: { includesTelemetry: boolean };
+} | null => {
+  try {
+    const identityKey = listReplayMatchTargets().find(
+      (target) => target.hash === request.hash,
+    )?.identityKey;
+
+    const payload = buildLiveExportPayload(
+      request.hash,
+      Boolean(request.includeLiveTelemetry),
+      identityKey,
+    );
+
+    if (!payload) {
+      return null;
+    }
+
+    const buffer = Buffer.from(JSON.stringify(payload));
+
+    return {
+      entry: {
+        source: { buffer },
+        entryName: `${entryPrefix}${EXPORT_LIVE_DATA_NAME}`,
+      },
+      bytes: buffer.byteLength,
+      summary: { includesTelemetry: payload.includesTelemetry },
+    };
+  } catch (error) {
+    log.warn('live-export: could not attach captured session', error);
+    return null;
+  }
+};
+
+/**
  * Byte-based progress, pushed while the archive is written.
  *
  * A weekend is several 400 MB files, so without this the window looks frozen
@@ -714,7 +846,13 @@ export const postExportReplay = async (
       return;
     }
 
-    const totalBytes = vcrSize + logSize;
+    /*
+      Built before the free-space check so its bytes are counted. A session's
+      trace windows can run to tens of megabytes, which is nothing beside a
+      .Vcr but is not nothing beside a nearly-full disk.
+    */
+    const liveEntry = buildLiveArchiveEntry(request, '');
+    const totalBytes = vcrSize + logSize + (liveEntry?.bytes ?? 0);
 
     await assertFreeSpace(
       dirname(response.filePath),
@@ -736,11 +874,17 @@ export const postExportReplay = async (
           source: { filePath: logPath },
           entryName: basename(logPath),
         },
+        ...(liveEntry ? [liveEntry.entry] : []),
         {
           source: {
             buffer: Buffer.from(
               JSON.stringify(
-                buildExportManifest(request, vcrPath, logPath),
+                buildExportManifest(
+                  request,
+                  vcrPath,
+                  logPath,
+                  liveEntry?.summary ?? null,
+                ),
                 null,
                 2,
               ),
@@ -890,6 +1034,16 @@ export const postExportWeekend = async (
     ];
 
     for (const entry of entries) {
+      // The session directory the per-session manifest already sits in, so the
+      // capture lands beside the replay it belongs to rather than at the root.
+      const liveEntry = buildLiveArchiveEntry(
+        entry.request,
+        entry.manifestEntryName.slice(
+          0,
+          entry.manifestEntryName.lastIndexOf('/') + 1,
+        ),
+      );
+
       archiveEntries.push(
         {
           source: { filePath: entry.vcrPath },
@@ -899,6 +1053,7 @@ export const postExportWeekend = async (
           source: { filePath: entry.logPath },
           entryName: entry.logEntryName,
         },
+        ...(liveEntry ? [liveEntry.entry] : []),
         {
           source: {
             buffer: Buffer.from(
@@ -907,6 +1062,7 @@ export const postExportWeekend = async (
                   entry.request,
                   entry.vcrPath,
                   entry.logPath,
+                  liveEntry?.summary ?? null,
                 ),
                 null,
                 2,
@@ -1106,6 +1262,27 @@ export interface ImportPairRequest {
   note?: string;
 }
 
+/**
+ * The telemetry flag for a replay the user picked by hand.
+ *
+ * The bulk paths get this from the manifest scan; there is no scan here, so the
+ * session manifest beside the .Vcr is read on its own. Absent for a loose
+ * replay, which is the ordinary case and simply leaves the flag unknown.
+ */
+const readSiblingTelemetryFlag = async (
+  vcrPath: string,
+): Promise<boolean | null> => {
+  const parsed = await readManifestFile(
+    join(dirname(vcrPath), EXPORT_MANIFEST_NAME),
+  );
+
+  return (
+    parsed?.sessions.find(
+      (entry) => entry.vcrPath.toLowerCase() === vcrPath.toLowerCase(),
+    )?.includesTelemetry ?? null
+  );
+};
+
 const buildPairValidation = async ({ vcrPath, logPath }: ImportPairRequest) => {
   const trailerResult = await readVcrTrailerResult(vcrPath);
 
@@ -1127,7 +1304,12 @@ const buildPairValidation = async ({ vcrPath, logPath }: ImportPairRequest) => {
     getTrackAliases(trailer.sceneDesc, stripVcrExtension(basename(vcrPath))),
   );
 
-  return { trailer, candidate, validation };
+  const liveData = await readLiveDataSidecar(
+    vcrPath,
+    await readSiblingTelemetryFlag(vcrPath),
+  );
+
+  return { trailer, candidate, validation, liveData };
 };
 
 export const postValidateImportPair = async (
@@ -1139,11 +1321,11 @@ export const postValidateImportPair = async (
       throw new Error('Both a replay file and a result log are required.');
     }
 
-    const { validation } = await buildPairValidation(request);
+    const { validation, liveData } = await buildPairValidation(request);
 
     event.reply(CONSTANTS.API.POST_VALIDATE_IMPORT_PAIR, {
       status: 'success',
-      data: validation,
+      data: { ...validation, liveData },
     });
   } catch (error: unknown) {
     event.reply(CONSTANTS.API.POST_VALIDATE_IMPORT_PAIR, {
@@ -1162,7 +1344,7 @@ export const postImportReplayPair = async (
       throw new Error('Both a replay file and a result log are required.');
     }
 
-    const { trailer, candidate, validation } =
+    const { trailer, candidate, validation, liveData } =
       await buildPairValidation(request);
 
     /*
@@ -1194,6 +1376,7 @@ export const postImportReplayPair = async (
       alreadyImportedHash: null,
       // The user picked both files themselves; there is nothing to consult.
       manifest: null,
+      liveData,
     };
 
     const { outcomes, imported } = await importReplays({
@@ -1220,6 +1403,17 @@ export const postImportReplayPair = async (
     }
 
     writeImportedStore(imported);
+
+    /*
+      Same restore the bulk paths run, for the same reason.
+
+      Picking the two files by hand is a statement about the pairing, not a
+      refusal of anything else in the folder — someone who extracted a Steward
+      archive and reached for the .Vcr and the .xml has the capture sitting
+      right beside them. Skipping it here made this path silently produce a
+      worse import than the folder scan over the very same files.
+    */
+    await restoreImportedLiveData([row], outcomes);
 
     event.reply(CONSTANTS.API.POST_IMPORT_REPLAY_PAIR, {
       status: 'success',

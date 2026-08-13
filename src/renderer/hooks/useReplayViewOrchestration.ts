@@ -88,11 +88,25 @@ export const useReplayViewOrchestration = ({
     ? (replayViewCachedDataByHash.get(replayHash) ?? null)
     : null;
 
+  /**
+   * The game is already showing this replay, so there is no load to wait for.
+   *
+   * Deliberately *not* conditioned on this renderer having cached data. The
+   * startup gate only ever closes on a loading cycle — a `loading` flag or a
+   * progress reading from LMU — and a replay that is already up produces
+   * neither, so arming the gate here leaves the loading screen at 0% for as
+   * long as the view is open while the data loads behind it.
+   *
+   * That is exactly what the return banner walks into after this app restarts:
+   * the replay is still playing, and the in-memory cache the old condition
+   * required went with the previous process.
+   */
+  const isReplayAlreadyShowing = Boolean(
+    replayHash && currentReplay?.hash === replayHash && isReplayActive === true,
+  );
+
   const canReuseReplayOnMount = Boolean(
-    replayHash &&
-      currentReplay?.hash === replayHash &&
-      isReplayActive === true &&
-      cachedReplayData,
+    isReplayAlreadyShowing && cachedReplayData,
   );
 
   const [hasRequestedReplayData, setHasRequestedReplayData] = useState(
@@ -110,7 +124,7 @@ export const useReplayViewOrchestration = ({
     unknown
   > | null>(cachedReplayData?.standingsHistoryData ?? null);
   const [isReplayStartupGateActive, setIsReplayStartupGateActive] = useState(
-    !canReuseReplayOnMount,
+    !isReplayAlreadyShowing,
   );
   const [isReplayActiveForRoute, setIsReplayActiveForRoute] = useState<
     boolean | null
@@ -305,7 +319,19 @@ export const useReplayViewOrchestration = ({
       }
 
       setHasRequestedReplayData(Boolean(activationPlan.hasCachedReplayData));
-      setIsReplayStartupGateActive(!activationPlan.hasCachedReplayData);
+      /*
+        Never armed on this path. The game is already showing the replay, so it
+        will report no loading cycle — and the gate has no other way to close.
+        Without cached data that left the loading screen pinned at 0% forever
+        while the standings and session info arrived behind it, which is what
+        the return banner produces after a restart: replay still playing, cache
+        gone with the previous process.
+
+        The loading screen still covers the fetch, through
+        `hasRequestedReplayData` in `shouldShowReplayLoadingUi`, and clears when
+        that resolves rather than waiting on a load that has already happened.
+      */
+      setIsReplayStartupGateActive(false);
       setHasSeenReplayLoadStart(false);
 
       if (activationPlan.shouldRequestTrackMap) {

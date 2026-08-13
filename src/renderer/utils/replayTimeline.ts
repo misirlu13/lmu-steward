@@ -1,3 +1,4 @@
+import { replayJumpTargetSeconds } from '@constants';
 import { normalizeDriverCarClass } from './sessionUtils';
 import { toArray } from './collections';
 import {
@@ -73,10 +74,24 @@ export const extractNameAndCarNumberFromIncident = (
   };
 };
 
+/**
+ * The second car in a collision.
+ *
+ * LMU writes "...with another vehicle Rui Andrade(22)", and the literal
+ * "another vehicle" has to come off or it is captured as part of the name.
+ * That produced a driver called "another vehicle Rui Andrade", which matches
+ * nothing in the roster, so the second car of every collision rendered with no
+ * car number, no class and no lap data.
+ *
+ * It survived because the test used synthetic text — "Driver One(12) with
+ * Driver Two(99)" — which omits the prefix every real log has.
+ */
 export const extractSecondaryIncidentDriver = (
   value: string,
 ): { name: string; carNumber?: string } | null => {
-  const match = value.match(/with\s+([^()]+)\(([^)]+)\)/i);
+  const match = value.match(
+    /with\s+(?:another vehicle\s+)?([^()]+)\(([^)]+)\)/i,
+  );
   if (!match) {
     return null;
   }
@@ -326,7 +341,11 @@ export const buildReplayTimelineEvents = ({
 
   const buildEvent = (
     type: ReplayIncidentEvent['type'],
-    item: { et?: number | string; distanceMeters?: number | string },
+    item: {
+      et?: number | string;
+      distanceMeters?: number | string;
+      sourceText?: string;
+    },
     index: number,
     driversForEvent: ReplayIncidentEvent['drivers'],
     description?: string,
@@ -341,7 +360,7 @@ export const buildReplayTimelineEvents = ({
       ? Math.max(sourceEtSeconds - (replayTimeBaselineSeconds ?? 0), 0)
       : sourceEtSeconds;
 
-    const jumpToSeconds = Math.max(sourceEtSeconds - 5, 0);
+    const jumpToSeconds = replayJumpTargetSeconds(sourceEtSeconds);
     const matchedPrimaryDriver = primaryDriverRawName
       ? getMatchedDriver(primaryDriverRawName)
       : undefined;
@@ -371,6 +390,7 @@ export const buildReplayTimelineEvents = ({
             ? 'critical'
             : 'serious',
       distanceMeters: Number(item?.distanceMeters),
+      sourceText: item?.sourceText,
     };
   };
 
@@ -411,6 +431,7 @@ export const buildReplayTimelineEvents = ({
         {
           ...item,
           distanceMeters: impactForce,
+          sourceText,
         },
         index,
         driversForEvent,

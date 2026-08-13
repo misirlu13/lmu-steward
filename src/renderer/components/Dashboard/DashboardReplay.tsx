@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import {
   DashboardViewMode,
+  LiveSessionSummary,
   LMUReplay,
   SessionIncidents,
   SessionMetaData,
@@ -25,6 +26,7 @@ import ToolTip from '@mui/material/Tooltip';
 import TireRepair from '@mui/icons-material/TireRepair';
 import LocalFireDepartmentIcon from '@mui/icons-material/LocalFireDepartment';
 import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
+import SensorsIcon from '@mui/icons-material/Sensors';
 import MoreVertIcon from '@mui/icons-material/MoreVert';
 import ArchiveIcon from '@mui/icons-material/Archive';
 import UnarchiveIcon from '@mui/icons-material/Unarchive';
@@ -59,6 +61,19 @@ interface DashboardReplayProps {
   onExportSession: (replay: LMUReplay) => void;
   onExportWeekend: (replays: LMUReplay[], weekendLabel: string) => void;
   canExport: boolean;
+  /**
+   * Why opening a replay is unavailable, or null. Loading one takes over the
+   * game, so it has to be off the table while a session is being captured.
+   */
+  viewReplayDisabledReason?: string | null;
+  /**
+   * The captured live session behind each replay, by replay hash.
+   *
+   * Absent for most replays and empty entirely for most users — capture is off
+   * by default — which is why this marks the rows that have it rather than the
+   * rows that do not.
+   */
+  liveCaptureByReplay?: Map<string, LiveSessionSummary>;
 }
 
 interface DashboardReplayTableRow {
@@ -113,6 +128,8 @@ export const DashboardReplay: React.FC<DashboardReplayProps> = ({
   onExportSession,
   onExportWeekend,
   canExport,
+  viewReplayDisabledReason = null,
+  liveCaptureByReplay,
 }) => {
   const replay = replayGroup[0];
   const isArchivedView = dashboardView === 'archived';
@@ -557,6 +574,21 @@ export const DashboardReplay: React.FC<DashboardReplayProps> = ({
                   >
                     Penalties
                   </TableCell>
+                  {/*
+                    Immediately right of the incident columns, because that is
+                    what it qualifies: these three counts come off the result
+                    log, and this says whether there is telemetry behind them.
+                  */}
+                  <TableCell
+                    sx={{
+                      fontSize: '11px',
+                      color: 'text.secondary',
+                      textTransform: 'uppercase',
+                      letterSpacing: '0.1em',
+                    }}
+                  >
+                    Live Capture
+                  </TableCell>
                   <TableCell />
                 </TableRow>
               </TableHead>
@@ -709,6 +741,47 @@ export const DashboardReplay: React.FC<DashboardReplayProps> = ({
                         ? `${row.incidents.penalties} Applied`
                         : '-'}
                     </TableCell>
+                    {/*
+                      Only the rows that have it. Capture is off by default and
+                      most libraries have none at all, so a "no capture" mark on
+                      every row would be noise on a column nobody could act on.
+
+                      The trace count is what the badge carries rather than the
+                      incident count: traces are the part a replay cannot
+                      rebuild, and they are what makes opening this session
+                      worth more than opening any other.
+                    */}
+                    <TableCell sx={{ color: 'text.secondary' }}>
+                      {(() => {
+                        const capture = liveCaptureByReplay?.get(row.hash);
+                        if (!capture) {
+                          return '-';
+                        }
+
+                        return (
+                          <ToolTip
+                            title={`Captured live: ${capture.incidentCount} incidents, ${capture.evidenceCount} with telemetry. Open the replay to review them.`}
+                          >
+                            <Box
+                              aria-label="Live capture available"
+                              sx={{
+                                display: 'inline-flex',
+                                alignItems: 'center',
+                                gap: 0.75,
+                                color: 'primary.main',
+                              }}
+                            >
+                              <SensorsIcon
+                                sx={{ width: '16px', height: '16px' }}
+                              />
+                              {capture.evidenceCount
+                                ? `${capture.evidenceCount} traces`
+                                : 'Captured'}
+                            </Box>
+                          </ToolTip>
+                        );
+                      })()}
+                    </TableCell>
                     <TableCell align="right">
                       <Box
                         sx={{
@@ -730,13 +803,24 @@ export const DashboardReplay: React.FC<DashboardReplayProps> = ({
                             />
                           </ToolTip>
                         ) : null}
-                        <Button
-                          onClick={() => onViewReplay(row.hash)}
-                          size="small"
-                          variant="contained"
-                        >
-                          View Replay
-                        </Button>
+                        {/*
+                          The span is what makes the explanation reachable. MUI
+                          fires no mouse events on a disabled control, so a bare
+                          Tooltip on it would never open — and a dead button
+                          with no reason given is worse than no button.
+                        */}
+                        <ToolTip title={viewReplayDisabledReason ?? ''}>
+                          <span>
+                            <Button
+                              onClick={() => onViewReplay(row.hash)}
+                              disabled={Boolean(viewReplayDisabledReason)}
+                              size="small"
+                              variant="contained"
+                            >
+                              View Replay
+                            </Button>
+                          </span>
+                        </ToolTip>
                         <IconButton
                           aria-label={`Actions for ${row.sessionType}`}
                           size="small"

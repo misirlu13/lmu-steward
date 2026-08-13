@@ -39,6 +39,14 @@ jobs:
           npm run postinstall
           npm run build
 
+      # Produces tools/live-capture-spike/build/lmu-spike.exe, which the win
+      # extraResources entry copies in as resources/lmu-spike.exe. Needs the
+      # runner's MSVC toolset but no Le Mans Ultimate install — the shared memory
+      # layout is vendored. Without this the installer ships fine and live
+      # capture is silently inert, so it must run before electron-builder.
+      - name: Build live capture sidecar
+        run: npm run build:sidecar
+
       - name: Publish releases
         env:
           # The APPLE_* values are used for auto updates signing

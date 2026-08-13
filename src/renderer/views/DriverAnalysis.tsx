@@ -1,4 +1,4 @@
-import { Box, Paper, Stack, Tooltip, Typography } from '@mui/material';
+import { Box, Paper, Stack, Tooltip, Typography, Button } from '@mui/material';
 import { useEffect } from 'react';
 import { useLocation, useNavigate, useParams } from 'react-router-dom';
 import InfoOutlinedIcon from '@mui/icons-material/InfoOutlined';
@@ -82,9 +82,13 @@ export const DriverAnalysisView: React.FC = () => {
   const isAiDriver = Boolean(driver.isAiDriver || selectedDriverIsAi);
   const isQuickViewModeActive = quickViewEnabled && isReplayActive !== true;
 
-  const onBackToDashboard = () => {
+  const onCloseAndBackToReplays = () => {
     sendMessage(CONSTANTS.API.POST_CLOSE_REPLAY);
-    navigate(`/`);
+    navigate('/replays');
+  };
+
+  const onBackToDriver = () => {
+    navigate('/replays');
   };
 
   useEffect(() => {
@@ -105,9 +109,9 @@ export const DriverAnalysisView: React.FC = () => {
               variant="caption"
               color="text.secondary"
               sx={{ cursor: 'pointer' }}
-              onClick={onBackToDashboard}
+              onClick={onBackToDriver}
             >
-              Dashboard
+              Replays
             </Typography>
             <Typography variant="caption" color="text.secondary">
               /
@@ -164,6 +168,20 @@ export const DriverAnalysisView: React.FC = () => {
           </Stack>
         }
         onBack={() => navigate(`/replay/${replayHash}`)}
+        actions={
+          <Stack direction="row" spacing={1} alignItems="center">
+            <Button
+              onClick={onCloseAndBackToReplays}
+              variant="contained"
+              sx={{
+                backgroundColor: 'error.alt',
+                ':hover': { backgroundColor: 'error.main' },
+              }}
+            >
+              Close Replay
+            </Button>
+          </Stack>
+        }
       />
 
       {isQuickViewModeActive ? (

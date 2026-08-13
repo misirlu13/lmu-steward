@@ -1,4 +1,5 @@
 import React from 'react';
+import '@testing-library/jest-dom';
 import { act, fireEvent, render, screen, within } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { CONSTANTS } from '@constants';
@@ -174,6 +175,9 @@ describe('UserSettingsView integration', () => {
         syncOnIntervalMinutes: 5,
         persistDashboardFiltersEnabled: false,
         experimentalFeaturesEnabled: false,
+        liveCaptureEnabled: false,
+        stewardAuthorName: '',
+        stewardActions: null,
         anonymizeDriverData: false,
         telemetryCacheEnabled: true,
         clearCacheOnExit: false,
@@ -282,6 +286,9 @@ describe('UserSettingsView integration', () => {
         syncOnIntervalMinutes: 5,
         persistDashboardFiltersEnabled: false,
         experimentalFeaturesEnabled: false,
+        liveCaptureEnabled: false,
+        stewardAuthorName: '',
+        stewardActions: null,
         anonymizeDriverData: false,
         telemetryCacheEnabled: true,
         clearCacheOnExit: false,
@@ -349,5 +356,282 @@ describe('UserSettingsView integration', () => {
     ).getByRole('switch');
 
     expect((toggle as HTMLInputElement).checked).toBe(true);
+  });
+
+  describe('the steward name recorded on decisions', () => {
+    const hydrate = (stewardAuthorName?: string) =>
+      emitIpc(CONSTANTS.API.GET_USER_SETTINGS, {
+        status: 'success',
+        data: {
+          lmuExecutablePath:
+            'C:/Program Files (x86)/Steam/steamapps/common/Le Mans Ultimate/Le Mans Ultimate.exe',
+          lmuReplayDirectoryPath:
+            'C:/Program Files (x86)/Steam/steamapps/common/Le Mans Ultimate/UserData/Replays',
+          stewardAuthorName,
+        },
+      });
+
+    const nameField = () => screen.getByLabelText('Steward name');
+
+    it('hydrates from stored settings and autosaves an edit', () => {
+      renderView();
+      hydrate('Bradley');
+
+      expect((nameField() as HTMLInputElement).value).toBe('Bradley');
+
+      fireEvent.change(nameField(), { target: { value: 'Race Control' } });
+
+      act(() => {
+        jest.advanceTimersByTime(800);
+      });
+
+      expect(sendMessageMock).toHaveBeenCalledWith(
+        CONSTANTS.API.POST_USER_SETTINGS,
+        expect.objectContaining({ stewardAuthorName: 'Race Control' }),
+      );
+    });
+
+    /*
+      Shows the fallback rather than pre-filling it, so a steward can tell "I
+      have not set this" from "I have set it to Steward" — and so clearing the
+      box does not read as having typed the generic name on purpose.
+    */
+    it('shows the generic author as a placeholder when unset', () => {
+      renderView();
+      hydrate(undefined);
+
+      expect((nameField() as HTMLInputElement).value).toBe('');
+      expect(nameField().getAttribute('placeholder')).toBe('Steward');
+    });
+
+    // Stored trimmed, so a stray space is not a name. The steward would get an
+    // author on their record that prints as nothing.
+    it('trims whitespace on the way to the store', () => {
+      renderView();
+      hydrate('');
+
+      fireEvent.change(nameField(), { target: { value: '  Bradley  ' } });
+
+      act(() => {
+        jest.advanceTimersByTime(800);
+      });
+
+      expect(sendMessageMock).toHaveBeenCalledWith(
+        CONSTANTS.API.POST_USER_SETTINGS,
+        expect.objectContaining({ stewardAuthorName: 'Bradley' }),
+      );
+    });
+  });
+
+  describe('the actions a dossier offers', () => {
+    const hydrate = (stewardActions?: unknown) =>
+      emitIpc(CONSTANTS.API.GET_USER_SETTINGS, {
+        status: 'success',
+        data: {
+          lmuExecutablePath:
+            'C:/Program Files (x86)/Steam/steamapps/common/Le Mans Ultimate/Le Mans Ultimate.exe',
+          lmuReplayDirectoryPath:
+            'C:/Program Files (x86)/Steam/steamapps/common/Le Mans Ultimate/UserData/Replays',
+          stewardActions,
+        },
+      });
+
+    const labelField = (position: number) =>
+      screen.getByLabelText(`Action ${position} label`) as HTMLInputElement;
+
+    const settle = () =>
+      act(() => {
+        jest.advanceTimersByTime(800);
+      });
+
+    const lastPostedActions = () => {
+      const posts = sendMessageMock.mock.calls.filter(
+        ([channel]) => channel === CONSTANTS.API.POST_USER_SETTINGS,
+      );
+
+      return (posts[posts.length - 1]?.[1] as { stewardActions?: unknown })
+        ?.stewardActions;
+    };
+
+    it('shows the shipped tariff when nothing is stored', () => {
+      renderView();
+      hydrate(undefined);
+
+      expect(labelField(1).value).toBe('5s Penalty');
+      expect(labelField(5).value).toBe('Note Only');
+    });
+
+    it('hydrates a stored tariff instead', () => {
+      renderView();
+      hydrate([
+        { id: 'a', label: 'DT', driverScoped: true },
+        { id: 'b', label: 'Racing Incident', driverScoped: false },
+      ]);
+
+      expect(labelField(1).value).toBe('DT');
+      expect(labelField(2).value).toBe('Racing Incident');
+      expect(screen.queryByLabelText('Action 3 label')).toBeNull();
+    });
+
+    /*
+      Nothing should be written on load. The value hydrates through the same
+      reduction the payload goes through, so the baseline and the first computed
+      payload are the same string — get that wrong and every visit to this view
+      writes settings once.
+    */
+    it('autosaves nothing on load', () => {
+      renderView();
+      hydrate([{ id: 'a', label: 'DT', driverScoped: true }]);
+
+      settle();
+
+      expect(sendMessageMock).not.toHaveBeenCalledWith(
+        CONSTANTS.API.POST_USER_SETTINGS,
+        expect.anything(),
+      );
+    });
+
+    it('autosaves an edited label', () => {
+      renderView();
+      hydrate(undefined);
+
+      fireEvent.change(labelField(1), { target: { value: '5 Second' } });
+      settle();
+
+      expect(lastPostedActions()).toEqual([
+        expect.objectContaining({ label: '5 Second', driverScoped: true }),
+        expect.objectContaining({ label: '10s Penalty' }),
+        expect.objectContaining({ label: 'Drive-Through' }),
+        expect.objectContaining({ label: 'No Action' }),
+        expect.objectContaining({ label: 'Note Only' }),
+      ]);
+    });
+
+    it('autosaves a driver-scope change', () => {
+      renderView();
+      hydrate(undefined);
+
+      fireEvent.click(
+        screen.getByLabelText('Action 4 applies to one driver') as HTMLElement,
+      );
+      settle();
+
+      expect(lastPostedActions()).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ label: 'No Action', driverScoped: true }),
+        ]),
+      );
+    });
+
+    it('adds an action', () => {
+      renderView();
+      hydrate(undefined);
+
+      fireEvent.click(screen.getByRole('button', { name: 'Add action' }));
+      fireEvent.change(labelField(6), { target: { value: 'DSQ' } });
+      settle();
+
+      expect(lastPostedActions()).toHaveLength(6);
+      expect(lastPostedActions()).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ label: 'DSQ', driverScoped: true }),
+        ]),
+      );
+    });
+
+    /*
+      A half-typed label is not stored, and neither is a row that duplicates one.
+      The person is told which row is at fault rather than having it silently
+      dropped without explanation.
+    */
+    it('flags a blank label and keeps it out of the store', () => {
+      renderView();
+      hydrate(undefined);
+
+      fireEvent.change(labelField(2), { target: { value: '' } });
+      settle();
+
+      expect(screen.getByText(/label is needed/i)).toBeInTheDocument();
+      expect(lastPostedActions()).toHaveLength(4);
+    });
+
+    it('flags a duplicate label', () => {
+      renderView();
+      hydrate(undefined);
+
+      fireEvent.change(labelField(2), { target: { value: '5s Penalty' } });
+      settle();
+
+      expect(screen.getByText(/already uses this label/i)).toBeInTheDocument();
+    });
+
+    // Deleting the last row would leave the dossier with nothing to press, and
+    // falling back to the shipped set instead would look like a failed delete.
+    it('refuses to remove the only remaining action', () => {
+      renderView();
+      hydrate([{ id: 'a', label: 'DT', driverScoped: true }]);
+
+      expect(screen.getByLabelText('Remove action 1')).toBeDisabled();
+    });
+
+    it('reorders an action, moving its shortcut with it', () => {
+      renderView();
+      hydrate(undefined);
+
+      fireEvent.click(screen.getByLabelText('Move action 2 up'));
+      settle();
+
+      expect(labelField(1).value).toBe('10s Penalty');
+      expect(lastPostedActions()).toEqual([
+        expect.objectContaining({ label: '10s Penalty' }),
+        expect.objectContaining({ label: '5s Penalty' }),
+        expect.objectContaining({ label: 'Drive-Through' }),
+        expect.objectContaining({ label: 'No Action' }),
+        expect.objectContaining({ label: 'Note Only' }),
+      ]);
+    });
+
+    /*
+      Revert stores nothing rather than a copy of the defaults. That is what lets
+      a later change to the shipped set reach anyone who has ever pressed it — a
+      written-out copy would freeze the current five into the install forever.
+    */
+    it('reverts by storing nothing at all', () => {
+      renderView();
+      hydrate([{ id: 'a', label: 'DT', driverScoped: true }]);
+
+      fireEvent.click(
+        screen.getByRole('button', { name: /Revert to default/ }),
+      );
+      settle();
+
+      expect(labelField(1).value).toBe('5s Penalty');
+      expect(lastPostedActions()).toBeNull();
+    });
+
+    it('offers no revert while already on the shipped tariff', () => {
+      renderView();
+      hydrate(undefined);
+
+      expect(
+        screen.getByRole('button', { name: /Revert to default/ }),
+      ).toBeDisabled();
+    });
+
+    // Editing back to the shipped wording is the same thing as never having
+    // customised, so it stores nothing too.
+    it('stores nothing once an edit lands back on the shipped tariff', () => {
+      renderView();
+      hydrate(undefined);
+
+      fireEvent.change(labelField(1), { target: { value: 'DT' } });
+      settle();
+      expect(lastPostedActions()).not.toBeNull();
+
+      fireEvent.change(labelField(1), { target: { value: '5s Penalty' } });
+      settle();
+
+      expect(lastPostedActions()).toBeNull();
+    });
   });
 });

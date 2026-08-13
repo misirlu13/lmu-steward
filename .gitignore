@@ -30,6 +30,11 @@ npm-debug.log.*
 
 /fixture-test-set
 
+# Live capture sidecar build output. The binary DOES ship — electron-builder
+# copies it in as resources/lmu-spike.exe — but it is built from source during
+# packaging, so the artifact itself stays out of git.
+tools/live-capture-spike/build
+
 # Working design and implementation plans. Local-only so they survive branch
 # switches and never reach origin.
 /plans

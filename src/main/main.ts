@@ -14,19 +14,52 @@ import { autoUpdater } from 'electron-updater';
 import log from 'electron-log';
 import {
   ArchiveReplaysRequest,
+  CareerFilters,
   GetReplaysRequest,
   PersistedDashboardView,
+  StewardDecision,
 } from '@types';
 import MenuBuilder from './menu';
 import { resolveHtmlPath } from './util';
 import { CONSTANTS } from '../../constants';
 import { getApiStatus } from './api/api-status';
 import {
+  getLiveSessionStatus,
+  getLiveSessionDataHandler,
+} from './api/live-session';
+import { startLiveCapture, stopLiveCapture } from './api/live-capture';
+import { sweepExpiredLiveSessions } from './api/live-retention';
+import {
+  getLiveDataForReplay,
+  getLiveIncidentContext,
+  getLiveRetentionPreview,
+  getLiveSessionMatches,
+  getLiveSessions,
+  getLiveSessionSegments,
+  getLocalDataSummary,
+  LinkLiveSessionRequest,
+  LiveSessionSegmentsRequest,
+  postDeleteLiveSession,
+  postDismissLiveSessionMatch,
+  postLinkLiveSession,
+} from './api/live-session-handlers';
+import {
+  ExportSessionDataRequest,
+  postExportSessionData,
+} from './api/session-export';
+import {
+  getStewardDecisionsHandler,
+  postStewardDecisionHandler,
+} from './api/steward-decisions';
+import {
   getReplays,
   getIsReplayActive,
   postArchiveNote,
   postArchiveReplays,
+  getActiveReplay,
   postCloseReplay,
+  postReplayRewatch,
+  postReplayReturnToLive,
   postRestoreReplays,
   postToggleUIElement,
   postWatchReplay,
@@ -56,17 +89,19 @@ import {
   SetImportedNoteRequest,
 } from './api/replay-import-handlers';
 import {
-  getTrackThumbnail,
   getStandings,
   getStandingsHistory,
   getTrackMap,
+  getLiveTrackMap,
   getSessionInfo,
 } from './api/session';
+import { getLiveCarPositions } from './api/live-positions';
 import {
   CameraAngleRequestBody,
   postSetCameraAngle,
   putFocusCar,
   getFocusedCar,
+  getCameraInfo,
 } from './api/camera';
 import {
   getUserSettings,
@@ -78,6 +113,12 @@ import {
   writeUserSettings,
 } from './api/user-settings';
 import { getProfileInfo } from './api/profile';
+import {
+  getCareerSummary,
+  postCareerClaimIdentity,
+  postCareerExcludeSession,
+  postCareerRescan,
+} from './api/career-handlers';
 import {
   closeLmu,
   postCloseLmu,
@@ -158,21 +199,40 @@ const CHANNEL_CALLBACK_HANDLERS: Partial<
 > = {
   // GET REQUESTS
   [CONSTANTS.API.GET_API_STATUS]: withEventOnly(getApiStatus),
+  [CONSTANTS.API.GET_LIVE_SESSION_STATUS]: withEventOnly(getLiveSessionStatus),
+  [CONSTANTS.API.GET_LIVE_SESSION_DATA]: withEventOnly(
+    getLiveSessionDataHandler,
+  ),
+  [CONSTANTS.API.GET_LIVE_CAR_POSITIONS]: withEventOnly(getLiveCarPositions),
   [CONSTANTS.API.GET_TRACK_MAP]: withEventOnly(getTrackMap),
+  [CONSTANTS.API.GET_LIVE_TRACK_MAP]: withEventOnly(getLiveTrackMap),
   [CONSTANTS.API.GET_REPLAYS]: withEventAndData<GetReplaysRequest | undefined>(
     getReplays,
   ),
-  [CONSTANTS.API.GET_TRACK_THUMBNAIL]:
-    withEventAndData<number>(getTrackThumbnail),
   [CONSTANTS.API.GET_USER_SETTINGS]: withEventOnly(getUserSettings),
   [CONSTANTS.API.GET_PROFILE_INFO]: withEventOnly(getProfileInfo),
   [CONSTANTS.API.GET_STANDINGS_HISTORY]: withEventOnly(getStandingsHistory),
   [CONSTANTS.API.GET_STANDINGS]: withEventOnly(getStandings),
   [CONSTANTS.API.GET_IS_REPLAY_ACTIVE]: withEventOnly(getIsReplayActive),
+  [CONSTANTS.API.GET_ACTIVE_REPLAY]: withEventOnly(getActiveReplay),
   [CONSTANTS.API.GET_SESSION_INFO]: withEventOnly(getSessionInfo),
   [CONSTANTS.API.GET_FOCUSED_CAR]: withEventOnly(getFocusedCar),
+  [CONSTANTS.API.GET_CAMERA_INFO]: withEventOnly(getCameraInfo),
+  [CONSTANTS.API.GET_CAREER_SUMMARY]: withEventAndData<
+    CareerFilters | undefined
+  >(getCareerSummary),
 
   // POST REQUESTS
+  [CONSTANTS.API.POST_CAREER_RESCAN]: withEventAndData<
+    { rebuild?: boolean; filters?: CareerFilters } | undefined
+  >(postCareerRescan),
+  [CONSTANTS.API.POST_CAREER_CLAIM_IDENTITY]: withEventAndData<
+    { name?: string; filters?: CareerFilters } | undefined
+  >(postCareerClaimIdentity),
+  [CONSTANTS.API.POST_CAREER_EXCLUDE_SESSION]: withEventAndData<
+    | { sessionKey?: string; excluded?: boolean; filters?: CareerFilters }
+    | undefined
+  >(postCareerExcludeSession),
   [CONSTANTS.API.POST_REPLAY_COMMAND_UI]: withEventAndData<
     string | { all: boolean }
   >(postToggleUIElement),
@@ -189,6 +249,12 @@ const CHANNEL_CALLBACK_HANDLERS: Partial<
     withEventAndData<ArchiveReplaysRequest>(postArchiveNote),
   [CONSTANTS.API.POST_CAMERA_ANGLE]:
     withEventAndData<CameraAngleRequestBody>(postSetCameraAngle),
+  [CONSTANTS.API.POST_REPLAY_REWATCH]: withEventAndData<{ etSeconds?: number }>(
+    postReplayRewatch,
+  ),
+  [CONSTANTS.API.POST_REPLAY_RETURN_TO_LIVE]: withEventOnly(
+    postReplayReturnToLive,
+  ),
   [CONSTANTS.API.POST_CLOSE_REPLAY]: withEventOnly(postCloseReplay),
   [CONSTANTS.API.POST_CLOSE_LMU]: withEventOnly(postCloseLmu),
   [CONSTANTS.API.POST_CLEAR_LOCAL_STORAGE]: withEventOnly(
@@ -224,12 +290,45 @@ const CHANNEL_CALLBACK_HANDLERS: Partial<
     withEventAndData<ImportReplaysRequest>(postImportReplays),
   [CONSTANTS.API.POST_DELETE_IMPORTED_REPLAYS]:
     withEventAndData<DeleteImportedReplaysRequest>(postDeleteImportedReplays),
+  [CONSTANTS.API.GET_LIVE_SESSIONS]: withEventOnly(getLiveSessions),
+  [CONSTANTS.API.GET_LIVE_SESSION_SEGMENTS]:
+    withEventAndData<LiveSessionSegmentsRequest>(getLiveSessionSegments),
+  [CONSTANTS.API.POST_DELETE_LIVE_SESSION]: withEventAndData<string>(
+    postDeleteLiveSession,
+  ),
+  [CONSTANTS.API.GET_LIVE_SESSION_MATCHES]: withEventAndData<string>(
+    getLiveSessionMatches,
+  ),
+  [CONSTANTS.API.POST_LINK_LIVE_SESSION]:
+    withEventAndData<LinkLiveSessionRequest>(postLinkLiveSession),
+  [CONSTANTS.API.POST_DISMISS_LIVE_SESSION_MATCH]: withEventAndData<string>(
+    postDismissLiveSessionMatch,
+  ),
+  [CONSTANTS.API.GET_LIVE_DATA_FOR_REPLAY]: withEventAndData<{
+    replayHash?: string;
+    replayIdentityKey?: string;
+  }>(getLiveDataForReplay),
+  [CONSTANTS.API.GET_LIVE_INCIDENT_CONTEXT]: withEventAndData<string>(
+    getLiveIncidentContext,
+  ),
+  [CONSTANTS.API.GET_LIVE_RETENTION_PREVIEW]: withEventAndData<number | null>(
+    getLiveRetentionPreview,
+  ),
+  [CONSTANTS.API.GET_LOCAL_DATA_SUMMARY]: withEventOnly(getLocalDataSummary),
   [CONSTANTS.API.POST_SET_IMPORTED_NOTE]:
     withEventAndData<SetImportedNoteRequest>(postSetImportedNote),
   [CONSTANTS.API.POST_EXPORT_REPLAY]:
     withEventAndData<ExportReplayRequest>(postExportReplay),
   [CONSTANTS.API.POST_EXPORT_WEEKEND]:
     withEventAndData<ExportWeekendRequest>(postExportWeekend),
+  [CONSTANTS.API.POST_EXPORT_SESSION_DATA]:
+    withEventAndData<ExportSessionDataRequest>(postExportSessionData),
+  [CONSTANTS.API.GET_STEWARD_DECISIONS]: withEventOnly(
+    getStewardDecisionsHandler,
+  ),
+  [CONSTANTS.API.POST_STEWARD_DECISION]: withEventAndData<StewardDecision>(
+    postStewardDecisionHandler,
+  ),
   [CONSTANTS.API.POST_SELECT_IMPORT_FILE]:
     withEventAndData<SelectImportFileRequest>(postSelectImportFile),
   [CONSTANTS.API.POST_VALIDATE_IMPORT_PAIR]:
@@ -431,6 +530,37 @@ const requestExitDecisionFromRenderer = async (
   });
 };
 
+/**
+ * Removes captured sessions past the retention window, once per process.
+ *
+ * Runs strictly after the launch replay sync, for two reasons. Politeness —
+ * expiry is housekeeping with nothing waiting on it and must not compete with
+ * the work the user actually opened the app for. And contention: better-sqlite3
+ * is synchronous, so a sweep interleaved with sync would fight for the one
+ * connection during the phase where responsiveness is most visible.
+ *
+ * Isolated as well as silent. This is the least important thing happening at
+ * that moment and should fail as quietly as it runs.
+ */
+let hasSweptLiveSessions = false;
+
+const runLiveRetentionSweep = async () => {
+  if (hasSweptLiveSessions || devModeEnabled) {
+    return;
+  }
+
+  hasSweptLiveSessions = true;
+
+  try {
+    const settings = await readUserSettings();
+    sweepExpiredLiveSessions(
+      settings.liveCaptureRetentionDays as number | null,
+    );
+  } catch (error) {
+    log.warn('live-retention: sweep failed', error);
+  }
+};
+
 const runReplayAutoSync = async (source: 'launch' | 'interval') => {
   if (replayAutoSyncInProgress) {
     return;
@@ -453,6 +583,12 @@ const runReplayAutoSync = async (source: 'launch' | 'interval') => {
     log.warn(`Replay auto-sync (${source}) failed`, error);
   } finally {
     replayAutoSyncInProgress = false;
+
+    // After the sync, whether or not it succeeded — a sync that failed is no
+    // reason to let recordings accumulate forever.
+    if (source === 'launch') {
+      void runLiveRetentionSweep();
+    }
   }
 };
 
@@ -476,11 +612,23 @@ const configureReplayAutoSync = async () => {
     ? Math.max(1, Number(settings.syncOnIntervalMinutes))
     : 5;
 
+  /*
+    The sweep waits behind a launch sync when there is going to be one, and runs
+    straight away when there is not. Hanging it off the sync alone would mean an
+    install with automatic sync turned off — or one still on its first run —
+    never expired anything at all.
+  */
+  const willSyncOnLaunch = automaticSyncEnabled && syncOnAppLaunch && !firstRun;
+
+  if (!willSyncOnLaunch) {
+    void runLiveRetentionSweep();
+  }
+
   if (!automaticSyncEnabled) {
     return;
   }
 
-  if (syncOnAppLaunch && !firstRun) {
+  if (willSyncOnLaunch) {
     void runReplayAutoSync('launch');
   }
 
@@ -490,6 +638,43 @@ const configureReplayAutoSync = async () => {
     },
     syncOnIntervalMinutes * 60 * 1000,
   );
+};
+
+/**
+ * Live capture needs BOTH the experimental gate and its own switch. The sidecar
+ * takes a machine-wide lock that wheel LED and motion software share, so it
+ * stays off until someone asks for it by name.
+ *
+ * Called on boot and after every settings write, so toggling either switch
+ * starts or stops the sidecar without an app restart. Both calls are idempotent.
+ */
+let isLiveCaptureConfigured = false;
+
+const configureLiveCapture = async () => {
+  if (devModeEnabled) {
+    return;
+  }
+
+  const settings = await readUserSettings();
+  const enabled =
+    Boolean(settings.experimentalFeaturesEnabled) &&
+    Boolean(settings.liveCaptureEnabled);
+
+  if (enabled === isLiveCaptureConfigured) {
+    return;
+  }
+
+  isLiveCaptureConfigured = enabled;
+
+  // Logged because capture is now conditional: when the live view is empty the
+  // first question is whether the sidecar was ever asked to run.
+  if (enabled) {
+    log.info('live-capture: enabled by settings, starting sidecar');
+    startLiveCapture();
+  } else {
+    log.info('live-capture: disabled by settings, stopping sidecar');
+    stopLiveCapture();
+  }
 };
 
 // Initialize IPC handlers for all channels defined in CONSTANTS.IPC_CHANNELS
@@ -511,6 +696,7 @@ Object.entries(CHANNEL_CALLBACK_HANDLERS).forEach(([channel, handler]) => {
 
     if (channel === CONSTANTS.API.POST_USER_SETTINGS) {
       await configureReplayAutoSync();
+      await configureLiveCapture();
     }
   });
 });
@@ -671,6 +857,8 @@ app.on('window-all-closed', () => {
     replayAutoSyncIntervalId = null;
   }
 
+  stopLiveCapture();
+
   // Respect the OSX convention of having the application in memory even
   // after all windows have been closed
   if (process.platform !== 'darwin') {
@@ -678,16 +866,57 @@ app.on('window-all-closed', () => {
   }
 });
 
-app
-  .whenReady()
-  .then(() => {
-    createWindow();
-    app.on('activate', () => {
-      // On macOS it's common to re-create a window in the app when the
-      // dock icon is clicked and there are no other windows open.
-      if (mainWindow === null) createWindow();
+/**
+ * Only one copy of Steward may run at a time. Every instance calls
+ * configureLiveCapture() and spawns its own lmu-spike sidecar, and those
+ * sidecars then contend for LMU's shared-memory lock — which is machine-wide and
+ * shared with wheel LED and motion software. See plans/live-capture-investigation.md;
+ * bounded try-acquire keeps a single sidecar polite, it does not make several
+ * sidecars safe. Double-clicking the desktop shortcut twice is enough to hit this.
+ *
+ * The lock is taken before the whenReady handler is registered, so an instance
+ * that loses it quits without ever creating a window or starting a sidecar.
+ */
+const gotSingleInstanceLock = app.requestSingleInstanceLock();
+
+const focusExistingWindow = () => {
+  const existingWindow = mainWindow ?? crashWindow;
+
+  if (!existingWindow || existingWindow.isDestroyed()) {
+    return;
+  }
+
+  if (existingWindow.isMinimized()) {
+    existingWindow.restore();
+  }
+
+  // The main window is created hidden and only shown on ready-to-show, so a
+  // second launch during startup has to show it rather than just focus it.
+  if (!existingWindow.isVisible()) {
+    existingWindow.show();
+  }
+
+  existingWindow.focus();
+};
+
+if (!gotSingleInstanceLock) {
+  log.info('single-instance: another instance holds the lock, quitting');
+  app.quit();
+} else {
+  app.on('second-instance', focusExistingWindow);
+
+  app
+    .whenReady()
+    .then(() => {
+      createWindow();
+      void configureLiveCapture();
+      app.on('activate', () => {
+        // On macOS it's common to re-create a window in the app when the
+        // dock icon is clicked and there are no other windows open.
+        if (mainWindow === null) createWindow();
+      });
+    })
+    .catch((error: unknown) => {
+      log.error('Application bootstrap failed', error);
     });
-  })
-  .catch((error: unknown) => {
-    log.error('Application bootstrap failed', error);
-  });
+}

@@ -21,7 +21,8 @@ const baseTheme = createTheme({
       contrastText: '#FFFFFF',
     },
     secondary: { main: '#00E5FF' },
-    error: { main: '#FF5252' },
+    // @ts-ignore
+    error: { main: '#FF5252', alt: '#FF1744' },
     // @ts-ignore
     warning: { main: '#FFD740', alt: '#FFC107' },
     // @ts-ignore
