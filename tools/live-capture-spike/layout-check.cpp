@@ -13,7 +13,7 @@
 //
 // Run it after every LMU update. A failure here names the field that moved; fix
 // lmu-shared-memory-layout.hpp to match, and update the measured baseline in
-// docs/live-capture-investigation.md.
+// plans/live-capture-investigation.md.
 //
 // Nothing links against this and it ships nowhere. It exists to fail loudly at
 // compile time.

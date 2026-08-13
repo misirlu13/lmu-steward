@@ -39,7 +39,7 @@ import {
  * sidecar rather than the app, and stdio keeps us clear of firewall prompts and
  * antivirus heuristics that a local socket would attract.
  *
- * See docs/live-capture-investigation.md for the shared memory contract.
+ * See plans/live-capture-investigation.md for the shared memory contract.
  */
 
 const SIDECAR_RELATIVE_PATHS = [

@@ -25,7 +25,7 @@ import {
  * Size is a non-issue: tens of MB of capture alongside a .Vcr measured in
  * gigabytes.
  *
- * See docs/live-replay-reconciliation-design.md, "Carrying Live Data in a
+ * See plans/live-replay-reconciliation-design.md, "Carrying Live Data in a
  * Replay Export".
  */
 

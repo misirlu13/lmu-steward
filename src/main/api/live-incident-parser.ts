@@ -7,7 +7,7 @@ import {
 /**
  * Parses the raw result-stream elements LMU publishes into structured incidents.
  *
- * Formats confirmed against live sessions (see docs/live-capture-investigation.md):
+ * Formats confirmed against live sessions (see plans/live-capture-investigation.md):
  *
  *   <Incident et="114.8">Bradley Drake(0) reported contact (5004.90) with another vehicle Robert Kubica(15)</Incident>
  *   <Incident et="66.1">Bradley Drake(0) reported contact (8954.12) with Immovable</Incident>

@@ -1266,7 +1266,7 @@ export interface LiveIncidentContextRecord {
  * The app proposes, the steward disposes: nothing here is ever written without
  * a human confirming it, and the record captures who decided and why. Under
  * appeal, "a named steward decided, here is the reasoning" is defensible where
- * "the app decided" is not. See docs/export-and-decisions-design.md.
+ * "the app decided" is not. See plans/export-and-decisions-design.md.
  */
 
 /**

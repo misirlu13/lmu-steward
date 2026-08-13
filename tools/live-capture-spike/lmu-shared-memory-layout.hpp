@@ -10,7 +10,7 @@
 // but it made a game install a *build* input: the header is marked proprietary
 // and cannot be committed, so a CI runner could never produce the binary, and
 // the whole live-capture feature could not ship. See
-// docs/live-capture-investigation.md.
+// plans/live-capture-investigation.md.
 //
 // This is the same approach every other third-party LMU tool takes — TinyPedal's
 // pyLMUSharedMemory declares the identical layout in Python ctypes. What follows
@@ -495,7 +495,7 @@ struct SharedMemoryLayout {
 // Layout assertions.
 //
 // Baseline measured 2026-07-28 by compiling the spike against the shipped SDK
-// headers; recorded in docs/live-capture-investigation.md. These are the guard
+// headers; recorded in plans/live-capture-investigation.md. These are the guard
 // rail for CI, where no game install exists to check against.
 //
 // If one of these fires after an LMU update, do NOT relax the number. Run

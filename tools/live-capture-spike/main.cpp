@@ -2,7 +2,7 @@
 //
 // Attaches to Le Mans Ultimate's first-party shared memory interface. Started
 // as the Phase 0 spike answering the seven open questions in
-// docs/live-capture-investigation.md, and still runs standalone for that:
+// plans/live-capture-investigation.md, and still runs standalone for that:
 // without --json it prints a human-readable diagnostic and a findings summary.
 //
 // With --json it is the app's capture process, spawned and supervised by

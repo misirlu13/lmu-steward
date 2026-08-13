@@ -5,7 +5,7 @@ import { StewardDecisionOutcome } from '@types';
  *
  * League-defined rather than shipped. A fixed vocabulary makes the feature
  * unusable for a large share of the audience, which
- * `docs/export-and-decisions-design.md:290` had already called out: leagues run
+ * `plans/export-and-decisions-design.md:290` had already called out: leagues run
  * drive-throughs, stop-gos, time penalties, grid drops, licence points,
  * reprimands, warnings and DSQs in whatever combination their rulebook says.
  *

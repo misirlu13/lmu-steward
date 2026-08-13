@@ -870,7 +870,7 @@ app.on('window-all-closed', () => {
  * Only one copy of Steward may run at a time. Every instance calls
  * configureLiveCapture() and spawns its own lmu-spike sidecar, and those
  * sidecars then contend for LMU's shared-memory lock — which is machine-wide and
- * shared with wheel LED and motion software. See docs/live-capture-investigation.md;
+ * shared with wheel LED and motion software. See plans/live-capture-investigation.md;
  * bounded try-acquire keeps a single sidecar polite, it does not make several
  * sidecars safe. Double-clicking the desktop shortcut twice is enough to hit this.
  *

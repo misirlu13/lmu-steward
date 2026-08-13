@@ -16,7 +16,7 @@ import { isStandingCall } from './stewardDecisionState';
  *
  * Export is a property of the *complete* session record, which is why it lives
  * on the replay view — mid-race there are no final standings to export. See
- * docs/export-and-decisions-design.md.
+ * plans/export-and-decisions-design.md.
  */
 
 export interface SessionExportDriver {

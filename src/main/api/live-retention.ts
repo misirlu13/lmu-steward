@@ -17,7 +17,7 @@ import { deleteLiveSession, readLiveSessions } from './live-session-store';
  * session, driver, lap, elapsed time and classification are all denormalised
  * onto the record so it stands alone.
  *
- * See docs/live-replay-reconciliation-design.md, "Retention and Deletion".
+ * See plans/live-replay-reconciliation-design.md, "Retention and Deletion".
  */
 
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
