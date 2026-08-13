@@ -97,8 +97,28 @@ export const LiveCameraControls: React.FC<LiveCameraControlsProps> = ({
     CAMERA_COMMAND_DEBOUNCE_MS,
     gameCamera,
   );
-  const { speed, onSpeedChange } = useReplaySpeed();
+  const { speed, onSpeedChange, resetSpeed } = useReplaySpeed();
   const [cameraError, setCameraError] = useState<string | undefined>();
+
+  /*
+    The ladder follows the game out of replay mode as well as into it.
+
+    This bar outlives the strip it draws — the strip is hidden when the picture
+    is live, but the hook holding the speed stays mounted — so without this a
+    steward who watched something at x0.5, went back to live and then rewatched
+    a second incident got a footer reading x0.5 over a picture playing at 1x.
+
+    Keyed on the game's own `isReplayActive` rather than on the "View live"
+    button, because the button is not the only way back: LMU's own LIVE control
+    does the same thing and this bar never hears about it. `false` explicitly,
+    not falsy — `null` means the poll has lost contact, and the last known rung
+    is better than a guess while nobody can see the game.
+  */
+  useEffect(() => {
+    if (isReplayActive === false) {
+      resetSpeed();
+    }
+  }, [isReplayActive, resetSpeed]);
 
   /*
     `/rest/replay/CameraController/setCamera` is named for the replay but is

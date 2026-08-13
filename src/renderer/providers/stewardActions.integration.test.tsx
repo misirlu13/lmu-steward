@@ -119,7 +119,9 @@ const LiveTariff = () => {
     onSelectIncident,
     onSelectTarget,
     onFlag,
+    onDefer,
     onDecide,
+    unreviewedCount,
   } = useLiveSession();
 
   useEffect(() => {
@@ -127,13 +129,22 @@ const LiveTariff = () => {
   }, [onSelectIncident]);
 
   return (
-    <LiveIncidentDossier
-      incident={selectedIncident}
-      onFlag={onFlag}
-      onDecide={onDecide}
-      targetSteamId={targetSteamId}
-      onSelectTarget={onSelectTarget}
-    />
+    <>
+      {/*
+        The shell's header is not rendered here, so the count it would show is
+        surfaced directly off the provider — which is where it is derived and
+        what these tests are actually about.
+      */}
+      <span data-testid="unreviewed">{unreviewedCount}</span>
+      <LiveIncidentDossier
+        incident={selectedIncident}
+        onFlag={onFlag}
+        onDefer={onDefer}
+        onDecide={onDecide}
+        targetSteamId={targetSteamId}
+        onSelectTarget={onSelectTarget}
+      />
+    </>
   );
 };
 
@@ -403,5 +414,238 @@ describe('a call written under a configured action', () => {
     fireEvent.click(screen.getByRole('button', { name: /Reprimand/ }));
 
     expect(savedDecisions()[0].outcome).toBe('Reprimand');
+  });
+});
+
+/*
+  A call is keyed on its target and a flag is keyed on the incident, so the two
+  records never collided — and `applyDecisions` ranks a decision above a flag.
+  The flag was written, stored, and then never seen again, which on screen was a
+  decision that could not be removed and a flag that refused to select.
+*/
+describe('changing your mind after a call', () => {
+  /** The head state each record was last written with, newest write per id. */
+  const stateById = (): Record<string, string> =>
+    savedDecisions().reduce<Record<string, string>>((states, decision) => {
+      // eslint-disable-next-line no-param-reassign
+      states[decision.id] = decision.state;
+      return states;
+    }, {});
+
+  const callAgainstFirstDriver = () => {
+    renderLiveTariff();
+    applySettings(LEAGUE_TARIFF);
+
+    fireEvent.click(
+      screen.getByTestId(`dossier-driver-${incident.drivers[0].steamId}`),
+    );
+    fireEvent.click(screen.getByRole('button', { name: /DT/ }));
+  };
+
+  it('should withdraw the call when the incident is flagged for review', () => {
+    callAgainstFirstDriver();
+    const call = savedDecisions()[0];
+    expect(call.state).toBe('DECIDED');
+    expect(call.outcome).toBe('DT');
+
+    fireEvent.click(screen.getByRole('button', { name: /Flag for review/ }));
+
+    // The call itself is revised, not left standing beside the flag.
+    const withdrawn = savedDecisions().filter(
+      (decision) => decision.id === call.id,
+    );
+    expect(withdrawn[withdrawn.length - 1]).toMatchObject({
+      state: 'FLAGGED',
+      outcome: undefined,
+    });
+
+    // And nothing anywhere still reads as decided.
+    expect(Object.values(stateById())).not.toContain('DECIDED');
+  });
+
+  it('should withdraw the call when the incident is deferred', () => {
+    callAgainstFirstDriver();
+    const call = savedDecisions()[0];
+
+    fireEvent.click(
+      screen.getByRole('button', { name: /Defer to post-session/ }),
+    );
+
+    const withdrawn = savedDecisions().filter(
+      (decision) => decision.id === call.id,
+    );
+    expect(withdrawn[withdrawn.length - 1]).toMatchObject({
+      state: 'DEFERRED',
+      outcome: undefined,
+    });
+    expect(Object.values(stateById())).not.toContain('DECIDED');
+  });
+
+  /*
+    The withdrawal is a revision of the original record, not a new one. Losing
+    the id would lose the trail — "DT, then withdrawn and flagged" is exactly
+    what an appeal reads — and the decision layer never deletes.
+  */
+  it('should keep the withdrawn call under its original id', () => {
+    callAgainstFirstDriver();
+    const call = savedDecisions()[0];
+
+    fireEvent.click(screen.getByRole('button', { name: /Flag for review/ }));
+
+    expect(
+      savedDecisions().filter((decision) => decision.id === call.id).length,
+    ).toBeGreaterThan(1);
+    expect(call.target?.steamId).toBe(incident.drivers[0].steamId);
+  });
+
+  // Deciding after a flag is the ordinary direction and must still settle it.
+  it('should let a call replace a flag', () => {
+    renderLiveTariff();
+    applySettings(LEAGUE_TARIFF);
+
+    fireEvent.click(screen.getByRole('button', { name: /Flag for review/ }));
+    fireEvent.click(screen.getByRole('button', { name: /Racing Incident/ }));
+
+    expect(Object.values(stateById())).toContain('DECIDED');
+  });
+});
+
+/*
+  Every control on this screen is a toggle, and a button that lights up and then
+  refuses to light down reads as stuck. Taking a call back is `WITHDRAWN` rather
+  than a deletion because the decision layer never deletes — the record and its
+  revisions are what a call is defended by under appeal, and "five seconds, then
+  withdrawn" is a more useful trail than a row that quietly disappeared.
+*/
+describe('taking a call back', () => {
+  const stateById = (): Record<string, string> =>
+    savedDecisions().reduce<Record<string, string>>((states, decision) => {
+      // eslint-disable-next-line no-param-reassign
+      states[decision.id] = decision.state;
+      return states;
+    }, {});
+
+  /** What the incident reads as once every record is applied. */
+  const standingStates = () =>
+    Object.values(stateById()).filter((state) => state !== 'WITHDRAWN');
+
+  const press = (name: RegExp) =>
+    fireEvent.click(screen.getByRole('button', { name }));
+
+  it('should clear a deferral when defer is pressed again', () => {
+    renderLiveTariff();
+    applySettings(LEAGUE_TARIFF);
+
+    press(/Defer to post-session/);
+    expect(standingStates()).toContain('DEFERRED');
+
+    press(/Defer to post-session/);
+
+    expect(standingStates()).toHaveLength(0);
+  });
+
+  it('should clear a flag when flag is pressed again', () => {
+    renderLiveTariff();
+    applySettings(LEAGUE_TARIFF);
+
+    press(/Flag for review/);
+    press(/Flag for review/);
+
+    expect(standingStates()).toHaveLength(0);
+  });
+
+  it('should clear a call when the same action is pressed again', () => {
+    renderLiveTariff();
+    applySettings(LEAGUE_TARIFF);
+
+    press(/Racing Incident/);
+    expect(standingStates()).toContain('DECIDED');
+
+    press(/Racing Incident/);
+
+    expect(standingStates()).toHaveLength(0);
+  });
+
+  // A withdrawn record carries no outcome — the call is the thing being taken
+  // back, and leaving it on would keep it in every export.
+  it('should drop the outcome from a withdrawn call', () => {
+    renderLiveTariff();
+    applySettings(LEAGUE_TARIFF);
+
+    press(/Racing Incident/);
+    press(/Racing Incident/);
+
+    const last = savedDecisions()[savedDecisions().length - 1];
+    expect(last.state).toBe('WITHDRAWN');
+    expect(last.outcome).toBeUndefined();
+  });
+
+  /*
+    The commoner correction, and it must not be mistaken for a toggle: pressing
+    a *different* action replaces the call rather than clearing it.
+  */
+  it('should replace rather than clear when a different action is pressed', () => {
+    renderLiveTariff();
+    applySettings(LEAGUE_TARIFF);
+
+    press(/Racing Incident/);
+    fireEvent.click(
+      screen.getByTestId(`dossier-driver-${incident.drivers[0].steamId}`),
+    );
+    press(/DT/);
+
+    const last = savedDecisions()[savedDecisions().length - 1];
+    expect(last.state).toBe('DECIDED');
+    expect(last.outcome).toBe('DT');
+  });
+
+  // The record survives its own withdrawal, under the id it was made with.
+  it('should keep the withdrawn record rather than deleting it', () => {
+    renderLiveTariff();
+    applySettings(LEAGUE_TARIFF);
+
+    press(/Racing Incident/);
+    const call = savedDecisions()[0];
+    press(/Racing Incident/);
+
+    const forCall = savedDecisions().filter(
+      (decision) => decision.id === call.id,
+    );
+    expect(forCall.length).toBeGreaterThan(1);
+    expect(forCall[forCall.length - 1].state).toBe('WITHDRAWN');
+  });
+
+  // And the incident can be called again afterwards, which is the point of
+  // clearing it.
+  it('should let the incident be called again after being cleared', () => {
+    renderLiveTariff();
+    applySettings(LEAGUE_TARIFF);
+
+    press(/Racing Incident/);
+    press(/Racing Incident/);
+    press(/Racing Incident/);
+
+    expect(standingStates()).toContain('DECIDED');
+  });
+
+  /*
+    The count has to follow. An incident whose call has been taken back is
+    waiting to be looked at again, and the header is what says so — a withdrawn
+    record still counting as reviewed would hide work the steward has explicitly
+    re-opened.
+  */
+  it('should count the incident as unreviewed again once cleared', () => {
+    renderLiveTariff();
+    applySettings(LEAGUE_TARIFF);
+
+    const unreviewed = () => screen.getByTestId('unreviewed').textContent;
+    expect(unreviewed()).toBe('1');
+
+    press(/Racing Incident/);
+    expect(unreviewed()).toBe('0');
+
+    press(/Racing Incident/);
+
+    expect(unreviewed()).toBe('1');
   });
 });

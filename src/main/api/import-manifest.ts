@@ -43,6 +43,16 @@ export interface ManifestSessionEntry {
    * the same identity it started with.
    */
   timestamp: number;
+  /**
+   * Whether the capture travelling with this replay carries trace windows.
+   *
+   * Null when the manifest did not say — a weekend manifest describes the
+   * layout rather than the contents, and only the session manifest sitting in
+   * the directory records the exporter's telemetry choice. Null is "unknown",
+   * never "no": claiming traces are absent when the manifest simply predates
+   * the field would misreport someone else's decision about their own data.
+   */
+  includesTelemetry: boolean | null;
 }
 
 export interface ManifestScan {
@@ -78,6 +88,9 @@ const isWeekendManifest = (value: Record<string, unknown>): boolean =>
 const isStewardManifest = (value: unknown): value is Record<string, unknown> =>
   isRecord(value) && value.createdBy === 'lmu-steward';
 
+const asOptionalBoolean = (value: unknown): boolean | null =>
+  typeof value === 'boolean' ? value : null;
+
 const toSessionEntry = (
   directory: string,
   vcrFileName: string,
@@ -86,6 +99,7 @@ const toSessionEntry = (
   sceneDesc: string,
   session: string,
   timestamp: number,
+  includesTelemetry: boolean | null,
 ): ManifestSessionEntry | null => {
   /*
    * File names only. A manifest is data from elsewhere, and a name carrying a
@@ -107,6 +121,7 @@ const toSessionEntry = (
     sceneDesc,
     session,
     timestamp,
+    includesTelemetry,
   };
 };
 
@@ -165,6 +180,12 @@ export const readManifestFile = async (
         asString(entry?.sceneDesc),
         asString(entry?.session),
         asNumber(entry?.timestamp),
+        /*
+         * A weekend manifest lists the layout, not what each directory holds.
+         * The session manifest inside carries the telemetry flag and is read
+         * after this one, so it fills the gap where there is one to fill.
+         */
+        null,
       );
 
       if (session) {
@@ -189,6 +210,7 @@ export const readManifestFile = async (
     asString(manifest.sceneDesc),
     asString(manifest.session),
     asNumber(manifest.timestamp),
+    asOptionalBoolean(manifest.includesLiveTelemetry),
   );
 
   return { sessions: session ? [session] : [], omittedSessions: [] };

@@ -55,6 +55,12 @@ const pollResult = (standings: LiveStanding[] = STANDINGS) => ({
 });
 
 let liveSessionStatus: { state: string } = { state: 'live' };
+/*
+  Mutable, because the speed ladder's behaviour lives in the *transition*
+  between rewound and live rather than in either state — a fixed value can only
+  prove the strip renders.
+*/
+let isReplayActive: boolean | null = false;
 
 /*
   A working subscription registry, not a bare `jest.fn()`. The bar now reconciles
@@ -82,6 +88,7 @@ const gameFocus = (slotId: number) =>
 beforeEach(() => {
   jest.clearAllMocks();
   liveSessionStatus = { state: 'live' };
+  isReplayActive = false;
   subscribers = {};
   useApiMock.mockImplementation(
     () =>
@@ -89,7 +96,7 @@ beforeEach(() => {
         isConnected: true,
         hasApiStatusResponse: true,
         liveSessionStatus,
-        isReplayActive: false,
+        isReplayActive,
         stewardDecisions: {},
         saveStewardDecision: jest.fn(),
         subscribeToApiChannel: (
@@ -165,6 +172,130 @@ describe('live camera bar', () => {
     renderLive();
 
     expect(screen.queryByLabelText('Camera controls')).not.toBeInTheDocument();
+  });
+});
+
+/*
+  With capture detached the session falls back to the layout fixture, so every
+  panel on this screen has something to draw — a track name, a phase badge, a
+  full field. That is how a machine with the game closed came to greet a steward
+  with "Bahrain International Circuit" and a race in progress.
+*/
+describe('the live shell with no session', () => {
+  const detached = () => {
+    liveSessionStatus = { state: 'detached' };
+    renderLive();
+  };
+
+  it('should say so instead of drawing a session', () => {
+    detached();
+
+    expect(screen.getByLabelText('No live session')).toBeInTheDocument();
+    expect(screen.getByText('No Live Session')).toBeInTheDocument();
+  });
+
+  // The fixture's track, which is the tell that the view is showing furniture.
+  it('should not name a track it is not watching', () => {
+    detached();
+
+    expect(screen.queryByText(/Bahrain/)).not.toBeInTheDocument();
+  });
+
+  it('should stand the whole view down, not just explain itself above it', () => {
+    detached();
+
+    expect(screen.queryByLabelText('Camera controls')).not.toBeInTheDocument();
+    expect(screen.queryByLabelText('Pressure monitor')).not.toBeInTheDocument();
+    expect(screen.queryByText('Timing')).not.toBeInTheDocument();
+  });
+
+  it('should keep drawing the session once one starts', () => {
+    renderLive();
+
+    expect(screen.queryByLabelText('No live session')).not.toBeInTheDocument();
+    expect(screen.getByLabelText('Camera controls')).toBeInTheDocument();
+  });
+});
+
+describe('live camera replay speed', () => {
+  const rewound = () => {
+    isReplayActive = true;
+    const view = renderLive();
+    return view;
+  };
+
+  it('should offer the ladder only while the picture is rewound', () => {
+    const view = rewound();
+    expect(bar().getByText('x0.5')).toBeInTheDocument();
+
+    isReplayActive = false;
+    view.rerender(
+      <MemoryRouter initialEntries={['/live/timing']}>
+        {liveRoutes()}
+      </MemoryRouter>,
+    );
+    expect(bar().queryByText('x0.5')).not.toBeInTheDocument();
+  });
+
+  /*
+    The bug this exists for: the bar outlives the strip it draws, so the rung
+    the steward last picked survived a trip back to the live edge. LMU resets
+    itself to 1x on the way, and the footer then read x0.5 over a picture
+    playing at 1x — a control lying about the game.
+  */
+  it('should fall back to x1.0 once the game returns to the live edge', () => {
+    const view = rewound();
+
+    fireEvent.click(bar().getByText('x0.5'));
+    expect(bar().getByText('x0.5').closest('button')).toHaveClass(
+      'Mui-selected',
+    );
+
+    // Back to live, then rewound again — the second look must not inherit the
+    // first one's speed.
+    isReplayActive = false;
+    view.rerender(
+      <MemoryRouter initialEntries={['/live/timing']}>
+        {liveRoutes()}
+      </MemoryRouter>,
+    );
+    isReplayActive = true;
+    view.rerender(
+      <MemoryRouter initialEntries={['/live/timing']}>
+        {liveRoutes()}
+      </MemoryRouter>,
+    );
+
+    expect(bar().getByText('x1.0').closest('button')).toHaveClass(
+      'Mui-selected',
+    );
+    expect(bar().getByText('x0.5').closest('button')).not.toHaveClass(
+      'Mui-selected',
+    );
+  });
+
+  /*
+    Silent on purpose. The game has already reset itself by the time this fires,
+    so a `PLAY` sent from here would be a playback command aimed at a live
+    session that nobody asked for.
+  */
+  it('should not command the game when it catches up to a reset', () => {
+    const view = rewound();
+    fireEvent.click(bar().getByText('x0.5'));
+    sendMessageMock.mockClear();
+
+    isReplayActive = false;
+    view.rerender(
+      <MemoryRouter initialEntries={['/live/timing']}>
+        {liveRoutes()}
+      </MemoryRouter>,
+    );
+
+    expect(
+      sendMessageMock.mock.calls.filter(
+        ([channel]) => channel === CONSTANTS.API.PUT_REPLAY_COMMAND_SCAN,
+      ),
+    ).toHaveLength(0);
   });
 });
 

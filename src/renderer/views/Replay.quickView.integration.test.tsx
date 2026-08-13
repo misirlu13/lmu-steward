@@ -178,7 +178,12 @@ describe('ReplayView quick view integration', () => {
     );
   });
 
-  it('returns to dashboard when dashboard breadcrumb is clicked', () => {
+  /*
+   * The breadcrumb navigates and nothing more. A steward moving between the
+   * analysis and the list expects to come back to it — which is what the
+   * "still loaded in Le Mans Ultimate" banner on the list is there to offer.
+   */
+  it('leaves the replay loaded when the replays breadcrumb is clicked', () => {
     mockApi({
       currentReplay: replayRecord,
       loadingState: { loading: false, percentage: -1 },
@@ -190,7 +195,7 @@ describe('ReplayView quick view integration', () => {
 
     fireEvent.click(screen.getByText('Replays'));
 
-    expect(sendMessageMock).toHaveBeenCalledWith(
+    expect(sendMessageMock).not.toHaveBeenCalledWith(
       CONSTANTS.API.POST_CLOSE_REPLAY,
     );
   });

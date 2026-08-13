@@ -15,6 +15,8 @@ interface ReplayTimelineIncidentRowProps {
     ReplayIncidentType,
     'warning' | 'error' | 'secondary'
   >;
+  /** Opens the dossier for this incident. Deliberately does not seek. */
+  onSelectIncident?: (event: ReplayIncidentEvent) => void;
   onJumpToIncident?: (event: ReplayIncidentEvent) => void;
 }
 
@@ -29,19 +31,46 @@ export const ReplayTimelineIncidentRow = forwardRef<
       hideJumpButtons,
       incidentTypeLabel,
       incidentTypeColor,
+      onSelectIncident,
       onJumpToIncident,
     },
     ref,
   ) => {
+    const selectIncident = () => onSelectIncident?.(event);
+
     return (
       <Stack
         ref={ref}
         direction="row"
         alignItems="flex-start"
         spacing={1.5}
+        /*
+          The whole row opens the dossier. Until now nothing but the jump button
+          selected an incident, so reading the evidence for one meant taking
+          over the game to seek to it — and a steward working down a long list
+          paid a load for every row they merely wanted to look at.
+        */
+        role={onSelectIncident ? 'button' : undefined}
+        tabIndex={onSelectIncident ? 0 : undefined}
+        aria-current={onSelectIncident && isActiveIncident ? 'true' : undefined}
+        aria-label={
+          onSelectIncident
+            ? `Review the ${incidentTypeLabel[
+                event.type
+              ].toLowerCase()} at ${event.timestampLabel}`
+            : undefined
+        }
+        onClick={selectIncident}
+        onKeyDown={(keyEvent) => {
+          if (keyEvent.key === 'Enter' || keyEvent.key === ' ') {
+            keyEvent.preventDefault();
+            selectIncident();
+          }
+        }}
         sx={{
           px: 2,
           py: 1.25,
+          cursor: onSelectIncident ? 'pointer' : 'default',
           backgroundColor: isActiveIncident ? 'action.selected' : 'transparent',
           borderLeft: isActiveIncident ? '2px solid' : '2px solid transparent',
           borderLeftColor: isActiveIncident ? 'divider' : 'transparent',
@@ -129,12 +158,26 @@ export const ReplayTimelineIncidentRow = forwardRef<
           ) : null}
         </Stack>
 
+        {/*
+          No tooltip on this one, deliberately: MUI labels a tooltipped button
+          with the tooltip's sentence, and "Jump" beside a play icon is already
+          the clearer accessible name.
+        */}
         {!hideJumpButtons ? (
           <Button
             size="small"
             variant={isActiveIncident ? 'outlined' : 'contained'}
             startIcon={<PlayCircleFilledIcon />}
-            onClick={() => onJumpToIncident?.(event)}
+            onClick={(clickEvent) => {
+              /*
+                The row underneath opens the dossier on its own. Letting the
+                click through would run both handlers for one press, which is
+                harmless today only because jumping happens to select too — and
+                would stop being harmless the moment either changes.
+              */
+              clickEvent.stopPropagation();
+              onJumpToIncident?.(event);
+            }}
           >
             Jump
           </Button>

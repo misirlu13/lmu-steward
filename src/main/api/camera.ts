@@ -7,17 +7,25 @@ import { CONSTANTS } from '@constants';
  *
  * BODY
  *
- *  {"cameraGroup": "Driving", "direction": 0}
- *  {"cameraGroup": "Driving", "direction": 1}
- *  {"cameraGroup": "Trackside", "direction": 0}
- *  {"cameraGroup": "Trackside", "direction": 1}
- *  {"cameraGroup": "Onboard", "direction": 0}
- *  {"cameraGroup": "Onboard", "direction": 1}
+ *  {"cameraGroup": "Driving",   "direction": -1}
+ *  {"cameraGroup": "Driving",   "direction":  1}
+ *  {"cameraGroup": "Trackside", "direction": -1}
+ *  {"cameraGroup": "Trackside", "direction":  1}
+ *  {"cameraGroup": "Onboard",   "direction": -1}
+ *  {"cameraGroup": "Onboard",   "direction":  1}
+ *
+ * **-1 steps back and 1 steps forward. 0 does not step back** — it advances,
+ * which made previous and next the same button until this was measured against
+ * a running session. See the note on `CAMERA` in constants.ts.
+ *
+ * Note also what a 200 here does and does not mean. The endpoint answers 200 to
+ * any well-formed body — a bogus `cameraGroup` and `{}` both do — so a success
+ * reply says the request was accepted, never that the camera moved.
  */
 
 interface CameraAngleRequestBody {
   cameraGroup: 'Driving' | 'Trackside' | 'Onboard';
-  direction: 0 | 1;
+  direction: -1 | 1;
 }
 
 const toErrorMessage = (error: unknown): string => {

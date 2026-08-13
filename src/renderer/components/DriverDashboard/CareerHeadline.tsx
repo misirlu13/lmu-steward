@@ -61,15 +61,26 @@ export const CareerHeadline = ({ aggregate }: CareerHeadlineProps) => {
           Practice is 60% of a typical library and contributes laps and pace but
           never a result, so collapsing them would make every average unreadable.
         */}
+        {/*
+          All three session types, because the detail has to add up to the
+          number above it. Listing races and practice alone left qualifying
+          unaccounted for — 83 and 263 under a total of 418 reads as a bug in
+          the count rather than as two of the three types being named.
+        */}
         <Tile
           label="Sessions"
           value={formatCount(headline.sessions)}
-          detail={`${formatCount(headline.races)} races · ${formatCount(headline.practice)} practice`}
+          detail={`${formatCount(headline.races)} races · ${formatCount(headline.qualifying)} qualifying · ${formatCount(headline.practice)} practice`}
         />
         <Tile
           label="Wins"
           value={formatCount(results.wins)}
           detail={`${formatCount(results.winsMultiplayer)} online · ${formatCount(results.winsRaceWeekend)} offline`}
+        />
+        <Tile
+          label="Fastest laps"
+          value={formatCount(results.classFastestLaps)}
+          detail={`in ${formatCount(headline.races)} races · own class`}
         />
         <Tile
           label="Podiums"

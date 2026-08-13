@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { CONSTANTS } from '@constants';
 import { LiveDataForReplay } from '@types';
 import { sendMessage } from '../utils/postMessage';
@@ -24,11 +24,35 @@ export const useLiveDataForReplay = (replayHash: string | undefined) => {
   const { subscribeToApiChannel, experimentalFeaturesEnabled } = useApi();
   const [liveData, setLiveData] = useState<LiveDataForReplay | null>(null);
 
+  /*
+    Which replay this hook currently wants an answer about, read at reply time
+    rather than closed over. A ref rather than a dependency so the subscription
+    is not torn down and rebuilt every time the route changes — the same
+    arrangement `useLiveIncidentContext` uses.
+  */
+  const wanted = useRef(replayHash);
+  wanted.current = replayHash;
+
   const applyLiveData = useCallback((payload: unknown) => {
     const response = payload as {
       status?: string;
+      replayHash?: string;
       data?: LiveDataForReplay | null;
     };
+
+    /*
+      Answers about a different replay are dropped rather than applied.
+
+      Navigating away and back re-asks, and the reply for the previous replay
+      can still be in flight — landing a `null` on a replay that does have
+      evidence, which reads on screen as the capture having gone missing.
+      Replies from before main started echoing the hash carry none, and are
+      still accepted: an answer that cannot identify itself is no worse than
+      the unconditional behaviour it replaces.
+    */
+    if (response?.replayHash && response.replayHash !== wanted.current) {
+      return;
+    }
 
     setLiveData(
       response?.status === 'success' ? (response.data ?? null) : null,

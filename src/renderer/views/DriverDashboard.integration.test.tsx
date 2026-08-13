@@ -47,6 +47,7 @@ const buildAggregate = (
       topFives: 7,
       poles: 1,
       frontRows: 2,
+      classFastestLaps: 3,
       winsMultiplayer: 1,
       winsRaceWeekend: 1,
       podiumsMultiplayer: 2,
@@ -233,7 +234,14 @@ describe('DriverDashboardView', () => {
 
     expect(screen.getByText('Bradley Drake')).toBeInTheDocument();
     expect(screen.getByText('169')).toBeInTheDocument();
-    expect(screen.getByText('23 races · 131 practice')).toBeInTheDocument();
+    /*
+      All three types, and they add up to the 169 above them: 23 + 15 + 131.
+      Naming only races and practice left qualifying unaccounted for, which
+      reads as a broken count rather than as a partial list.
+    */
+    expect(
+      screen.getByText('23 races · 15 qualifying · 131 practice'),
+    ).toBeInTheDocument();
     expect(screen.getByText('Track mastery')).toBeInTheDocument();
     // The venue now appears in the table, the filter bar and the pace card.
     expect(

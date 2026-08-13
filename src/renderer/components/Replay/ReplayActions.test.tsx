@@ -16,6 +16,7 @@ const setup = ({
   const onExport = jest.fn();
   const onExportSessionData = jest.fn();
   const onCopySessionMarkdown = jest.fn();
+  const onCloseAndBackToReplays = jest.fn();
 
   render(
     <ReplayActions
@@ -26,10 +27,17 @@ const setup = ({
       sessionDataDisabledReason={sessionDataDisabledReason}
       onExportSessionData={onExportSessionData}
       onCopySessionMarkdown={onCopySessionMarkdown}
+      onCloseAndBackToReplays={onCloseAndBackToReplays}
     />,
   );
 
-  return { onViewChat, onExport, onExportSessionData, onCopySessionMarkdown };
+  return {
+    onViewChat,
+    onExport,
+    onExportSessionData,
+    onCopySessionMarkdown,
+    onCloseAndBackToReplays,
+  };
 };
 
 describe('ReplayActions', () => {
@@ -44,6 +52,20 @@ describe('ReplayActions', () => {
     expect(
       screen.getByRole('button', { name: /export replay/i }),
     ).toBeInTheDocument();
+  });
+
+  /*
+   * Closing is its own button rather than a side effect of the breadcrumb.
+   * Navigating away from the analysis is not a statement about what LMU should
+   * still have loaded — a steward moving between a replay and the list expects
+   * to come back to it, which is what the "still loaded" banner is for.
+   */
+  it('should close the replay only from the close action', () => {
+    const { onCloseAndBackToReplays } = setup();
+
+    fireEvent.click(screen.getByRole('button', { name: /close replay/i }));
+
+    expect(onCloseAndBackToReplays).toHaveBeenCalledTimes(1);
   });
 
   it('should export the format the steward picked', () => {

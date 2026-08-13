@@ -3,6 +3,7 @@ import { CONSTANTS } from '@constants';
 import { sendMessage } from '../utils/postMessage';
 import {
   CameraMode,
+  cameraModeConfig,
   cameraModeFromGroup,
   useCameraControls,
 } from './useCameraControls';
@@ -46,19 +47,72 @@ describe('reading LMU camera groups', () => {
   );
 });
 
+/*
+  The two values LMU actually means something by.
+
+  Measured against a running session on 2026-08-10: with `direction: 0` the
+  angle advanced on every call, so previous and next were the same button —
+  ONBOARD03 → 04 → 05 → 06 walked forward under alternating clicks. `-1` steps
+  back, repeatably, on Driving as well as Onboard. Asserted here because nothing
+  about the number 0 looks wrong in a diff, and the endpoint answers 200 either
+  way, so the app can never notice this for itself.
+*/
+describe('the direction LMU steps the camera in', () => {
+  it.each([
+    ['driving', 'Driving'],
+    ['onboard', 'Onboard'],
+    ['trackside', 'Trackside'],
+  ] as const)('should step %s back with -1 and forward with 1', (_, group) => {
+    const config = cameraModeConfig[_ as CameraMode];
+
+    expect(config.previousCommand).toEqual({
+      cameraGroup: group,
+      direction: -1,
+    });
+    expect(config.nextCommand).toEqual({ cameraGroup: group, direction: 1 });
+  });
+
+  // The value that made both buttons go the same way.
+  it('should never send 0 for either direction', () => {
+    Object.values(cameraModeConfig).forEach((config) => {
+      expect(config.previousCommand.direction).not.toBe(0);
+      expect(config.nextCommand.direction).not.toBe(0);
+    });
+  });
+});
+
 const Harness: React.FC<{ reported?: { mode?: CameraMode } }> = ({
   reported,
 }) => {
-  const { cameraMode, onCameraModeChange } = useCameraControls(0, reported);
+  const { cameraMode, onCameraModeChange, onCycleCamera } = useCameraControls(
+    0,
+    reported,
+  );
 
   return (
-    <button
-      type="button"
-      data-mode={cameraMode}
-      onClick={() => onCameraModeChange('onboard')}
-    >
-      {cameraMode}
-    </button>
+    <>
+      <button
+        type="button"
+        data-mode={cameraMode}
+        onClick={() => onCameraModeChange('onboard')}
+      >
+        {cameraMode}
+      </button>
+      <button
+        type="button"
+        data-testid="prev"
+        onClick={() => onCycleCamera('previous')}
+      >
+        prev
+      </button>
+      <button
+        type="button"
+        data-testid="next"
+        onClick={() => onCycleCamera('next')}
+      >
+        next
+      </button>
+    </>
   );
 };
 
@@ -137,6 +191,55 @@ describe('reconciling the camera group against the game', () => {
     rerender(<Harness reported={{ mode: 'driving' }} />);
 
     expect(modeOn(container)).toBe('driving');
+  });
+});
+
+/*
+  The reported defect: next, then previous, then next only ever went one way.
+  Both buttons were sending the same step, so the pair is asserted together —
+  either alone would have passed throughout.
+*/
+describe('cycling the camera angle', () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+    jest.useFakeTimers();
+  });
+
+  afterEach(() => {
+    jest.useRealTimers();
+  });
+
+  /** The direction of each camera command sent, in order. */
+  const directionsSent = (): number[] =>
+    sendMessageMock.mock.calls
+      .filter(([channel]) => channel === CONSTANTS.API.POST_CAMERA_ANGLE)
+      .map(([, command]) => (command as { direction: number }).direction);
+
+  const press = (container: HTMLElement, testId: string) =>
+    act(() => {
+      container
+        .querySelector<HTMLElement>(`[data-testid="${testId}"]`)
+        ?.click();
+      jest.advanceTimersByTime(1);
+    });
+
+  it('should send opposite directions for previous and next', () => {
+    const { container } = render(<Harness />);
+
+    press(container, 'next');
+    press(container, 'prev');
+    press(container, 'next');
+
+    expect(directionsSent()).toEqual([1, -1, 1]);
+  });
+
+  it('should keep stepping back while previous is pressed', () => {
+    const { container } = render(<Harness />);
+
+    press(container, 'prev');
+    press(container, 'prev');
+
+    expect(directionsSent()).toEqual([-1, -1]);
   });
 });
 

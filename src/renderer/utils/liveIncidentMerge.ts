@@ -13,7 +13,7 @@ import {
  * with no XML counterpart is dropped, because the replay view's counts and
  * timeline are the log's and must stay that way.
  *
- * See docs/live-replay-reconciliation-design.md, "Reconciling Incidents".
+ * See plans/live-replay-reconciliation-design.md, "Reconciling Incidents".
  */
 
 /**

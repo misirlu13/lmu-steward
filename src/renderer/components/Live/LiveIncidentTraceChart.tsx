@@ -22,7 +22,7 @@ import { LiveIncidentTrace } from './liveFixtures';
  * would put a straight-ahead car at half throttle.
  *
  * Two deliberate choices, both settled against the captured sessions on disk
- * rather than against the fixtures — see docs/live-capture-investigation.md:
+ * rather than against the fixtures — see plans/live-capture-investigation.md:
  *
  *  - **The steering axis is fixed full-scale, −1..+1, never autoscaled.** Real
  *    incidents use the whole range: of the car traces that were actually moving,

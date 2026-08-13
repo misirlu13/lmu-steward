@@ -1,6 +1,6 @@
 import { sendMessage } from '@/renderer/utils/postMessage';
 import { CONSTANTS } from '@constants';
-import { useState } from 'react';
+import { useCallback, useState } from 'react';
 
 export type ReplaySpeed = 0.5 | 1 | 2;
 export type ReplayPlaybackDirection = 'forward' | 'reverse';
@@ -61,9 +61,9 @@ export const sendReplaySpeed = (
  * replay jump bar share one ladder — the same reason `useCameraControls` was
  * lifted out of `components/Replay/hooks` when the live camera bar needed it.
  *
- * LMU resets speed to 1x whenever the picture returns to the live edge, so
- * callers that leave replay mode should drop this hook rather than keep showing
- * the rung it last sent.
+ * LMU resets speed to 1x whenever the picture returns to the live edge, so a
+ * caller that stays mounted across that transition has to put the ladder back
+ * itself — see `resetSpeed`.
  */
 export const useReplaySpeed = () => {
   const [speed, setSpeed] = useState<ReplaySpeed>(1);
@@ -76,7 +76,17 @@ export const useReplaySpeed = () => {
     sendReplaySpeed(nextSpeed, direction);
   };
 
-  return { speed, onSpeedChange };
+  /**
+   * Puts the ladder back to 1x without telling the game anything.
+   *
+   * Deliberately silent. This is called when the game has *already* gone back
+   * to the live edge and reset itself, so sending `PLAY` would be an unasked-for
+   * playback command aimed at a live session. The state is being caught up to
+   * the game, not the other way round.
+   */
+  const resetSpeed = useCallback(() => setSpeed(1), []);
+
+  return { speed, onSpeedChange, resetSpeed };
 };
 
 /**

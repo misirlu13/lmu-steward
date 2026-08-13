@@ -398,6 +398,15 @@ export interface CareerAggregate {
     topFives: number;
     poles: number;
     frontRows: number;
+    /**
+     * Races where nobody in the driver's own class lapped quicker.
+     *
+     * Class-relative, like every other position stat here. In a multiclass field
+     * the outright fastest lap belongs to a Hypercar on all but the odd wet
+     * race, so counting it outright would score a GT3 driver against a car they
+     * were never racing.
+     */
+    classFastestLaps: number;
     winsMultiplayer: number;
     winsRaceWeekend: number;
     podiumsMultiplayer: number;
@@ -1257,7 +1266,7 @@ export interface LiveIncidentContextRecord {
  * The app proposes, the steward disposes: nothing here is ever written without
  * a human confirming it, and the record captures who decided and why. Under
  * appeal, "a named steward decided, here is the reasoning" is defensible where
- * "the app decided" is not. See docs/export-and-decisions-design.md.
+ * "the app decided" is not. See plans/export-and-decisions-design.md.
  */
 
 /**
@@ -1279,7 +1288,25 @@ export type StewardDecisionOutcome = string;
  */
 export type StewardDecisionBasis = 'incident' | 'accumulation' | 'conduct';
 
-export type StewardDecisionState = 'FLAGGED' | 'DECIDED' | 'DEFERRED';
+/**
+ * `WITHDRAWN` is how a call is taken back, because nothing here is ever deleted.
+ *
+ * A steward pressing the button they have just pressed means "undo that", and
+ * the decision layer has no way to express that by removal — the whole point of
+ * it is that a record and its revisions survive so a call can be defended under
+ * appeal. So the record stays, gains a revision, and its head state says the
+ * call no longer stands. "Five seconds, then withdrawn" is a more useful trail
+ * than a row that quietly disappeared.
+ *
+ * Everything that asks "what has been called on this incident" must skip these
+ * — see `isStandingCall`. An incident whose every record is withdrawn is back
+ * to being unreviewed, which is exactly what the steward asked for.
+ */
+export type StewardDecisionState =
+  | 'FLAGGED'
+  | 'DECIDED'
+  | 'DEFERRED'
+  | 'WITHDRAWN';
 
 export type StewardDecisionStatus =
   | 'provisional'

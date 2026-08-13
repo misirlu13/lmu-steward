@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Box } from '@mui/material';
 import { CONSTANTS } from '@constants';
 import {
@@ -18,6 +18,7 @@ import { buildIncidents } from '../../hooks/useLiveSessionData';
 import { useLiveIncidentContext } from '../../hooks/useLiveIncidentContext';
 import { sendMessage } from '../../utils/postMessage';
 import { buildStewardDecisionId } from '../../utils/stewardDecisionId';
+import { isStandingCall, toggledState } from '../../utils/stewardDecisionState';
 import { useApi } from '../../providers/ApiContext';
 import { ReplayIncidentEvent } from './replayTimelineTypes';
 
@@ -26,6 +27,29 @@ interface Props {
   liveData: LiveDataForReplay | null;
   replayHash: string | undefined;
 }
+
+/**
+ * The replay timeline's three event types in live capture's vocabulary.
+ *
+ * The two do not line up exactly. A `penalty` row is a sanction the game
+ * already issued, for any reason it liked, and live capture has no
+ * classification for that — it names causes, not outcomes. It is filed under
+ * `contact` because that is the closest of the five and because this field is
+ * secondary metadata on the record: nothing branches on it, and the outcome the
+ * steward chooses is what the decision actually says.
+ */
+const REPLAY_TYPE_CLASSIFICATION: Record<
+  ReplayIncidentEvent['type'],
+  LiveIncident['classification']
+> = {
+  collision: 'contact',
+  'track-limit': 'track-limits',
+  penalty: 'contact',
+};
+
+/** Shown in place of the evidence when live capture never saw this incident. */
+const NO_CAPTURE_EXPLANATION =
+  'No live session data was captured for this incident. The footage on screen is the evidence — a call made here is recorded the same way as one made against a captured incident.';
 
 /**
  * Live capture's evidence for the incident the steward is looking at.
@@ -58,6 +82,59 @@ export const ReplayIncidentDossier: React.FC<Props> = ({
 
   const liveIncidentId = event?.liveIncidentId;
   const { context } = useLiveIncidentContext(liveIncidentId);
+
+  /*
+    The key a decision made here is filed under.
+
+    A capture supplies one; an incident the result log knows about and capture
+    never saw does not, and an empty string would file every such call from
+    every replay under ids that collide the moment two replays share an event
+    id — which they do, because a replay event id is `collision-4-1434.4`, a
+    position in one file rather than a name for a moment in a season.
+  */
+  const sessionKey =
+    liveData?.sessionKey ?? (replayHash ? `replay|${replayHash}` : '');
+
+  /**
+   * An incident the result log has and live capture does not.
+   *
+   * Built so the panel can be drawn for it at all. Everything a decision needs
+   * — who was involved, when, and on which lap — is in the log; only the
+   * telemetry is missing, and the dossier is told to say so rather than draw a
+   * grid of dashes.
+   */
+  const uncapturedIncident = useMemo<LiveIncident | undefined>(() => {
+    if (!event) {
+      return undefined;
+    }
+
+    return {
+      id: event.id,
+      etSeconds: event.etSeconds ?? 0,
+      timestampLabel: event.timestampLabel,
+      lapLabel: event.lapLabel,
+      classification: REPLAY_TYPE_CLASSIFICATION[event.type],
+      drivers: event.drivers.map((driver) => ({
+        /*
+          The log's driver id where it has one, the name where it does not. It
+          is what a decision is keyed on, so it has to exist — and a name is
+          what the rest of this view already identifies a driver by.
+        */
+        steamId: driver.driverSid || driver.displayName,
+        slotId:
+          driver.slotId !== undefined && driver.slotId !== ''
+            ? Number(driver.slotId)
+            : undefined,
+        displayName: driver.displayName,
+        carNumber: driver.carNumber,
+        carClass: driver.carClass,
+        isAiDriver: driver.isAiDriver,
+      })),
+      rawText: event.sourceText ?? event.description ?? '',
+      evidence: { cars: [] },
+      state: 'NEW' as const,
+    };
+  }, [event]);
 
   const record = useMemo(
     () =>
@@ -102,18 +179,39 @@ export const ReplayIncidentDossier: React.FC<Props> = ({
     };
   }, [context, event, liveData?.drivers, record]);
 
-  const decisionsForIncident = useMemo(
-    () =>
-      // Defended rather than assumed: the collection arrives from a message
-      // reply, so it is absent until the first one lands.
-      Object.values(stewardDecisions ?? {}).filter(
-        (decision) => decision.incidentId === liveIncidentId,
-      ),
-    [liveIncidentId, stewardDecisions],
-  );
+  /*
+    Capture's incident where there is one, the log's own where there is not.
+    Everything below this line works the same way for both — the only
+    difference is that one of them has evidence to draw.
+  */
+  const baseIncident = incident ?? uncapturedIncident;
+  const hasCapture = Boolean(incident);
+
+  const decisionsForIncident = useMemo(() => {
+    const incidentId = liveIncidentId ?? uncapturedIncident?.id;
+    if (!incidentId) {
+      return [];
+    }
+
+    // Defended rather than assumed: the collection arrives from a message
+    // reply, so it is absent until the first one lands.
+    return Object.values(stewardDecisions ?? {}).filter(
+      (decision) =>
+        decision.incidentId === incidentId &&
+        /*
+          Scoped to the session as well as the incident. An uncaptured
+          incident's id is a position in one replay file, so two replays can
+          hold the same one — without this, a call made on one race would show
+          up on an unrelated incident in another.
+        */
+        decision.sessionKey === sessionKey &&
+        // A call that has been taken back says nothing about the incident.
+        isStandingCall(decision),
+    );
+  }, [liveIncidentId, sessionKey, stewardDecisions, uncapturedIncident?.id]);
 
   const decidedIncident = useMemo<LiveIncident | undefined>(() => {
-    if (!incident) {
+    if (!baseIncident) {
       return undefined;
     }
 
@@ -123,7 +221,7 @@ export const ReplayIncidentDossier: React.FC<Props> = ({
 
     if (decided) {
       return {
-        ...incident,
+        ...baseIncident,
         state: 'DECIDED' as const,
         decision: decided.outcome,
         decisionReasoning: decided.reasoning,
@@ -139,13 +237,13 @@ export const ReplayIncidentDossier: React.FC<Props> = ({
       view, which is a feature of its own.
     */
     if (decisionsForIncident.some((entry) => entry.state === 'DEFERRED')) {
-      return { ...incident, state: 'DEFERRED' as const };
+      return { ...baseIncident, state: 'DEFERRED' as const };
     }
 
     return decisionsForIncident.length
-      ? { ...incident, state: 'FLAGGED' as const }
-      : incident;
-  }, [decisionsForIncident, incident]);
+      ? { ...baseIncident, state: 'FLAGGED' as const }
+      : baseIncident;
+  }, [baseIncident, decisionsForIncident]);
 
   /*
     The same per-driver history the live dossier shows, built from the same
@@ -162,13 +260,19 @@ export const ReplayIncidentDossier: React.FC<Props> = ({
   */
   const priorCallsByDriver = useMemo(() => {
     const byDriver = new Map<string, LivePriorCall[]>();
-    const sessionKey = liveData?.sessionKey;
-    if (!sessionKey) {
+    /*
+      The capture's key, not the resolved one. History is a property of the
+      session that was raced; a replay with no capture behind it has none to
+      show, and the `replay|hash` key stands in only for filing new calls.
+    */
+    const capturedKey = liveData?.sessionKey;
+    if (!capturedKey) {
       return byDriver;
     }
 
     Object.values(stewardDecisions ?? {}).forEach((decision) => {
-      if (decision.sessionKey !== sessionKey) {
+      // A withdrawn call is not precedent — same rule as the live provider.
+      if (decision.sessionKey !== capturedKey || !isStandingCall(decision)) {
         return;
       }
 
@@ -207,6 +311,34 @@ export const ReplayIncidentDossier: React.FC<Props> = ({
   }, [liveData?.sessionKey, stewardDecisions]);
 
   /*
+    The note the next call will carry, seeded from the one already on the
+    record.
+
+    Seeding is the whole reason this field could not simply be switched on. A
+    blank box wired into `buildDecision` would silently wipe the reasoning a
+    live call already carries the first time a steward touched any button on
+    this panel — which is why the field was left off rather than added empty.
+    Starting it at the recorded value makes the box a revision of that sentence
+    instead of a replacement for it, which is what post-session review is.
+
+    Keyed on the incident so moving to the next one does not carry the last
+    one's note across, and re-seeded when a decision lands from elsewhere.
+  */
+  const recordedReasoning = decisionsForIncident.find(
+    (entry) => entry.reasoning,
+  )?.reasoning;
+  const [reasoning, setReasoning] = useState(recordedReasoning ?? '');
+  const reasoningKey = `${sessionKey}|${decidedIncident?.id ?? ''}`;
+  const [seededFor, setSeededFor] = useState(reasoningKey);
+
+  useEffect(() => {
+    if (seededFor !== reasoningKey) {
+      setSeededFor(reasoningKey);
+      setReasoning(recordedReasoning ?? '');
+    }
+  }, [reasoningKey, recordedReasoning, seededFor]);
+
+  /*
     A solo incident has one party, so targeting it needs no extra click. A
     contact has no default, because picking either driver would be the app
     quietly deciding fault.
@@ -224,11 +356,7 @@ export const ReplayIncidentDossier: React.FC<Props> = ({
       outcome?: LiveDecisionOutcome,
       target?: LiveDriverRef,
     ): StewardDecision => ({
-      id: buildStewardDecisionId(
-        liveData?.sessionKey ?? '',
-        source.id,
-        target?.steamId,
-      ),
+      id: buildStewardDecisionId(sessionKey, source.id, target?.steamId),
       basis: 'incident',
       incidentId: source.id,
       /*
@@ -237,7 +365,7 @@ export const ReplayIncidentDossier: React.FC<Props> = ({
         that becomes knowable.
       */
       replayHash,
-      sessionKey: liveData?.sessionKey ?? '',
+      sessionKey,
       sessionTrack: liveData?.trackName ?? '',
       sessionType: liveData?.sessionType ?? '',
       sessionDate: liveData?.startedAt,
@@ -258,7 +386,12 @@ export const ReplayIncidentDossier: React.FC<Props> = ({
       trackPositionLabel: source.evidence.trackPositionLabel,
       classification: source.classification,
       outcome,
-      reasoning: source.decisionReasoning,
+      /*
+        What is in the box, which starts as what was already on the record. An
+        empty box records nothing rather than an empty string, so an export can
+        still tell "no reasoning given" from "reasoning given as blank".
+      */
+      reasoning: reasoning.trim() || undefined,
       /*
         The same resolved name the live shell writes with, off `useApi()`.
         Reviewing a call here rewrites its author to whoever is reviewing, which
@@ -276,14 +409,50 @@ export const ReplayIncidentDossier: React.FC<Props> = ({
       status: 'final',
       revisions: [],
     }),
-    [liveData, replayHash, stewardAuthor],
+    [liveData, reasoning, replayHash, sessionKey, stewardAuthor],
+  );
+
+  /*
+    Withdraws every other record standing against this incident.
+
+    The replay side writes at most one record per target, but a call made live
+    and a flag made live are two records under two ids, and both can reach this
+    view. Clearing only the one under the cursor would leave the incident still
+    reading as called.
+  */
+  const withdrawOtherCalls = useCallback(
+    (keepId: string) => {
+      decisionsForIncident.forEach((existing) => {
+        if (existing.id === keepId) {
+          return;
+        }
+
+        saveStewardDecision({
+          ...existing,
+          state: 'WITHDRAWN',
+          outcome: undefined,
+          decidedAt: Date.now(),
+        });
+      });
+    },
+    [decisionsForIncident, saveStewardDecision],
   );
 
   const onFlag = useCallback(() => {
-    if (decidedIncident) {
-      saveStewardDecision(buildDecision(decidedIncident, 'FLAGGED'));
+    if (!decidedIncident) {
+      return;
     }
-  }, [buildDecision, decidedIncident, saveStewardDecision]);
+
+    // Pressing flag on an incident already flagged takes it back, the same as
+    // every other control on this panel.
+    const state = toggledState('FLAGGED', decidedIncident.state === 'FLAGGED');
+    const flagged = buildDecision(decidedIncident, state);
+
+    if (state === 'WITHDRAWN') {
+      withdrawOtherCalls(flagged.id);
+    }
+    saveStewardDecision(flagged);
+  }, [buildDecision, decidedIncident, saveStewardDecision, withdrawOtherCalls]);
 
   const onDecide = useCallback(
     (_incidentId: string, outcome: LiveDecisionOutcome) => {
@@ -310,9 +479,28 @@ export const ReplayIncidentDossier: React.FC<Props> = ({
         return;
       }
 
-      saveStewardDecision(
-        buildDecision(decidedIncident, 'DECIDED', outcome, target),
+      /*
+        Pressing the call already recorded takes it back. Keyed on the outcome
+        as well as the state, so pressing a *different* action revises the call
+        rather than clearing it — which is what post-session review is mostly
+        for.
+      */
+      const isSameCall =
+        decidedIncident.state === 'DECIDED' &&
+        decidedIncident.decision === outcome;
+      const state = toggledState('DECIDED', isSameCall);
+
+      const decision = buildDecision(
+        decidedIncident,
+        state,
+        isSameCall ? undefined : outcome,
+        target,
       );
+
+      if (isSameCall) {
+        withdrawOtherCalls(decision.id);
+      }
+      saveStewardDecision(decision);
     },
     [
       buildDecision,
@@ -320,6 +508,7 @@ export const ReplayIncidentDossier: React.FC<Props> = ({
       effectiveTargetSteamId,
       saveStewardDecision,
       stewardActions,
+      withdrawOtherCalls,
     ],
   );
 
@@ -331,13 +520,17 @@ export const ReplayIncidentDossier: React.FC<Props> = ({
     sendMessage(CONSTANTS.API.PUT_REPLAY_COMMAND_FOCUS_CAR, String(slotId));
   }, []);
 
-  // Nothing captured this incident, which is the ordinary case — most incidents
-  // never get a trace, and most replays have no captured session at all.
-  if (!liveIncidentId || !liveData) {
-    return null;
-  }
+  /*
+    Only a dossier with no incident behind it at all is withheld.
 
-  if (!decidedIncident) {
+    It used to also stand down whenever live capture had nothing for the
+    incident, which is the ordinary case — most incidents never get a trace and
+    most replays have no captured session at all — so the great majority of the
+    library could be watched and not called on. The panel is worth keeping for
+    them: the footage is on screen, which is the evidence, and everything a
+    decision needs is in the result log.
+  */
+  if (!decidedIncident || !sessionKey) {
     return null;
   }
 
@@ -346,15 +539,6 @@ export const ReplayIncidentDossier: React.FC<Props> = ({
     already here, so the dossier renders at once and the trace chart appears
     underneath when its ~100 KB arrives. A spinner over the whole panel would
     hide the closing speeds and measurements a steward can already act on.
-  */
-
-  /*
-    No `onChangeReasoning`, so the dossier draws no reasoning field. Reviewing
-    here revises an existing record, and a blank box wired straight into
-    `buildDecision` would wipe the reasoning the live call already carries —
-    which is why `buildDecision` reads `source.decisionReasoning` instead.
-    Prompting for reasoning against the record being revised is its own piece of
-    work, and both design docs describe it as a prompt rather than a field.
   */
   return (
     <Box>
@@ -366,6 +550,9 @@ export const ReplayIncidentDossier: React.FC<Props> = ({
         targetSteamId={effectiveTargetSteamId}
         priorCallsByDriver={priorCallsByDriver}
         onSelectTarget={setTargetSteamId}
+        reasoning={reasoning}
+        onChangeReasoning={setReasoning}
+        evidenceUnavailable={hasCapture ? undefined : NO_CAPTURE_EXPLANATION}
       />
     </Box>
   );

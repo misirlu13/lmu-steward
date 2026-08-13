@@ -555,6 +555,34 @@ describe('main/career aggregate', () => {
     expect(aggregate.headline.distanceKm).toBe(150);
   });
 
+  /*
+   * The stat a GT3 driver would claim in a multiclass race: quickest in their
+   * own class, not quickest outright. Counting outright would score them
+   * against a Hypercar they were never racing, and read as zero all season.
+   */
+  it('counts a fastest lap by class, and only in races', () => {
+    const aggregate = buildCareerAggregate(
+      [
+        // Owned the class best.
+        session({ bestLapSec: 88, classBestLapSec: 88, sessionBestLapSec: 84 }),
+        // Beaten in class by a tenth.
+        session({ bestLapSec: 88.1, classBestLapSec: 88 }),
+        // Quickest in class, but a practice session has no result to claim.
+        session({
+          sessionType: 'PRACTICE',
+          bestLapSec: 87,
+          classBestLapSec: 87,
+        }),
+        // Never set a timed lap.
+        session({ bestLapSec: null, classBestLapSec: 88 }),
+      ],
+      identity,
+      null,
+    );
+
+    expect(aggregate.results.classFastestLaps).toBe(1);
+  });
+
   it('splits wins by multiplayer and race weekend while keeping one total', () => {
     const aggregate = buildCareerAggregate(
       [

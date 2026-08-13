@@ -410,7 +410,7 @@ export type { LivePressureBattle };
  * No sector flags here on purpose. `mSectorFlag` is documented as local yellows
  * but reads a constant 11 in all three sectors through a green session, so
  * there is nothing to render. See the Tier 3 warning in
- * docs/live-mode-product-design.md.
+ * plans/live-mode-product-design.md.
  */
 export interface LiveSessionState {
   trackName: string;
@@ -1030,7 +1030,7 @@ const buildFrames = (seed: number, frameCount: number): LiveIncidentFrame[] => {
         anything the captured sessions show — of the car traces that were
         actually moving, only 1% peak under 0.1 and the median uses 0.82 of the
         available 2.0 — so it drew a dev-mode steering band that looked broken
-        against a full-scale axis. See docs/live-capture-investigation.md.
+        against a full-scale axis. See plans/live-capture-investigation.md.
       */
       steering: Number(
         Math.max(

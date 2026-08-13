@@ -26,7 +26,7 @@ import { readLiveSessions, setLiveSessionProposal } from './live-session-store';
  * pre-filter are new. A divergence between the two would show up as a link the
  * import path would have refused to make.
  *
- * See docs/live-replay-reconciliation-design.md, "Matching a Live Session to a
+ * See plans/live-replay-reconciliation-design.md, "Matching a Live Session to a
  * Replay".
  */
 

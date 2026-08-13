@@ -639,4 +639,147 @@ describe('main/bulk import', () => {
 
     expect(sessions.size).toBe(0);
   });
+
+  /*
+   * The capture riding along with a replay.
+   *
+   * Two separate things are checked here because they can disagree. The import
+   * restores whatever file is beside the .Vcr, so the preview has to report
+   * presence from the same place — reading it off the manifest instead would
+   * let the dialog promise evidence that is no longer in the hand-off.
+   */
+  describe('captured sessions travelling with a replay', () => {
+    const liveDataFor = (replayName: string) =>
+      JSON.stringify({
+        version: 1,
+        session: { sessionKey: `live|Daytona|1|${EVENT_TIME}` },
+        incidents: [],
+        includesTelemetry: true,
+        replayName,
+      });
+
+    const writeSessionManifest = (
+      directory: string,
+      vcrPath: string,
+      logPath: string,
+      liveData: { includesTelemetry: boolean } | null,
+    ) =>
+      writeFileSync(
+        join(directory, EXPORT_MANIFEST_NAME),
+        JSON.stringify(
+          buildExportManifest(
+            {
+              hash: 'h',
+              replayName: races[0].replayName,
+              sceneDesc: 'DAYTONA',
+              session: 'RACE',
+              timestamp: EVENT_TIME,
+              logDataFileName: basename(logPath),
+            },
+            vcrPath,
+            logPath,
+            liveData,
+          ),
+        ),
+      );
+
+    it('reports the capture and the telemetry the manifest declared', async () => {
+      await buildWeekendArchive();
+      await extractArchive(archivePath, unpackDirectory);
+
+      const sessionDirectory = join(unpackDirectory, '01 Race - Daytona R1 2');
+
+      writeFileSync(
+        join(sessionDirectory, 'lmu-steward-live.json'),
+        liveDataFor(races[0].replayName),
+      );
+      writeSessionManifest(
+        sessionDirectory,
+        join(sessionDirectory, `${races[0].replayName}.Vcr`),
+        join(sessionDirectory, races[0].log),
+        { includesTelemetry: true },
+      );
+
+      const { rows } = await scanImportSource({
+        sourceDirectory: unpackDirectory,
+        imported: {},
+      });
+
+      const carrying = rows.find(
+        (row) => row.replayName === races[0].replayName,
+      );
+
+      expect(carrying?.liveData).toEqual({ includesTelemetry: true });
+      // Every other session in the weekend brought nothing.
+      expect(
+        rows
+          .filter((row) => row.replayName !== races[0].replayName)
+          .every((row) => row.liveData === null),
+      ).toBe(true);
+    });
+
+    it('records telemetry as declined when the manifest says so', async () => {
+      writeFileSync(
+        join(sourceDirectory, 'lmu-steward-live.json'),
+        liveDataFor(races[0].replayName),
+      );
+      writeSessionManifest(
+        sourceDirectory,
+        join(sourceDirectory, `${races[0].replayName}.Vcr`),
+        join(sourceDirectory, races[0].log),
+        { includesTelemetry: false },
+      );
+
+      const { rows } = await scanImportSource({
+        sourceDirectory,
+        imported: {},
+      });
+
+      expect(
+        rows.find((row) => row.replayName === races[0].replayName)?.liveData,
+      ).toEqual({ includesTelemetry: false });
+    });
+
+    /**
+     * A capture with no manifest to describe it. Presence is still reported —
+     * the restore will find the file regardless — but nothing is asserted
+     * about telemetry, because nothing said.
+     */
+    it('leaves telemetry unknown when no manifest describes the capture', async () => {
+      writeFileSync(
+        join(sourceDirectory, 'lmu-steward-live.json'),
+        liveDataFor(races[0].replayName),
+      );
+
+      const { rows } = await scanImportSource({
+        sourceDirectory,
+        imported: {},
+      });
+
+      expect(
+        rows.every((row) => row.liveData?.includesTelemetry === null),
+      ).toBe(true);
+    });
+
+    /**
+     * The disagreement that matters. A manifest naming a capture that is no
+     * longer in the hand-off must not produce a preview promising one, because
+     * the restore reads the file and would find nothing.
+     */
+    it('reports no capture when the manifest names one that is absent', async () => {
+      writeSessionManifest(
+        sourceDirectory,
+        join(sourceDirectory, `${races[0].replayName}.Vcr`),
+        join(sourceDirectory, races[0].log),
+        { includesTelemetry: true },
+      );
+
+      const { rows } = await scanImportSource({
+        sourceDirectory,
+        imported: {},
+      });
+
+      expect(rows.every((row) => row.liveData === null)).toBe(true);
+    });
+  });
 });

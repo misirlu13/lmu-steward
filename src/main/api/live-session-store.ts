@@ -477,18 +477,26 @@ export const linkLiveSessionToReplay = (
     link,
   }));
 
+/**
+ * Undoes a confirmed pairing, putting the capture back where it was before it.
+ *
+ * The dismissal is dropped rather than set. Unlinking and rejecting a
+ * suggestion are two different acts and only one of them is a "no": rejecting
+ * says this replay is not the one, and `dismissLiveSessionMatch` records that.
+ * Unlinking says the link itself was wrong — most often on the way to picking a
+ * different replay — and a capture that had a "Replay found" badge before it
+ * was linked should carry it again afterwards.
+ *
+ * Setting the dismissal here made unlinking a one-way door: `shouldMatchSession`
+ * skips a dismissed session forever, so the badge never came back and the only
+ * route to a link was to find the replay by hand.
+ */
 export const unlinkLiveSession = (
   sessionKey: string,
 ): LiveSessionRecord | null =>
-  updateLiveSession(sessionKey, (session) => ({
-    /*
-      Unlinking also dismisses. Without it, the next matching pass would
-      immediately re-propose the replay the user has just rejected, which is
-      the nagging the design rules out.
-    */
-    ...withoutKeys(session, ['link', 'proposal']),
-    matchDismissedAt: Date.now(),
-  }));
+  updateLiveSession(sessionKey, (session) =>
+    withoutKeys(session, ['link', 'proposal', 'matchDismissedAt']),
+  );
 
 export const setLiveSessionProposal = (
   sessionKey: string,

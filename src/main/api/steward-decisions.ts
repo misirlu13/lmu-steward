@@ -14,7 +14,7 @@ import { getMainPersistentStore } from '../storage/local-data-store';
  * this reason" is precisely what makes league stewarding defensible under
  * appeal — and it is expensive to retrofit once decisions are being written.
  *
- * Nothing here ever deletes. See docs/export-and-decisions-design.md.
+ * Nothing here ever deletes. See plans/export-and-decisions-design.md.
  */
 
 const STORE_KEY = 'stewardDecisions';

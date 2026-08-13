@@ -315,6 +315,34 @@ export const getLiveDataForReplay = async (
       : null;
 
     /*
+      A link that only resolved through its identity key is repaired here.
+
+      The replay cache re-hashes — a re-import, a moved folder, a metadata
+      rewrite — and the link carries `replayIdentityKey` so a confirmed pairing
+      survives it. That fallback finds the session but leaves the link pointing
+      at a hash nothing has any more, so every later lookup goes the long way
+      round, through a cache read that can come back empty while a sync is
+      rebuilding it. Writing the current hash back turns a link that resolves by
+      luck into one that resolves directly, which is what unlinking and
+      relinking by hand was really doing.
+    */
+    if (
+      session?.link &&
+      replayHash &&
+      session.link.replayHash !== replayHash &&
+      session.link.replayIdentityKey &&
+      session.link.replayIdentityKey === identityKey
+    ) {
+      log.info(
+        `live-data-for-replay: healing link for ${session.sessionKey} — ${session.link.replayHash.slice(0, 12)} is now ${replayHash.slice(0, 12)}`,
+      );
+      linkLiveSessionToReplay(session.sessionKey, {
+        ...session.link,
+        replayHash,
+      });
+    }
+
+    /*
       Worth a log line: "the replay shows no telemetry" has two very different
       causes — no captured session is linked, or one is linked and held nothing
       — and they are indistinguishable on screen.
@@ -331,8 +359,17 @@ export const getLiveDataForReplay = async (
       }`,
     );
 
+    /*
+      The reply says which replay it is about.
+
+      Without it a reply is only "the latest answer", and the renderer has no
+      way to tell the answer it is waiting for from one still in flight for the
+      replay it has just navigated away from. A late `null` for the previous
+      replay then lands on this one and clears evidence that is genuinely there.
+    */
     event.reply(CONSTANTS.API.GET_LIVE_DATA_FOR_REPLAY, {
       status: 'success',
+      replayHash,
       data:
         session && session.link
           ? ({
@@ -349,6 +386,7 @@ export const getLiveDataForReplay = async (
   } catch (error: unknown) {
     event.reply(CONSTANTS.API.GET_LIVE_DATA_FOR_REPLAY, {
       status: 'error',
+      replayHash,
       message:
         error instanceof Error
           ? error.message

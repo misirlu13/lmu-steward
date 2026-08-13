@@ -94,6 +94,15 @@ export const CONSTANTS = {
     GET_STANDINGS_HISTORY: 'get.standings-history',
     GET_STANDINGS: 'get.standings',
     GET_IS_REPLAY_ACTIVE: 'get.is-replay-active',
+    /**
+     * Which replay the game is showing, if any — asked once at startup.
+     *
+     * `isActive` says a replay is loaded but not which one, and LMU has no
+     * endpoint that names it: `/rest/watch/replays` lists every file with no
+     * "current" marker. So the app remembers what it loaded and this channel
+     * checks that memory against the game before trusting it.
+     */
+    GET_ACTIVE_REPLAY: 'get.active-replay',
     GET_SESSION_INFO: 'get.session-info',
     GET_FOCUSED_CAR: 'get.focused-car',
     /**
@@ -698,13 +707,32 @@ export const CONSTANTS = {
       PLAY: 'VCRCOMMAND_PLAY',
       FORWARD_SCAN: 'VCRCOMMAND_FORWARDSCAN',
     },
+    /*
+      `direction` is -1 or 1, and **0 is not "backwards" — it steps forward**.
+
+      Measured on 2026-08-10 against a running session by sending each value and
+      reading `getCameraInfo` back after every call. With 0 the angle advanced
+      every time, so previous and next were the same button: ONBOARD03 → 04 →
+      05 → 06 → 00 walked forward under alternating clicks. With -1 it steps
+      back cleanly and repeatably — ONBOARD04 → 03 → 02 → 03 → 02 — on Driving
+      as well as Onboard.
+
+      The field is genuinely read rather than ignored: a `direction` of
+      `"previous"` is refused with a 404, so the endpoint validates it. 0 is
+      simply not one of the two values it means anything by, and everything that
+      is not a step back is a step forward.
+
+      Trackside is the same command but cannot be verified the same way — its
+      director re-picks angles on its own, so `cameraName` moves with nobody
+      touching it.
+    */
     CAMERA: {
       DRIVING_ANGLE_NEXT: { cameraGroup: 'Driving', direction: 1 },
-      DRIVING_ANGLE_PREVIOUS: { cameraGroup: 'Driving', direction: 0 },
+      DRIVING_ANGLE_PREVIOUS: { cameraGroup: 'Driving', direction: -1 },
       TRACKSIDE_ANGLE_NEXT: { cameraGroup: 'Trackside', direction: 1 },
-      TRACKSIDE_ANGLE_PREVIOUS: { cameraGroup: 'Trackside', direction: 0 },
+      TRACKSIDE_ANGLE_PREVIOUS: { cameraGroup: 'Trackside', direction: -1 },
       ONBOARD_ANGLE_NEXT: { cameraGroup: 'Onboard', direction: 1 },
-      ONBOARD_ANGLE_PREVIOUS: { cameraGroup: 'Onboard', direction: 0 },
+      ONBOARD_ANGLE_PREVIOUS: { cameraGroup: 'Onboard', direction: -1 },
     },
   },
   SESSION_TYPE_MAPPINGS: {

@@ -30,15 +30,18 @@ jest.mock('../components/Common/ViewHeader', () => ({
     breadcrumb,
     title,
     subtitle,
+    actions,
   }: {
     breadcrumb: React.ReactNode;
     title: React.ReactNode;
     subtitle: React.ReactNode;
+    actions: React.ReactNode;
   }) => (
     <div data-testid="driver-analysis-header">
       <div>{breadcrumb}</div>
       <div>{title}</div>
       <div>{subtitle}</div>
+      <div>{actions}</div>
     </div>
   ),
 }));
@@ -189,7 +192,12 @@ describe('DriverAnalysisView integration', () => {
     expect(screen.queryByTestId('replay-jump-controls')).toBeNull();
   });
 
-  it('returns to dashboard when dashboard breadcrumb is clicked', () => {
+  /*
+   * The breadcrumb navigates and nothing more. Leaving the driver's page is not
+   * a decision about what LMU should still have loaded, and unloading it here
+   * would cost a steward the replay they are part-way through reviewing.
+   */
+  it('leaves the replay loaded when the replays breadcrumb is clicked', () => {
     useApiMock.mockReturnValue({
       currentReplay: { hash: 'hash-1' },
       isReplayActive: true,
@@ -198,7 +206,24 @@ describe('DriverAnalysisView integration', () => {
 
     renderView(false, true);
 
-    fireEvent.click(screen.getByText('Driver'));
+    fireEvent.click(screen.getByText('Replays'));
+
+    expect(sendMessageMock).not.toHaveBeenCalledWith(
+      CONSTANTS.API.POST_CLOSE_REPLAY,
+    );
+  });
+
+  /** Closing is the dedicated button's job, and only its job. */
+  it('closes the replay from the close button', () => {
+    useApiMock.mockReturnValue({
+      currentReplay: { hash: 'hash-1' },
+      isReplayActive: true,
+      quickViewEnabled: false,
+    } as unknown as ReturnType<typeof useApi>);
+
+    renderView(false, true);
+
+    fireEvent.click(screen.getByRole('button', { name: /close replay/i }));
 
     expect(sendMessageMock).toHaveBeenCalledWith(
       CONSTANTS.API.POST_CLOSE_REPLAY,

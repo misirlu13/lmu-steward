@@ -5,7 +5,7 @@ what it reads to the app as one JSON object per line on stdout.
 
 **This ships.** It started as the Phase 0 spike answering the seven open
 questions in
-[live-capture-investigation.md](../../docs/live-capture-investigation.md), and it
+[live-capture-investigation.md](../../plans/live-capture-investigation.md), and it
 still runs standalone for that — without `--json` it prints a human-readable
 diagnostic and a findings summary. But the live steward feature depends on it, so
 `npm run package` builds it and electron-builder copies it into the installer as

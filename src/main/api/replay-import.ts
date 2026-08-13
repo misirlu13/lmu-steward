@@ -9,13 +9,13 @@ import {
   rm,
   stat,
 } from 'fs/promises';
-import { basename, join } from 'path';
+import { basename, dirname, join } from 'path';
 import { promisify } from 'util';
 import { ImportedReplayRecord, ImportedReplayStore, SessionType } from '@types';
 import { generateReplayHash } from '../util';
 import { assertFreeSpace } from './disk-space';
 import { scanManifests } from './import-manifest';
-import { OmittedSession } from './replay-export';
+import { EXPORT_LIVE_DATA_NAME, OmittedSession } from './replay-export';
 import { readVcrTrailer, VcrTrailer } from './vcr-metadata';
 import {
   LogCandidate,
@@ -55,7 +55,48 @@ export interface ImportPreviewRow {
    * nothing else can separate.
    */
   manifest: { logPath: string; timestamp: number } | null;
+  /**
+   * The captured session travelling with this replay, if one is beside it.
+   *
+   * Surfaced so a steward confirming an import knows evidence is arriving —
+   * and, when the manifest says so, whether that evidence includes other
+   * drivers' telemetry. The export side makes including traces a deliberate
+   * opt-in; the receiving side should not have to infer what it was handed.
+   */
+  liveData: ImportLiveData | null;
 }
+
+export interface ImportLiveData {
+  /**
+   * Whether the capture carries trace windows, per the manifest.
+   *
+   * Null means the manifest did not say, not that traces are absent. The flag
+   * is a courtesy; the capture's presence is established by the file itself.
+   */
+  includesTelemetry: boolean | null;
+}
+
+/**
+ * The captured session sitting beside a replay, if there is one.
+ *
+ * Presence is decided by the file rather than by the manifest that names it,
+ * because that is what the restore does: it reads
+ * `EXPORT_LIVE_DATA_NAME` next to the .Vcr and consults nothing else. Trusting
+ * the manifest here would let the preview promise evidence the import cannot
+ * deliver — an archive whose capture was deleted after export being the
+ * obvious way to produce one.
+ */
+export const readLiveDataSidecar = async (
+  vcrPath: string,
+  includesTelemetry: boolean | null = null,
+): Promise<ImportLiveData | null> => {
+  try {
+    await stat(join(dirname(vcrPath), EXPORT_LIVE_DATA_NAME));
+    return { includesTelemetry };
+  } catch {
+    return null;
+  }
+};
 
 export interface ImportSelection {
   id: string;
@@ -418,6 +459,16 @@ export const scanImportSource = async ({
       pairing,
       alreadyImportedHash: importedByVcrPath.get(vcrPath.toLowerCase()) ?? null,
       manifest,
+      /*
+       * Keyed off `manifestEntry` rather than the resolved pairing: a replay
+       * whose log went missing still says what it brought with it, and saying
+       * so is part of explaining why the row cannot be imported.
+       */
+      // eslint-disable-next-line no-await-in-loop
+      liveData: await readLiveDataSidecar(
+        vcrPath,
+        manifestEntry?.includesTelemetry ?? null,
+      ),
     });
   }
 

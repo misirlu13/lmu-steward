@@ -129,8 +129,17 @@ export const ReplayView: React.FC = () => {
     [replayForView],
   );
 
-  const onBackToReplays = () => {
+  const onCloseAndBackToReplays = () => {
     sendMessage(CONSTANTS.API.POST_CLOSE_REPLAY);
+    navigate('/replays');
+  };
+
+  /*
+   * Navigates without closing, unlike the button above. Leaving the analysis is
+   * not a decision about what LMU should still have loaded, and the replay list
+   * offers its own way back to a replay that is still open.
+   */
+  const onBackToReplays = () => {
     navigate('/replays');
   };
 
@@ -209,6 +218,17 @@ export const ReplayView: React.FC = () => {
       logDataFileName: currentReplay.logDataFileName,
       includeLiveTelemetry: withTelemetry,
     });
+  };
+
+  /*
+    Opens the dossier and nothing else.
+
+    Jumping stays its own act on the Jump button: seeking takes over Le Mans
+    Ultimate and costs seconds, and a steward working down an incident list
+    wants to read several before choosing which is worth watching.
+  */
+  const onSelectIncident = (event: ReplayIncidentEvent) => {
+    setSelectedIncidentId(event.id);
   };
 
   const onJumpToIncident = (event: ReplayIncidentEvent) => {
@@ -441,6 +461,7 @@ export const ReplayView: React.FC = () => {
               }
               onExportSessionData={onExportSessionData}
               onCopySessionMarkdown={onCopySessionMarkdown}
+              onCloseAndBackToReplays={onCloseAndBackToReplays}
               onExport={() => {
                 if (!currentReplay?.logDataFileName) {
                   return;
@@ -496,6 +517,7 @@ export const ReplayView: React.FC = () => {
           events={timelineEvents}
           availableClasses={availableClasses}
           selectedIncidentId={selectedIncidentId}
+          onSelectIncident={onSelectIncident}
           onJumpToIncident={onJumpToIncident}
           hideJumpButtons={isQuickViewModeActiveForReplay}
           dataCoverageNote={driverCoverageNote}

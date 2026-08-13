@@ -19,6 +19,7 @@ import { ExportProgressDialog } from '../components/Dashboard/ExportProgressDial
 import { ImportPreviewDialog } from '../components/Dashboard/ImportPreviewDialog';
 import { ImportProgressDialog } from '../components/Dashboard/ImportProgressDialog';
 import { useViewReplayDisabledReason } from '../hooks/useReplayGating';
+import { useLiveCaptureIndex } from '../hooks/useLiveCaptureIndex';
 
 interface PendingDelete {
   hashes: string[];
@@ -105,6 +106,12 @@ export const DashboardView: React.FC = () => {
     importSelectedReplays,
   } = useApi();
   const viewReplayDisabledReason = useViewReplayDisabledReason();
+  /*
+    Fetched once for the whole list rather than per accordion. The dashboard
+    draws one of these per weekend and the answer is the same small array for
+    all of them.
+  */
+  const liveCaptureByReplay = useLiveCaptureIndex();
   const [isImportDialogOpen, setIsImportDialogOpen] = useState(false);
   const [lastImportedName, setLastImportedName] = useState('');
   const wasImportingRef = useRef(false);
@@ -286,6 +293,7 @@ export const DashboardView: React.FC = () => {
               }
               canExport={experimentalFeaturesEnabled}
               viewReplayDisabledReason={viewReplayDisabledReason}
+              liveCaptureByReplay={liveCaptureByReplay}
               onExportSession={(sessionReplay) =>
                 exportReplay(toExportPayload(sessionReplay))
               }

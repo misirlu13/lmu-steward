@@ -739,7 +739,35 @@ describe('main/replay helpers', () => {
       }),
     });
 
-    expect(replayStoreSetMock).toHaveBeenCalledTimes(1);
+    /*
+      Scoped to the cache rather than counting every write. What this test is
+      about is the replay not being persisted a second time, and watching one
+      also records which replay is now loaded — a different key, and not the
+      thing being guarded against here.
+    */
+    const cacheWrites = replayStoreSetMock.mock.calls.filter(
+      ([key]) => key === 'replays',
+    );
+    expect(cacheWrites).toHaveLength(1);
+
+    /*
+      And the separate record of which replay is now loaded.
+
+      LMU cannot be asked this — `isActive` answers only true or false, and
+      `/rest/watch/replays` marks none of them current — so this is the app's
+      only answer to "which", and the return banner cannot survive a restart
+      without it.
+    */
+    const [, activeRecord] =
+      replayStoreSetMock.mock.calls.find(([key]) => key === 'activeReplay') ??
+      [];
+
+    expect(activeRecord).toMatchObject({
+      hash: replayHash,
+      sceneDesc: 'SEBRINGWEC',
+      sessionType: 'RACE',
+      replayName: 'Sebring International Raceway R1 1',
+    });
   });
 
   /**

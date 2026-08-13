@@ -213,6 +213,25 @@ export const ImportReplayDialog: React.FC<ImportReplayDialogProps> = ({
             the log.
           </Alert>
         ) : null}
+
+        {/*
+          Shown alongside the pairing result rather than with the errors above:
+          a capture is not a problem with the pair, it is extra evidence
+          arriving with it. Someone who extracted a Steward archive and is
+          picking the two files out of it by hand has no other sign that the
+          capture sitting beside them comes too.
+        */}
+        {validation?.liveData ? (
+          <Alert severity="info" sx={{ mt: 2 }}>
+            A captured session is sitting beside this replay and will be
+            imported and linked with it.{' '}
+            {validation.liveData.includesTelemetry === true
+              ? 'It includes driver telemetry — the throttle, brake and steering traces behind each incident.'
+              : validation.liveData.includesTelemetry === false
+                ? 'Derived evidence only, such as closing speeds and off-track findings — no driver telemetry.'
+                : ''}
+          </Alert>
+        ) : null}
       </DialogContent>
       <DialogActions>
         <Button onClick={onCancel} disabled={isImporting}>

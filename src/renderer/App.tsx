@@ -26,6 +26,8 @@ import { LmuDisconnectedDialog } from './components/Common/LmuDisconnectedDialog
 import { AppExitConfirmDialog } from './components/Common/AppExitConfirmDialog';
 import { ReplayProcessingSplash } from './components/Common/ReplayProcessingSplash';
 import { RendererErrorBoundary } from './components/Common/RendererErrorBoundary';
+import { LoadedReplayBar } from './components/Common/LoadedReplayBar';
+import { useReplaySyncOnSessionEnd } from './hooks/useReplaySyncOnSessionEnd';
 
 const AppRoutesShell = () => {
   const {
@@ -35,6 +37,13 @@ const AppRoutesShell = () => {
     replaySyncStatus,
   } = useApi();
   const location = useLocation();
+  /*
+    Mounted at the shell, not on the captured-sessions screen. A session ends
+    while the steward is watching the live view; by the time they reach the
+    screen that shows the link, the moment to go looking for the replay has
+    passed.
+  */
+  useReplaySyncOnSessionEnd();
   const showDisconnectedDialog =
     hasApiStatusResponse &&
     !isConnected &&
@@ -57,6 +66,14 @@ const AppRoutesShell = () => {
           maxWidth: '1800px !important',
         }}
       >
+        {/*
+          Above the routes rather than fixed to an edge of the window. The live
+          camera bar already owns the bottom, and a second fixed bar would sit
+          on top of it the moment a steward opened the live view with a replay
+          still loaded.
+        */}
+        <LoadedReplayBar />
+
         <Routes>
           {/*
             The driver dashboard is the landing page, with the replay list one

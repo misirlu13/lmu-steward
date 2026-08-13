@@ -56,6 +56,7 @@ import {
   getIsReplayActive,
   postArchiveNote,
   postArchiveReplays,
+  getActiveReplay,
   postCloseReplay,
   postReplayRewatch,
   postReplayReturnToLive,
@@ -213,6 +214,7 @@ const CHANNEL_CALLBACK_HANDLERS: Partial<
   [CONSTANTS.API.GET_STANDINGS_HISTORY]: withEventOnly(getStandingsHistory),
   [CONSTANTS.API.GET_STANDINGS]: withEventOnly(getStandings),
   [CONSTANTS.API.GET_IS_REPLAY_ACTIVE]: withEventOnly(getIsReplayActive),
+  [CONSTANTS.API.GET_ACTIVE_REPLAY]: withEventOnly(getActiveReplay),
   [CONSTANTS.API.GET_SESSION_INFO]: withEventOnly(getSessionInfo),
   [CONSTANTS.API.GET_FOCUSED_CAR]: withEventOnly(getFocusedCar),
   [CONSTANTS.API.GET_CAMERA_INFO]: withEventOnly(getCameraInfo),
@@ -868,7 +870,7 @@ app.on('window-all-closed', () => {
  * Only one copy of Steward may run at a time. Every instance calls
  * configureLiveCapture() and spawns its own lmu-spike sidecar, and those
  * sidecars then contend for LMU's shared-memory lock — which is machine-wide and
- * shared with wheel LED and motion software. See docs/live-capture-investigation.md;
+ * shared with wheel LED and motion software. See plans/live-capture-investigation.md;
  * bounded try-acquire keeps a single sidecar polite, it does not make several
  * sidecars safe. Double-clicking the desktop shortcut twice is enough to hit this.
  *

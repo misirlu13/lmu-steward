@@ -39,7 +39,7 @@ import {
  * sidecar rather than the app, and stdio keeps us clear of firewall prompts and
  * antivirus heuristics that a local socket would attract.
  *
- * See docs/live-capture-investigation.md for the shared memory contract.
+ * See plans/live-capture-investigation.md for the shared memory contract.
  */
 
 const SIDECAR_RELATIVE_PATHS = [
@@ -157,6 +157,15 @@ const SESSION_RESTART_ET_TOLERANCE = 5;
 // are qualified by a generation to stay unique across a restart — steward
 // decisions are keyed on incident id and must never land on the wrong incident.
 let sidecarGeneration = 0;
+
+/**
+ * Whether the "no sidecar" error has already been logged for this streak.
+ *
+ * The lookup is retried every few seconds, and the failure is a missing file
+ * rather than an event — without this the log would carry the same line twelve
+ * times a minute for as long as the app ran.
+ */
+let hasLoggedMissingSidecar = false;
 
 const resolveSidecarPath = (): string | null => {
   const roots = [
@@ -677,10 +686,46 @@ function spawnSidecar(): void {
 
   const sidecarPath = resolveSidecarPath();
   if (!sidecarPath) {
-    latest = { state: 'detached', detail: 'Live capture sidecar not found.' };
+    /*
+      Said out loud, once, and then retried.
+
+      This used to return in silence: the log read "enabled by settings,
+      starting sidecar" and then nothing at all, for the rest of the session,
+      whatever the game did. Live capture simply never worked and the one place
+      that could have explained why said nothing — the status detail did reach
+      the UI, but only somewhere a user would look after they already suspected
+      the sidecar rather than their own session.
+
+      A development tree is where this bites. `lmu-spike.exe` is built by
+      `npm run package`, never by `npm start`, so a fresh clone has no sidecar
+      and no indication that building one is the missing step.
+
+      Retried rather than given up on, because the binary genuinely can appear
+      under a running app — building it is exactly what a developer does next.
+      Logged only on the first attempt of a streak so a five-second retry does
+      not fill the log with the same line.
+    */
+    if (!hasLoggedMissingSidecar) {
+      hasLoggedMissingSidecar = true;
+      log.error(
+        `live-capture: sidecar not found, so nothing will be captured. Looked for ${SIDECAR_RELATIVE_PATHS.join(
+          ' and ',
+        )} under ${[process.cwd(), app.getAppPath(), path.dirname(app.getPath('exe'))].join(', ')}. Run "npm run build:sidecar" to build it.`,
+      );
+    }
+
+    latest = {
+      state: 'detached',
+      detail:
+        'Live capture sidecar not found. It is built by "npm run build:sidecar".',
+    };
     latestAt = Date.now();
+    scheduleRestart();
     return;
   }
+
+  // Found it, so the next disappearance is worth reporting again.
+  hasLoggedMissingSidecar = false;
 
   try {
     // --parent-pid lets the sidecar exit on its own when this process dies.

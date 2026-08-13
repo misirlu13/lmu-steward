@@ -17,6 +17,11 @@ import {
 } from '@types';
 import { sendMessage } from '../utils/postMessage';
 import { buildStewardDecisionId } from '../utils/stewardDecisionId';
+import {
+  isStandingCall,
+  standingCalls,
+  toggledState,
+} from '../utils/stewardDecisionState';
 import { useApi } from './ApiContext';
 import { LiveIndicator, deriveLiveIndicator } from '../hooks/useLiveIndicator';
 import {
@@ -191,8 +196,14 @@ const applyDecisions = (
   byIncident: Map<string, StewardDecision[]>,
 ): LiveIncident[] =>
   incidents.map((incident) => {
-    const forIncident = byIncident.get(incident.id);
-    if (!forIncident?.length) {
+    /*
+      Withdrawn records are skipped rather than ranked. A call the steward has
+      taken back says nothing about the incident, so one whose every record is
+      withdrawn falls through to the state it arrived carrying — `NEW` live —
+      and is unreviewed again, which is what taking a call back means.
+    */
+    const forIncident = standingCalls(byIncident.get(incident.id) ?? []);
+    if (!forIncident.length) {
       return incident;
     }
 
@@ -239,7 +250,10 @@ const countUnreviewed = (
   byIncident: Map<string, StewardDecision[]>,
 ): number =>
   incidents.reduce((total, incident) => {
-    if (byIncident.get(incident.id)?.length) {
+    // Standing records only, matching `applyDecisions` — an incident whose call
+    // has been withdrawn is waiting to be looked at again, and the badge is the
+    // one signal that says so.
+    if (standingCalls(byIncident.get(incident.id) ?? []).length) {
       return total;
     }
     return incident.state === 'NEW' ? total + 1 : total;
@@ -265,7 +279,13 @@ const buildPriorCallsByDriver = (
   const byDriver = new Map<string, LivePriorCall[]>();
 
   Object.values(decisions).forEach((decision) => {
-    if (decision.sessionKey !== sessionKey) {
+    /*
+      A withdrawn call is not precedent. Listing it beside the standing ones
+      would make a driver the steward decided against and then cleared look
+      like a repeat offender, which is the exact misreading `wasTarget` exists
+      further down to prevent.
+    */
+    if (decision.sessionKey !== sessionKey || !isStandingCall(decision)) {
       return;
     }
 
@@ -929,6 +949,7 @@ export const LiveSessionProvider: React.FC<{ children: React.ReactNode }> = ({
   const latest = useRef({
     incidents,
     decisionIdentity,
+    decisionsByIncident,
     sessionKey,
     stewardAuthor,
     stewardActions,
@@ -943,6 +964,7 @@ export const LiveSessionProvider: React.FC<{ children: React.ReactNode }> = ({
   latest.current = {
     incidents,
     decisionIdentity,
+    decisionsByIncident,
     sessionKey,
     stewardAuthor,
     stewardActions,
@@ -971,6 +993,48 @@ export const LiveSessionProvider: React.FC<{ children: React.ReactNode }> = ({
     setSelectedIncidentId(undefined);
   }, []);
 
+  /**
+   * Withdraws every call already recorded against an incident.
+   *
+   * Flagging or deferring is the steward saying "this is not settled after
+   * all", and they have to be able to say it about an incident they have
+   * already called — changing your mind is the ordinary case, not an error.
+   * Without this the two records merely coexisted: a call is keyed on its
+   * target and a flag is keyed on the incident, so they never collided, and
+   * `applyDecisions` ranks a decision above a flag. The flag was written,
+   * stored, and then never seen again, which on screen looked like a decision
+   * that could not be removed and a flag that refused to select.
+   *
+   * Revised rather than deleted, because the decision layer never deletes. The
+   * withdrawn call keeps its id and its revision history — "five seconds, then
+   * withdrawn and flagged for review" is exactly the trail an appeal needs —
+   * and only its head state and outcome change. `saveStewardDecision` appends
+   * the revision itself, since dropping the outcome is a substantive change.
+   *
+   * The record the caller is about to write is left alone: it is about to be
+   * saved with the right state anyway, and touching it here would append a
+   * revision for a change that never happened.
+   */
+  const withdrawOtherCalls = useCallback(
+    (incidentId: string, keepId: string, state: StewardDecisionState) => {
+      const { decisionsByIncident: heldIndex } = latest.current;
+
+      (heldIndex.get(incidentId) ?? []).forEach((existing) => {
+        if (existing.id === keepId || existing.state === state) {
+          return;
+        }
+
+        saveStewardDecision({
+          ...existing,
+          state,
+          outcome: undefined,
+          decidedAt: Date.now(),
+        });
+      });
+    },
+    [saveStewardDecision],
+  );
+
   const onFlag = useCallback(
     (incidentId: string) => {
       const {
@@ -991,21 +1055,29 @@ export const LiveSessionProvider: React.FC<{ children: React.ReactNode }> = ({
         parked the incident rather than calling it would lose the one sentence
         that explains why they parked it.
       */
-      saveStewardDecision(
-        buildDecision(
-          incident,
-          heldIdentity,
-          heldKey,
-          heldAuthor,
-          'FLAGGED',
-          undefined,
-          undefined,
-          heldReasoning,
-        ),
+      /*
+        Pressing flag on an incident that is already flagged takes it back.
+        Every control on this screen is a toggle, and a button that lights up
+        and then refuses to light down reads as stuck.
+      */
+      const state = toggledState('FLAGGED', incident.state === 'FLAGGED');
+
+      const flagged = buildDecision(
+        incident,
+        heldIdentity,
+        heldKey,
+        heldAuthor,
+        state,
+        undefined,
+        undefined,
+        heldReasoning,
       );
+
+      withdrawOtherCalls(incidentId, flagged.id, state);
+      saveStewardDecision(flagged);
       setReasoningDraft('');
     },
-    [saveStewardDecision],
+    [saveStewardDecision, withdrawOtherCalls],
   );
 
   /*
@@ -1031,21 +1103,24 @@ export const LiveSessionProvider: React.FC<{ children: React.ReactNode }> = ({
         return;
       }
 
-      saveStewardDecision(
-        buildDecision(
-          incident,
-          heldIdentity,
-          heldKey,
-          heldAuthor,
-          'DEFERRED',
-          undefined,
-          undefined,
-          heldReasoning,
-        ),
+      const state = toggledState('DEFERRED', incident.state === 'DEFERRED');
+
+      const deferred = buildDecision(
+        incident,
+        heldIdentity,
+        heldKey,
+        heldAuthor,
+        state,
+        undefined,
+        undefined,
+        heldReasoning,
       );
+
+      withdrawOtherCalls(incidentId, deferred.id, state);
+      saveStewardDecision(deferred);
       setReasoningDraft('');
     },
-    [saveStewardDecision],
+    [saveStewardDecision, withdrawOtherCalls],
   );
 
   const onDecide = useCallback(
@@ -1086,21 +1161,43 @@ export const LiveSessionProvider: React.FC<{ children: React.ReactNode }> = ({
         return;
       }
 
-      saveStewardDecision(
-        buildDecision(
-          incident,
-          heldIdentity,
-          heldKey,
-          heldAuthor,
-          'DECIDED',
-          outcome,
-          target,
-          heldReasoning,
-        ),
+      /*
+        Pressing the call the incident is already under takes it back, the same
+        as flag and defer. Keyed on the outcome as well as the state, so
+        pressing a *different* action replaces the call rather than clearing it
+        — which is the far commoner correction.
+      */
+      const isSameCall =
+        incident.state === 'DECIDED' && incident.decision === outcome;
+      const state = toggledState('DECIDED', isSameCall);
+
+      const decision = buildDecision(
+        incident,
+        heldIdentity,
+        heldKey,
+        heldAuthor,
+        state,
+        // A withdrawn record carries no outcome: the call is the thing being
+        // taken back, and leaving it on would keep it in every export.
+        isSameCall ? undefined : outcome,
+        target,
+        heldReasoning,
       );
+
+      /*
+        Withdrawing takes the whole incident with it. A decision is keyed on its
+        target and a flag on the incident, so clearing only the record under the
+        cursor could leave a second one standing and the incident still reading
+        as called.
+      */
+      if (isSameCall) {
+        withdrawOtherCalls(incidentId, decision.id, 'WITHDRAWN');
+      }
+
+      saveStewardDecision(decision);
       setReasoningDraft('');
     },
-    [saveStewardDecision],
+    [saveStewardDecision, withdrawOtherCalls],
   );
 
   /*
