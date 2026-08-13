@@ -133,6 +133,17 @@ export interface ImportPairIssueState {
   message: string;
 }
 
+/**
+ * A captured session travelling with a replay.
+ *
+ * `includesTelemetry` is null when nothing said either way — the archive's
+ * manifest is what records the exporter's choice, and a loose replay has none.
+ * Null is "unknown" rather than "no".
+ */
+export interface ImportLiveDataState {
+  includesTelemetry: boolean | null;
+}
+
 export interface ImportPairValidationState {
   issues: ImportPairIssueState[];
   confidence: number | null;
@@ -142,6 +153,8 @@ export interface ImportPairValidationState {
     logCount: number;
   } | null;
   canImport: boolean;
+  /** Set when a capture is sitting beside the chosen .Vcr. */
+  liveData: ImportLiveDataState | null;
 }
 
 /**
@@ -161,6 +174,8 @@ export interface ImportPreviewRowState {
   size: number;
   alreadyImportedHash: string | null;
   manifest: { logPath: string; timestamp: number } | null;
+  /** Set when a capture is sitting beside this replay in the hand-off. */
+  liveData: ImportLiveDataState | null;
   pairing: {
     ranked: Array<{
       candidate: {

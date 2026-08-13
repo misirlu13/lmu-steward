@@ -198,6 +198,24 @@ export const ImportPreviewDialog: React.FC<ImportPreviewDialogProps> = ({
     (row) => row.alreadyImportedHash,
   ).length;
 
+  /*
+   * Counted over every row rather than only the armed ones. This is a summary
+   * of what the hand-off contains, which does not change as the user ticks
+   * boxes; what actually lands follows from the rows they import.
+   */
+  const liveDataRows = rows.filter((row) => row.liveData);
+  /*
+   * Traces are only claimed where the manifest said so. A null flag means the
+   * archive did not record the choice, and inferring one either way would
+   * misreport what another steward decided about their drivers' telemetry.
+   */
+  const telemetryRowCount = liveDataRows.filter(
+    (row) => row.liveData?.includesTelemetry === true,
+  ).length;
+  const unknownTelemetryCount = liveDataRows.filter(
+    (row) => row.liveData?.includesTelemetry === null,
+  ).length;
+
   const setDecision = (rowId: string, patch: Partial<RowDecision>) =>
     setDecisions((previous) => ({
       ...previous,
@@ -254,6 +272,39 @@ export const ImportPreviewDialog: React.FC<ImportPreviewDialogProps> = ({
               {rows.length} replays carry the exporter&apos;s own pairing, so
               their logs and session dates are taken as given rather than
               guessed at.
+            </Alert>
+          ) : null}
+
+          {/*
+            Announced rather than left to be discovered. A capture is the
+            closing speeds, the traces and the on/off-track findings — most of
+            what makes an incident adjudicable — and when it carries telemetry
+            it is also other people's driving inputs. The export side makes
+            sending that a deliberate choice; the receiving side should not
+            have to infer it from what turns up later.
+          */}
+          {liveDataRows.length > 0 ? (
+            <Alert severity="info">
+              {liveDataRows.length} of {rows.length}{' '}
+              {liveDataRows.length === 1 ? 'replay carries' : 'replays carry'} a
+              captured session, which will be imported and linked alongside{' '}
+              {liveDataRows.length === 1 ? 'it' : 'them'}.{' '}
+              {telemetryRowCount > 0
+                ? `${
+                    telemetryRowCount === liveDataRows.length
+                      ? 'It includes'
+                      : `${telemetryRowCount} of them include`
+                  } driver telemetry — the throttle, brake and steering traces behind each incident.`
+                : null}
+              {/*
+                Said only when every manifest actually recorded the choice. A
+                missing flag is an archive that did not say, and "derived
+                evidence only" would be an assertion about someone else's
+                telemetry that nothing here supports.
+              */}
+              {telemetryRowCount === 0 && unknownTelemetryCount === 0
+                ? 'Derived evidence only, such as closing speeds and off-track findings — no driver telemetry.'
+                : null}
             </Alert>
           ) : null}
 
@@ -375,6 +426,29 @@ export const ImportPreviewDialog: React.FC<ImportPreviewDialogProps> = ({
                           {formatSize(row.size)}
                           {row.alreadyImportedHash ? ' · already imported' : ''}
                         </Typography>
+                        {row.liveData ? (
+                          <Tooltip
+                            title={
+                              row.liveData.includesTelemetry === true
+                                ? 'A captured session travels with this replay, including the throttle, brake and steering traces behind each incident.'
+                                : row.liveData.includesTelemetry === false
+                                  ? 'A captured session travels with this replay. Derived evidence only — no driver telemetry.'
+                                  : 'A captured session travels with this replay. The archive did not record whether it includes driver telemetry.'
+                            }
+                          >
+                            <Chip
+                              size="small"
+                              variant="outlined"
+                              color="info"
+                              label={
+                                row.liveData.includesTelemetry === true
+                                  ? 'Capture + telemetry'
+                                  : 'Capture'
+                              }
+                              sx={{ mt: 0.5 }}
+                            />
+                          </Tooltip>
+                        ) : null}
                       </TableCell>
                       <TableCell>
                         {sessionLabels[row.session] ?? row.session}

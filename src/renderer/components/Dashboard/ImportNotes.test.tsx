@@ -26,6 +26,7 @@ const buildRow = (
   size: 400 * 1024 ** 2,
   alreadyImportedHash: null,
   manifest: null,
+  liveData: null,
   pairing: {
     ranked: [
       {
@@ -165,6 +166,7 @@ describe('import notes', () => {
             confidence: 0.84,
             rosterOverlap: { intersection: 27, vcrCount: 32, logCount: 32 },
             canImport: true,
+            liveData: null,
           }}
           isImporting={false}
           errorMessage=""

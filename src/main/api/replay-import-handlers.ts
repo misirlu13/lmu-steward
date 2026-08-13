@@ -12,9 +12,11 @@ import {
   ImportPreviewRow,
   ImportSelection,
   importReplays,
+  readLiveDataSidecar,
   readLogCandidate,
   scanImportSource,
 } from './replay-import';
+import { readManifestFile } from './import-manifest';
 import { readVcrTrailerResult } from './vcr-metadata';
 import { listReplayMatchTargets, parseLogXml } from './replay';
 import {
@@ -1260,6 +1262,27 @@ export interface ImportPairRequest {
   note?: string;
 }
 
+/**
+ * The telemetry flag for a replay the user picked by hand.
+ *
+ * The bulk paths get this from the manifest scan; there is no scan here, so the
+ * session manifest beside the .Vcr is read on its own. Absent for a loose
+ * replay, which is the ordinary case and simply leaves the flag unknown.
+ */
+const readSiblingTelemetryFlag = async (
+  vcrPath: string,
+): Promise<boolean | null> => {
+  const parsed = await readManifestFile(
+    join(dirname(vcrPath), EXPORT_MANIFEST_NAME),
+  );
+
+  return (
+    parsed?.sessions.find(
+      (entry) => entry.vcrPath.toLowerCase() === vcrPath.toLowerCase(),
+    )?.includesTelemetry ?? null
+  );
+};
+
 const buildPairValidation = async ({ vcrPath, logPath }: ImportPairRequest) => {
   const trailerResult = await readVcrTrailerResult(vcrPath);
 
@@ -1281,7 +1304,12 @@ const buildPairValidation = async ({ vcrPath, logPath }: ImportPairRequest) => {
     getTrackAliases(trailer.sceneDesc, stripVcrExtension(basename(vcrPath))),
   );
 
-  return { trailer, candidate, validation };
+  const liveData = await readLiveDataSidecar(
+    vcrPath,
+    await readSiblingTelemetryFlag(vcrPath),
+  );
+
+  return { trailer, candidate, validation, liveData };
 };
 
 export const postValidateImportPair = async (
@@ -1293,11 +1321,11 @@ export const postValidateImportPair = async (
       throw new Error('Both a replay file and a result log are required.');
     }
 
-    const { validation } = await buildPairValidation(request);
+    const { validation, liveData } = await buildPairValidation(request);
 
     event.reply(CONSTANTS.API.POST_VALIDATE_IMPORT_PAIR, {
       status: 'success',
-      data: validation,
+      data: { ...validation, liveData },
     });
   } catch (error: unknown) {
     event.reply(CONSTANTS.API.POST_VALIDATE_IMPORT_PAIR, {
@@ -1316,7 +1344,7 @@ export const postImportReplayPair = async (
       throw new Error('Both a replay file and a result log are required.');
     }
 
-    const { trailer, candidate, validation } =
+    const { trailer, candidate, validation, liveData } =
       await buildPairValidation(request);
 
     /*
@@ -1348,6 +1376,7 @@ export const postImportReplayPair = async (
       alreadyImportedHash: null,
       // The user picked both files themselves; there is nothing to consult.
       manifest: null,
+      liveData,
     };
 
     const { outcomes, imported } = await importReplays({
@@ -1374,6 +1403,17 @@ export const postImportReplayPair = async (
     }
 
     writeImportedStore(imported);
+
+    /*
+      Same restore the bulk paths run, for the same reason.
+
+      Picking the two files by hand is a statement about the pairing, not a
+      refusal of anything else in the folder — someone who extracted a Steward
+      archive and reached for the .Vcr and the .xml has the capture sitting
+      right beside them. Skipping it here made this path silently produce a
+      worse import than the folder scan over the very same files.
+    */
+    await restoreImportedLiveData([row], outcomes);
 
     event.reply(CONSTANTS.API.POST_IMPORT_REPLAY_PAIR, {
       status: 'success',
