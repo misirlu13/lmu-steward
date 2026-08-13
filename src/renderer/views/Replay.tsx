@@ -134,8 +134,12 @@ export const ReplayView: React.FC = () => {
     navigate('/replays');
   };
 
+  /*
+   * Navigates without closing, unlike the button above. Leaving the analysis is
+   * not a decision about what LMU should still have loaded, and the replay list
+   * offers its own way back to a replay that is still open.
+   */
   const onBackToReplays = () => {
-    // sendMessage(CONSTANTS.API.POST_CLOSE_REPLAY);
     navigate('/replays');
   };
 
