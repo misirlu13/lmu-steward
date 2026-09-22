@@ -1,3 +1,8 @@
+## 1.6.0 (2026-09-22)
+
+* Merge pull request #22 from misirlu13/epic/v1.5.1 ([8c1f39e](https://github.com/misirlu13/lmu-steward/commit/8c1f39e)), closes [#22](https://github.com/misirlu13/lmu-steward/issues/22)
+* feat(constants.ts): added Long Beach and Road Atlanta track support ([c01029d](https://github.com/misirlu13/lmu-steward/commit/c01029d))
+
 ## 1.5.0 (2026-08-13)
 
 * Merge pull request #13 from misirlu13/feature/persistent-filter-user-setting ([1c0fe22](https://github.com/misirlu13/lmu-steward/commit/1c0fe22)), closes [#13](https://github.com/misirlu13/lmu-steward/issues/13)
