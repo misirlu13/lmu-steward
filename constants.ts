@@ -222,6 +222,7 @@ export const CONSTANTS = {
         'Algarve International Circuit',
         '4 Hours of Portimao',
         'Algarve International Circuit 1.23',
+        'Algarve International Circuit 1.25',
       ],
     },
     PORTIMAOWEC: {
@@ -235,6 +236,7 @@ export const CONSTANTS = {
         '6 Hours of Portimao',
         'Algarve International Circuit 1.21',
         'Algarve International Circuit 1.23',
+        'Algarve International Circuit 1.25',
       ],
     },
     IMOLAELMS: {
@@ -248,6 +250,7 @@ export const CONSTANTS = {
         '4 Hours of Imola',
         'Autodromo Enzo e Dino Ferrari 1.23',
         'Autodromo Enzo e Dino Ferrari 1.27',
+        'Autodromo Enzo e Dino Ferrari 1.31',
       ],
     },
     IMOLAWEC: {
@@ -262,6 +265,7 @@ export const CONSTANTS = {
         'Autodromo Enzo e Dino Ferrari 1.21',
         'Autodromo Enzo e Dino Ferrari 1.23',
         'Autodromo Enzo e Dino Ferrari 1.27',
+        'Autodromo Enzo e Dino Ferrari 1.31',
       ],
     },
     MONZAWEC: {
@@ -276,6 +280,7 @@ export const CONSTANTS = {
         'Autodromo Nazionale Monza 1.21',
         'Autodromo Nazionale Monza 1.27',
         'Autodromo Nazionale Monza 1.29',
+        'Autodromo Nazionale Monza 1.31',
       ],
     },
     MONZAWEC_GRANDE: {
@@ -290,6 +295,7 @@ export const CONSTANTS = {
         'Autodromo Nazionale Monza 1.21',
         'Autodromo Nazionale Monza 1.27',
         'Autodromo Nazionale Monza 1.29',
+        'Autodromo Nazionale Monza 1.31',
       ],
     },
     INTERLAGOSWEC: {
@@ -303,6 +309,7 @@ export const CONSTANTS = {
         'Rolex 6 Hours Of Sao Paulo',
         'Autódromo José Carlos Pace 1.21',
         'Autódromo José Carlos Pace 1.27',
+        'Autódromo José Carlos Pace 1.29',
       ],
     },
     BAHRAINWEC: {
@@ -316,6 +323,7 @@ export const CONSTANTS = {
         '8 Hours of Bahrain',
         'Bahrain International Circuit 1.23',
         'Bahrain International Circuit 1.25',
+        'Bahrain International Circuit 1.27',
       ],
     },
     BAHRAINWEC_ENDCE: {
@@ -329,6 +337,7 @@ export const CONSTANTS = {
         'Bahrain International Circuit',
         'Bahrain International Circuit 1.23',
         'Bahrain International Circuit 1.25',
+        'Bahrain International Circuit 1.27',
       ],
     },
     BAHRAINWEC_OUTER: {
@@ -342,6 +351,7 @@ export const CONSTANTS = {
         'Bahrain International Circuit',
         'Bahrain International Circuit 1.23',
         'Bahrain International Circuit 1.25',
+        'Bahrain International Circuit 1.27',
       ],
     },
     BAHRAINWEC_PADDOCK: {
@@ -355,6 +365,7 @@ export const CONSTANTS = {
         'Bahrain International Circuit',
         'Bahrain International Circuit 1.23',
         'Bahrain International Circuit 1.25',
+        'Bahrain International Circuit 1.27',
       ],
     },
     BARCELONAELMS: {
@@ -368,6 +379,7 @@ export const CONSTANTS = {
         'Circuit de Barcelona',
         'Circuit de Barcelona 1.01',
         'Circuit de Barcelona 1.03',
+        'Circuit de Barcelona 1.05',
       ],
     },
     SPAELMS: {
@@ -381,6 +393,7 @@ export const CONSTANTS = {
         'Circuit de Spa-Francorchamps',
         'Circuit de Spa-Francorchamps 1.23',
         'Circuit de Spa-Francorchamps 1.29',
+        'Circuit de Spa-Francorchamps 1.31',
       ],
     },
     SPAWEC: {
@@ -395,6 +408,7 @@ export const CONSTANTS = {
         'Circuit de Spa-Francorchamps 1.21',
         'Circuit de Spa-Francorchamps 1.23',
         'Circuit de Spa-Francorchamps 1.29',
+        'Circuit de Spa-Francorchamps 1.31',
       ],
     },
     SPAWEC_ENDCE: {
@@ -409,6 +423,7 @@ export const CONSTANTS = {
         'Circuit de Spa-Francorchamps 1.21',
         'Circuit de Spa-Francorchamps 1.23',
         'Circuit de Spa-Francorchamps 1.29',
+        'Circuit de Spa-Francorchamps 1.31',
       ],
     },
     LEMANSWEC: {
@@ -423,6 +438,7 @@ export const CONSTANTS = {
         'Circuit de la Sarthe 1.21',
         'Circuit de la Sarthe 1.27',
         'Circuit de la Sarthe 1.33',
+        'Circuit de la Sarthe 1.35',
       ],
     },
     LEMANSWEC_MULSANNE: {
@@ -437,6 +453,7 @@ export const CONSTANTS = {
         'Circuit de la Sarthe 1.21',
         'Circuit de la Sarthe 1.27',
         'Circuit de la Sarthe 1.33',
+        'Circuit de la Sarthe 1.35',
       ],
     },
     COTAWEC: {
@@ -450,6 +467,7 @@ export const CONSTANTS = {
         'Circuit of the Americas',
         'Circuit of the Americas 1.21',
         'Circuit of the Americas 1.27',
+        'Circuit of the Americas 1.29',
       ],
     },
     COTAWEC_NATIONAL: {
@@ -463,6 +481,7 @@ export const CONSTANTS = {
         'Circuit of the Americas',
         'Circuit of the Americas 1.21',
         'Circuit of the Americas 1.27',
+        'Circuit of the Americas 1.29',
       ],
     },
     DAYTONARC: {
@@ -475,6 +494,7 @@ export const CONSTANTS = {
         'Daytona International Speedway Road Course',
         'Daytona International Speedway',
         'Daytona International Speedway 1.01',
+        'Daytona International Speedway 1.07',
       ],
     },
     FUJIWEC: {
@@ -488,6 +508,7 @@ export const CONSTANTS = {
         'Fuji Speedway',
         'Fuji Speedway 1.21',
         'Fuji Speedway 1.27',
+        'Fuji Speedway 1.29',
       ],
     },
     FUJIWEC_CL: {
@@ -501,6 +522,27 @@ export const CONSTANTS = {
         'Fuji Speedway',
         'Fuji Speedway 1.21',
         'Fuji Speedway 1.27',
+        'Fuji Speedway 1.29',
+      ],
+    },
+    LONGBEACH: {
+      displayName: 'Grand Prix of Long Beach',
+      background: '/start/images/tracks/backgrounds/longbeach.webp',
+      logo: '/start/images/tracks/logos/longbeach.svg',
+      abbr: 'LB',
+      location: 'Long Beach, California, USA',
+      /*
+       * The event name is the only name LMU has for this one: `name` and
+       * `displayProperties.shortName` are both "Grand Prix of Long Beach",
+       * where every other venue separates the two. "Long Beach Street Circuit"
+       * is carried as well because a result log's TrackVenue is the venue, not
+       * the event, and the two share no substring for `tracksLikelyMatch` to
+       * find.
+       */
+      aliases: [
+        'Grand Prix of Long Beach',
+        'Long Beach Street Circuit',
+        'Grand Prix of Long Beach 1.01',
       ],
     },
     QATARWEC: {
@@ -514,6 +556,7 @@ export const CONSTANTS = {
         'Lusail International Circuit',
         'Lusail International Circuit 1.21',
         'Lusail International Circuit 1.27',
+        'Lusail International Circuit 1.29',
       ],
     },
     QATARWEC_SHORT: {
@@ -527,6 +570,19 @@ export const CONSTANTS = {
         'Lusail International Circuit',
         'Lusail International Circuit 1.21',
         'Lusail International Circuit 1.27',
+        'Lusail International Circuit 1.29',
+      ],
+    },
+    ROADATLANTA: {
+      displayName: 'Michelin Raceway Road Atlanta',
+      background: '/start/images/tracks/backgrounds/roadatlanta.webp',
+      logo: '/start/images/tracks/logos/roadatlanta.svg',
+      abbr: 'ATL',
+      location: 'Braselton, Georgia, USA',
+      aliases: [
+        'Michelin Raceway Road Atlanta',
+        'Road Atlanta',
+        'Michelin Raceway Road Atlanta 1.01',
       ],
     },
     PAULRICARDELMS: {
@@ -540,6 +596,7 @@ export const CONSTANTS = {
         'Paul Ricard Circuit',
         'Paul Ricard Circuit 1.05',
         'Paul Ricard Circuit 1.07',
+        'Paul Ricard Circuit 1.09',
       ],
     },
     PAULRICARD1A: {
@@ -552,6 +609,7 @@ export const CONSTANTS = {
         'Paul Ricard - 1A',
         'Paul Ricard Circuit',
         'Paul Ricard Circuit 1.07',
+        'Paul Ricard Circuit 1.09',
       ],
     },
     'PAULRICARD1A-V2': {
@@ -564,6 +622,7 @@ export const CONSTANTS = {
         'Paul Ricard - 1A-V2',
         'Paul Ricard Circuit',
         'Paul Ricard Circuit 1.07',
+        'Paul Ricard Circuit 1.09',
       ],
     },
     'PAULRICARD1A-V2-SHORT': {
@@ -576,6 +635,7 @@ export const CONSTANTS = {
         'Paul Ricard - 1A-V2-Short',
         'Paul Ricard Circuit',
         'Paul Ricard Circuit 1.07',
+        'Paul Ricard Circuit 1.09',
       ],
     },
     PAULRICARD3A: {
@@ -588,6 +648,7 @@ export const CONSTANTS = {
         'Paul Ricard - 3A',
         'Paul Ricard Circuit',
         'Paul Ricard Circuit 1.07',
+        'Paul Ricard Circuit 1.09',
       ],
     },
     SEBRINGWEC: {
@@ -601,6 +662,7 @@ export const CONSTANTS = {
         'Sebring International Raceway',
         'Sebring International Raceway 1.23',
         'Sebring International Raceway 1.27',
+        'Sebring International Raceway 1.29',
       ],
     },
     SEBRINGWEC_SCHOOL: {
@@ -614,6 +676,7 @@ export const CONSTANTS = {
         'Sebring International Raceway',
         'Sebring International Raceway 1.23',
         'Sebring International Raceway 1.27',
+        'Sebring International Raceway 1.29',
       ],
     },
     SILVERSTONEELMS: {
@@ -628,6 +691,7 @@ export const CONSTANTS = {
         'Silverstone Circuit 1.07',
         'Silverstone Circuit 1.09',
         'Silverstone Circuit 1.11',
+        'Silverstone Circuit 1.13',
       ],
     },
     SILVERSTONEWEC: {
@@ -641,6 +705,7 @@ export const CONSTANTS = {
         'Silverstone Circuit',
         'Silverstone Circuit 1.09',
         'Silverstone Circuit 1.11',
+        'Silverstone Circuit 1.13',
       ],
     },
     SILVERSTONE_INTERNATIONAL: {
@@ -654,6 +719,7 @@ export const CONSTANTS = {
         'Silverstone Circuit',
         'Silverstone Circuit 1.09',
         'Silverstone Circuit 1.11',
+        'Silverstone Circuit 1.13',
       ],
     },
     SILVERSTONE_NATIONAL: {
@@ -667,6 +733,7 @@ export const CONSTANTS = {
         'Silverstone Circuit',
         'Silverstone Circuit 1.09',
         'Silverstone Circuit 1.11',
+        'Silverstone Circuit 1.13',
       ],
     },
     LAGUNASECA: {
@@ -679,6 +746,7 @@ export const CONSTANTS = {
         'WeatherTech Raceway Laguna Seca',
         'Laguna Seca',
         'WeatherTech Raceway Laguna Seca 1.01',
+        'WeatherTech Raceway Laguna Seca 1.05',
       ],
     },
   },
